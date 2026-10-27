@@ -8,7 +8,7 @@ Lire [START_HERE.md](START_HERE.md). Le contexte appartient à l’étudiant.
 - `app/server/store.ts` : propositions, journal local et annulations sélectives.
 - `app/server/http.ts` : frontière HTTP locale et routes à périmètre fermé.
 - `app/client/DesignSystem.tsx` : composants uniques partagés entre les viewers.
-- `connectors/agents/` : Codex qualifié, Claude/Gemini explicitement indisponibles.
+- `connectors/agents/` : Codex qualifié, Claude partiel (non qualifié), Gemini indisponible.
 - `connectors/figma/` : contrat seulement, aucune connexion réseau.
 - `workspace/` : PFE, règles, décisions et DS d’exemple versionnables.
 - `.ds-studio/` : état privé d’exécution, jamais à commiter.

@@ -66,7 +66,7 @@ export interface Revision {
   id: string;
   revision: number;
   date: string;
-  source: 'manual' | 'codex' | 'import' | 'undo';
+  source: 'manual' | 'codex' | 'claude' | 'import' | 'undo';
   patches: Patch[];
 }
 export interface State {
@@ -99,7 +99,7 @@ export const stateSchema = z
           id: z.string().uuid(),
           revision: z.number().int().positive(),
           date: z.string().datetime(),
-          source: z.enum(['manual', 'codex', 'import', 'undo']),
+          source: z.enum(['manual', 'codex', 'claude', 'import', 'undo']),
           patches: z.array(patchSchema).min(1),
         })
         .strict(),

@@ -213,6 +213,7 @@ export default function App() {
       </main>
     );
   const selectedAgent = agents.find((a) => a.id === agent);
+  const agentName = agent === 'claude' ? 'Claude' : 'Codex';
   const staleProposal = !!proposal && proposal.revision !== state.revision;
   const draftContrast =
     /^#[0-9a-fA-F]{6}$/.test(draft) &&
@@ -359,15 +360,16 @@ export default function App() {
             <ProjectBrief />
             <label className="field">
               Mode de travail
-              <select value={agent} onChange={(e) => setAgent(e.target.value)}>
+              <select
+                value={agent}
+                onChange={(e) => {
+                  // Pas de conversation partagée entre fournisseurs.
+                  setAgent(e.target.value);
+                  setChat([]);
+                }}
+              >
                 <option value="manual">Manuel · sans compte IA</option>
-                <option value="codex">Codex · expérimental qualifié</option>
-                <option value="claude" disabled>
-                  Claude Code · non implémenté
-                </option>
-                <option value="gemini" disabled>
-                  Gemini CLI · non implémenté
-                </option>
+                <option value="claude">Claude Code · expérimental</option>
               </select>
             </label>
             {agent === 'manual' ? (
@@ -395,7 +397,7 @@ export default function App() {
                   {selectedAgent?.detail ?? 'Détection du CLI…'}
                 </p>
                 <p className="privacy-note">
-                  Envoi à Codex : tokens, workspace/PFE.md, brief privé,
+                  Envoi à {agentName} : tokens, workspace/PFE.md, brief privé,
                   DESIGN_RULES.md et 10 messages récents. Aucun outil ni
                   commande ; propositions seulement.
                 </p>
@@ -406,7 +408,7 @@ export default function App() {
                 >
                   {chat.map((c, i) => (
                     <article className={`chat-message ${c.role}`} key={i}>
-                      <strong>{c.role === 'user' ? 'Vous' : 'Codex'}</strong>
+                      <strong>{c.role === 'user' ? 'Vous' : agentName}</strong>
                       <p>{c.text}</p>
                     </article>
                   ))}
@@ -433,7 +435,9 @@ export default function App() {
                       thinking || !message.trim() || !selectedAgent?.available
                     }
                   >
-                    {thinking ? 'Réflexion en cours…' : 'Envoyer à Codex'}
+                    {thinking
+                      ? 'Réflexion en cours…'
+                      : `Envoyer à ${agentName}`}
                   </button>
                   {thinking && (
                     <button

@@ -36,16 +36,25 @@ Le protocole et la version ont été exécutés, pas seulement décrits. Pour ch
 la version acceptée, refaire le smoke test, le test hostile, le refus sans auth,
 la proposition/validation via API et les essais sur chaque OS cible.
 
-## Claude Code — NOT IMPLEMENTED
+## Claude Code — PARTIAL (testé avec un faux CLI, pas avec le vrai)
 
-Point d’extension : `unvalidatedAdapter('claude')`. L’interface affiche son indisponibilité.
-La [documentation officielle headless](https://code.claude.com/docs/en/headless)
-décrit `claude -p` et des sorties structurées. Elle ne valide pas un contrôle des
-permissions par notre interface. Avant activation : vérifier authentification
-sans exporter le cache, désactiver les outils ou construire un protocole de demandes
-d’approbation réellement bloquant, normaliser les erreurs et le JSON, puis tester
-le refus, l’arrêt, le quota, les écritures hors scope et la non-connexion Figma.
-Ne pas remplacer cette qualification par `--dangerously-skip-permissions`.
+`connectors/agents/claude.ts` lance `claude -p` selon la
+[documentation officielle headless](https://code.claude.com/docs/en/headless) :
+`--tools ""` (aucun outil intégré), `--strict-mcp-config` sans `--mcp-config`
+(aucun MCP), `--setting-sources ""`, `--disable-slash-commands`,
+`--no-session-persistence`, `--output-format json`, consigne commune passée en
+`--system-prompt`. Même confinement que Codex : dossier temporaire vide, variables
+d’environnement filtrées, contexte via stdin, stderr jamais renvoyé, délai 120 s.
+Une réponse en plus d’un tour ou avec `permission_denials` est refusée : sans outil,
+le modèle répond en un tour. Authentification par `claude` puis `/login`, faite
+par l’utilisateur ; DS-Studio ne lit pas le trousseau ni les fichiers du compte.
+
+Testé (macOS, faux CLI lancé par Node) : réponse convertie en proposition, tentative
+d’outil refusée, échec de compte sans fuite de stderr, CLI absent. **Non testé** :
+le vrai CLI, la reconnaissance de chaque option par la version installée, le quota,
+l’arrêt d’un vrai processus et les réglages utilisateur (hooks) malgré
+`--setting-sources ""`. Aucune version n’est encore qualifiée. Ne pas remplacer
+cette qualification par `--dangerously-skip-permissions`.
 
 ## Gemini CLI — NOT IMPLEMENTED
 

@@ -8,6 +8,7 @@ import { Store, StudioError } from './store.js';
 import { ProjectStore } from './project.js';
 import { projectSchema } from '../shared/project.js';
 import { CodexAdapter } from '../../connectors/agents/codex.js';
+import { ClaudeAdapter } from '../../connectors/agents/claude.js';
 import { unvalidatedAdapter } from '../../connectors/agents/unvalidated.js';
 import type { AgentAdapter } from '../../connectors/agents/types.js';
 import { figmaStatus } from '../../connectors/figma/contract.js';
@@ -23,7 +24,7 @@ export async function createStudioServer(options: {
   const { root, store } = options;
   const adapters: Record<string, AgentAdapter> = {
     codex: options.agent ?? new CodexAdapter(),
-    claude: unvalidatedAdapter('claude'),
+    claude: new ClaudeAdapter(),
     gemini: unvalidatedAdapter('gemini'),
   };
   const project = new ProjectStore(store.directory);
@@ -226,7 +227,11 @@ export async function createStudioServer(options: {
               controller.signal,
             );
             const proposal = reply.changes.length
-              ? store.propose(b.revision, reply.changes, 'codex')
+              ? store.propose(
+                  b.revision,
+                  reply.changes,
+                  b.agent === 'claude' ? 'claude' : 'codex',
+                )
               : null;
             return send(200, { message: reply.message, proposal });
           } finally {
@@ -314,7 +319,7 @@ function urlSafeMessage(error: unknown) {
   // Les erreurs agent sont rédigées dans l'adaptateur, jamais de stderr brut ni de stack.
   const message = (error as Error).message ?? '';
   if (
-    /^(CLI |Codex |Version non|Échec Codex|Délai CLI|Demande interrompue|Le CLI|Réponse CLI|claude non|gemini non|Impossible de démarrer)/.test(
+    /^(CLI |Codex |Claude Code |Version non|Échec Codex|Échec Claude Code|Délai CLI|Demande interrompue|Le CLI|Réponse CLI|Réponse Claude Code|claude non|gemini non|Impossible de démarrer)/.test(
       message,
     )
   )
