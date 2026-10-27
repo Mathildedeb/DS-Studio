@@ -14,6 +14,8 @@ import { CodexAdapter } from '../../connectors/agents/codex.js';
 import { ClaudeAdapter } from '../../connectors/agents/claude.js';
 import { proposeCode, type Ask } from '../../connectors/agents/coder.js';
 import { CodeStore } from './code.js';
+import { ConnectionStore, inspectFolder, pickFolder } from './connection.js';
+import { DevServer } from './devserver.js';
 import { unvalidatedAdapter } from '../../connectors/agents/unvalidated.js';
 import type { AgentAdapter } from '../../connectors/agents/types.js';
 import { figmaStatus } from '../../connectors/figma/contract.js';
@@ -39,6 +41,21 @@ export async function createStudioServer(options: {
   const project = new ProjectStore(store.directory);
   const dashboard = new DashboardStore(store.directory, root);
   const code = new CodeStore(root, store.directory);
+  const connection = new ConnectionStore(store.directory);
+  // Clodo écrit dans le projet ouvert, et seulement dedans ; sans projet, il
+  // garde son périmètre historique sur l'interface de DS-Studio.
+  const projectCode = new Map<string, CodeStore>();
+  const devServer = new DevServer();
+  const workspace = async () => {
+    const project = (await connection.status()).project;
+    if (!project) return { code, project: undefined };
+    let scoped = projectCode.get(project.folder);
+    if (!scoped) {
+      scoped = new CodeStore(project.folder, store.directory, true);
+      projectCode.set(project.folder, scoped);
+    }
+    return { code: scoped, project: project.name };
+  };
   const claudeCli = new ClaudeAdapter();
   const ask: Ask = options.ask ?? ((...a) => claudeCli.ask(...a));
   const figma = options.figma ?? new FigmaReader(undefined);
@@ -72,7 +89,7 @@ export async function createStudioServer(options: {
     res.setHeader('X-Frame-Options', 'SAMEORIGIN');
     res.setHeader(
       'Content-Security-Policy',
-      `default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'${options.dev ? ' ws://127.0.0.1:*' : ''}; frame-ancestors 'self'; base-uri 'none'; form-action 'self'`,
+      `default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'${options.dev ? ' ws://127.0.0.1:*' : ''}; frame-src 'self' http://localhost:* http://127.0.0.1:*; frame-ancestors 'self'; base-uri 'none'; form-action 'self'`,
     );
     try {
       if (req.headers.host !== `127.0.0.1:${port}`)
@@ -123,8 +140,9 @@ export async function createStudioServer(options: {
           if (url.pathname === '/api/project')
             return send(200, await project.read());
           if (url.pathname === '/api/figma') {
-            // Fichier : lien du brief privé, sinon lien Figma de la roadmap.
-            const brief = (await project.read()).project.figmaUrl;
+            // Fichier : celui du projet ouvert, sinon le brief, sinon la roadmap.
+            const linked = (await connection.read()).figmaUrl;
+            const brief = linked || (await project.read()).project.figmaUrl;
             const fromRoadmap = await readRoadmap(root)
               .then(
                 (r) => r.links.find((l) => l.url.includes('figma.com'))?.url,
@@ -136,8 +154,19 @@ export async function createStudioServer(options: {
             return send(200, await dashboard.readClodo());
           if (url.pathname === '/api/preview')
             return send(200, await dashboard.readPreview());
+          if (url.pathname === '/api/connection')
+            return send(200, await connection.status());
+          if (url.pathname === '/api/project-dev') {
+            const project = (await connection.status()).project;
+            return send(
+              200,
+              project
+                ? await devServer.readFor(project.folder)
+                : devServer.read(),
+            );
+          }
           if (url.pathname === '/api/code/last')
-            return send(200, await code.last());
+            return send(200, await (await workspace()).code.last());
           if (url.pathname === '/api/roadmap')
             return send(200, await readRoadmap(root));
           if (url.pathname === '/api/dashboard')
@@ -224,13 +253,46 @@ export async function createStudioServer(options: {
           return send(200, await dashboard.saveClodo(body));
         if (url.pathname === '/api/preview')
           return send(200, await dashboard.savePreview(body));
+        // Projet ouvert : dossier Git local et fichier Figma, choisis par l'étudiante.
+        if (url.pathname === '/api/connection')
+          return send(200, await connection.save(body));
+        // Serveur de dev du projet ouvert : lancé et arrêté au clic, jamais seul.
+        if (url.pathname === '/api/project-dev/start') {
+          const project = (await connection.status()).project;
+          if (!project) throw new StudioError('Ouvrez d’abord un projet.', 409);
+          return send(200, await devServer.start(project.folder));
+        }
+        if (url.pathname === '/api/project-dev/install') {
+          const project = (await connection.status()).project;
+          if (!project) throw new StudioError('Ouvrez d’abord un projet.', 409);
+          return send(200, await devServer.install(project.folder));
+        }
+        if (url.pathname === '/api/project-dev/stop')
+          return send(200, devServer.stop());
+        if (url.pathname === '/api/connection/pick')
+          return send(200, { folder: await pickFolder() });
+        // Vérifications avant enregistrement : rien n'est écrit.
+        if (url.pathname === '/api/connection/inspect') {
+          const b = z
+            .object({ folder: z.string().min(1).max(1000) })
+            .strict()
+            .parse(body);
+          return send(200, await inspectFolder(b.folder));
+        }
+        if (url.pathname === '/api/connection/figma') {
+          const b = z
+            .object({ url: z.string().max(500) })
+            .strict()
+            .parse(body);
+          return send(200, await figma.status(b.url));
+        }
         if (url.pathname === '/api/code/apply') {
           const b = z.object({ id: z.string().uuid() }).strict().parse(body);
-          return send(200, await code.apply(b.id));
+          return send(200, await (await workspace()).code.apply(b.id));
         }
         if (url.pathname === '/api/code/revert') {
           const b = z.object({ id: z.string().uuid() }).strict().parse(body);
-          return send(200, await code.revert(b.id));
+          return send(200, await (await workspace()).code.revert(b.id));
         }
         if (url.pathname === '/api/code') {
           const b = z
@@ -258,14 +320,16 @@ export async function createStudioServer(options: {
           const cancel = () => controller.abort();
           res.once('close', cancel);
           try {
+            const scope = await workspace();
             const { changes, ...reply } = await proposeCode(
               ask,
-              code,
+              scope.code,
               b.message,
               b.history,
               controller.signal,
               b.focus,
               store.snapshot().tokens,
+              scope.project,
             );
             // Clodo a choisi des tokens : même diff et même validation qu'à la main.
             const tokenProposal = changes?.length
@@ -434,6 +498,7 @@ export async function createStudioServer(options: {
     server,
     close: async () => {
       for (const c of active) c.abort();
+      devServer.stop();
       await new Promise<void>((resolve, reject) =>
         server.close((e) => (e ? reject(e) : resolve())),
       );

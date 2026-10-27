@@ -1,9 +1,14 @@
 import { useEffect, useState } from 'react';
 import { request } from './api.js';
 import { defaultPreview, type PreviewConfig } from '../shared/dashboard.js';
+import type { FolderInfo } from '../shared/connection.js';
+import type { Focus } from '../shared/focus.js';
+import type { DevStatus } from '../server/devserver.js';
 
 // Page Preview : un format (largeur × hauteur réelles) et une page du proto.
-// Formats et pages se créent ici et restent enregistrés sur ce poste.
+// Formats et pages se créent ici et restent enregistrés sur ce poste. Avec un
+// projet ouvert, l'iframe affiche le serveur de dev de ce projet, à la route
+// de la page choisie.
 const builtIn = new Set(['cards', 'form']);
 const slug = (name: string) =>
   `${
@@ -15,11 +20,48 @@ const slug = (name: string) =>
       .slice(0, 30) || 'item'
   }-${Math.random().toString(36).slice(2, 6)}`;
 
+const routeOf = (name: string) =>
+  '/' +
+  name
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-|-$/g, '');
+
 export default function PreviewPage({
+  project,
   onError,
+  onFocus,
 }: {
+  project?: FolderInfo;
   onError: (message: string) => void;
+  onFocus: (focus: Focus) => void;
 }) {
+  const [dev, setDev] = useState<DevStatus>({ state: 'stopped', logs: [] });
+  const [route, setRoute] = useState('/');
+  useEffect(() => {
+    if (project)
+      request<DevStatus>('project-dev')
+        .then(setDev)
+        .catch(() => undefined);
+  }, [project?.folder]);
+  const run = (action: 'start' | 'stop' | 'install') => {
+    setDev((d) => ({
+      ...d,
+      state:
+        action === 'start'
+          ? 'starting'
+          : action === 'install'
+            ? 'installing'
+            : d.state,
+    }));
+    request<DevStatus>(`project-dev/${action}`, {})
+      .then(setDev)
+      .catch((e) => {
+        setDev((d) => ({ ...d, state: 'error' }));
+        onError(e.message);
+      });
+  };
   const [config, setConfig] = useState<PreviewConfig>(defaultPreview);
   const [format, setFormat] = useState('iphone');
   const [page, setPage] = useState('cards');
@@ -38,9 +80,22 @@ export default function PreviewPage({
   };
   const f = config.formats.find((x) => x.id === format) ?? config.formats[0];
   const p = config.pages.find((x) => x.id === page) ?? config.pages[0];
+  const path = p.path ?? '/';
+  // Clodo reçoit la page et le format affichés : « ici » = cette page.
+  useEffect(() => {
+    onFocus({
+      page: 'preview',
+      kind: 'page',
+      name: p.name,
+      path: [p.name],
+      value: project ? path : p.id,
+      props: { format: `${f.name} ${f.width}px` },
+    });
+  }, [p.name, path, f.name, f.width, !!project]);
   const close = () => {
     setAdding(undefined);
     setName('');
+    setRoute('/');
   };
 
   return (
@@ -101,7 +156,10 @@ export default function PreviewPage({
           <button
             type="button"
             className="preview-add"
-            onClick={() => setAdding(adding === 'page' ? undefined : 'page')}
+            onClick={() => {
+              setRoute('/');
+              setAdding(adding === 'page' ? undefined : 'page');
+            }}
             aria-expanded={adding === 'page'}
           >
             + Page
@@ -111,13 +169,14 @@ export default function PreviewPage({
             className="preview-add"
             onClick={() => {
               setName(p.name);
+              setRoute(path);
               setAdding(adding === 'rename' ? undefined : 'rename');
             }}
             aria-expanded={adding === 'rename'}
           >
             Renommer
           </button>
-          {!builtIn.has(p.id) && (
+          {(project ? config.pages.length > 1 : !builtIn.has(p.id)) && (
             <button
               type="button"
               className="preview-remove"
@@ -154,13 +213,23 @@ export default function PreviewPage({
               setFormat(id);
             } else if (adding === 'page') {
               const id = slug(n);
-              save({ ...config, pages: [...config.pages, { id, name: n }] });
+              save({
+                ...config,
+                pages: [
+                  ...config.pages,
+                  project
+                    ? { id, name: n, path: route === '/' ? routeOf(n) : route }
+                    : { id, name: n },
+                ],
+              });
               setPage(id);
             } else
               save({
                 ...config,
                 pages: config.pages.map((x) =>
-                  x.id === p.id ? { ...x, name: n } : x,
+                  x.id === p.id
+                    ? { ...x, name: n, ...(project ? { path: route } : {}) }
+                    : x,
                 ),
               });
             close();
@@ -183,6 +252,17 @@ export default function PreviewPage({
               required
             />
           </label>
+          {project && adding !== 'format' && (
+            <label className="field">
+              Chemin dans le projet
+              <input
+                value={route}
+                maxLength={200}
+                onChange={(e) => setRoute(e.target.value)}
+                placeholder="/profil"
+              />
+            </label>
+          )}
           {adding === 'format' && (
             <>
               <label className="field">
@@ -218,17 +298,73 @@ export default function PreviewPage({
         </form>
       )}
 
+      {project && (
+        <div className="project-run" role="status">
+          <span>
+            Projet <strong>{project.name}</strong> ·{' '}
+            {dev.state === 'running'
+              ? `en ligne sur ${dev.url}`
+              : dev.state === 'starting'
+                ? 'lancement…'
+                : dev.state === 'installing'
+                  ? 'installation des dépendances…'
+                  : dev.state === 'error'
+                    ? 'erreur au lancement'
+                    : 'arrêté'}
+          </span>
+          {dev.needsInstall && dev.state !== 'installing' && (
+            <button type="button" onClick={() => run('install')}>
+              Installer les dépendances (npm install)
+            </button>
+          )}
+          {dev.state === 'installing' ? null : dev.state === 'running' ||
+            dev.state === 'starting' ? (
+            <button type="button" onClick={() => run('stop')}>
+              Arrêter
+            </button>
+          ) : (
+            <button
+              type="button"
+              className="studio-primary"
+              onClick={() => run('start')}
+            >
+              Lancer le projet
+            </button>
+          )}
+          {dev.logs.length > 0 && (
+            <details>
+              <summary>Journal {dev.command && `· ${dev.command}`}</summary>
+              <pre>{dev.logs.join('\n')}</pre>
+            </details>
+          )}
+        </div>
+      )}
       <div className="viewport-scroll">
-        <iframe
-          title="Aperçu responsive"
-          src={`/?preview=1&scenario=${encodeURIComponent(p.id)}&title=${encodeURIComponent(p.name)}`}
-          width={f.width}
-          height={f.height}
-        />
+        {!project ? (
+          <iframe
+            title="Aperçu responsive"
+            src={`/?preview=1&scenario=${encodeURIComponent(p.id)}&title=${encodeURIComponent(p.name)}`}
+            width={f.width}
+            height={f.height}
+          />
+        ) : dev.state === 'running' && dev.url ? (
+          <iframe
+            title="Aperçu responsive"
+            src={dev.url + path}
+            width={f.width}
+            height={f.height}
+          />
+        ) : (
+          <p className="project-idle">
+            {dev.state === 'starting'
+              ? 'Lancement du serveur de dev de votre projet…'
+              : 'Lancez le projet pour l’afficher ici, à taille réelle.'}
+          </p>
+        )}
       </div>
       <div className="panel-foot">
-        {f.name} · {f.width} × {f.height} px CSS · aucun zoom appliqué · défilez
-        si nécessaire
+        {f.name} · {f.width} × {f.height} px CSS
+        {project && ` · ${path}`} · aucun zoom appliqué · défilez si nécessaire
       </div>
     </section>
   );

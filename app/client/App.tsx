@@ -14,6 +14,8 @@ import Clodo from './Clodo.js';
 import type { CodeProposal } from '../server/code.js';
 import Dashboard from './Dashboard.js';
 import PreviewPage from './PreviewPage.js';
+import OpenProject from './OpenProject.js';
+import type { ConnectionStatus } from '../shared/connection.js';
 import type { FigmaFileStatus } from '../../connectors/figma/reader.js';
 import { useTokenDraft } from './useTokenDraft.js';
 import {
@@ -141,6 +143,7 @@ export default function App() {
   const [search, setSearch] = useState('');
   const [tab, setTab] = useState<Tab>('tokens');
   const [componentFocus, setComponentFocus] = useState<Focus>();
+  const [previewFocus, setPreviewFocus] = useState<Focus>();
   const openToken = (k: TokenKey) => {
     setKey(k);
     setTab('tokens');
@@ -156,6 +159,8 @@ export default function App() {
   const [codeError, setCodeError] = useState('');
   const [lastCode, setLastCode] = useState<{ id: string; files: string[] }>();
   const [clodoOpen, setClodoOpen] = useState(false);
+  const [connection, setConnection] = useState<ConnectionStatus>();
+  const [opening, setOpening] = useState(false);
   const view = useView();
   const [thinking, setThinking] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -167,6 +172,10 @@ export default function App() {
     bootstrap()
       .then(setBoot)
       .catch((e) => setError(e.message));
+    // Sans réponse, l'écran d'ouverture ne bloque pas l'atelier.
+    request<ConnectionStatus>('connection')
+      .then(setConnection)
+      .catch(() => setConnection({ saved: { skipped: true } }));
     request<FigmaFileStatus>('figma')
       .then(setFigma)
       .catch(() => undefined);
@@ -280,18 +289,20 @@ export default function App() {
   }
   // Ce que regarde l'étudiante dans la page Design System, envoyé au chat.
   const focus: Focus | undefined =
-    view !== 'ds' || !state
-      ? undefined
-      : tab === 'tokens'
-        ? state.tokens[key] && {
-            page: 'design-system',
-            kind: 'token',
-            name: key,
-            path: [key],
-            value: state.tokens[key].$value,
-            tokens: [key],
-          }
-        : componentFocus;
+    view === 'preview'
+      ? previewFocus
+      : view !== 'ds' || !state
+        ? undefined
+        : tab === 'tokens'
+          ? state.tokens[key] && {
+              page: 'design-system',
+              kind: 'token',
+              name: key,
+              path: [key],
+              value: state.tokens[key].$value,
+              tokens: [key],
+            }
+          : componentFocus;
   async function sendMessage() {
     if (!state || !message.trim() || thinking) return;
     const text = message;
@@ -438,6 +449,9 @@ export default function App() {
       )}
     </>
   );
+  // Premier lancement : on ouvre un projet (ou on passe) avant l'atelier.
+  const mustOpen =
+    !!connection && !connection.saved.folder && !connection.saved.skipped;
   return (
     <>
       {view === 'ds' && (
@@ -474,6 +488,16 @@ export default function App() {
           </a>
         </nav>
         <div className="header-status">
+          <button
+            type="button"
+            className="project-badge"
+            onClick={() => setOpening(true)}
+            title={connection?.project?.folder ?? 'Ouvrir un projet'}
+          >
+            {connection?.project
+              ? `${connection.project.name}${connection.project.git?.branch ? ` · ${connection.project.git.branch}` : ''}`
+              : 'Ouvrir un projet'}
+          </button>
           <span className="local-badge">● Local · V2</span>
           {figma?.file ? (
             <a
@@ -497,7 +521,19 @@ export default function App() {
           </button>
         </div>
       </header>
-      {view === 'dashboard' ? (
+      {mustOpen || opening ? (
+        <OpenProject
+          status={connection}
+          onClose={mustOpen ? undefined : () => setOpening(false)}
+          onDone={(next) => {
+            setConnection(next);
+            setOpening(false);
+            request<FigmaFileStatus>('figma')
+              .then(setFigma)
+              .catch(() => undefined);
+          }}
+        />
+      ) : view === 'dashboard' ? (
         <>
           {feedback}
           {history}
@@ -517,7 +553,8 @@ export default function App() {
                 Design System
               </h1>
               <p>
-                Lisière · exemple fictif, sources locales · r{state.revision}
+                {connection?.project?.name ?? 'Aucun projet ouvert'} · révision{' '}
+                {state.revision}
               </p>
             </div>
             <div className="intro-actions">
@@ -825,7 +862,11 @@ export default function App() {
           {feedback}
           {history}
           <main className="studio-main">
-            <PreviewPage onError={setError} />
+            <PreviewPage
+              project={connection?.project}
+              onError={setError}
+              onFocus={setPreviewFocus}
+            />
           </main>
         </>
       )}

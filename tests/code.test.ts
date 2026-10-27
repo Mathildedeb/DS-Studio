@@ -186,3 +186,94 @@ test('Clodo : réponse illisible ou sans fichier, aucune proposition', async (t)
   );
   assert.deepEqual(none, { message: 'Hors du code.', proposal: null });
 });
+
+test('projet ouvert : Clodo ne voit que le code source, crée et annule un fichier', async (t) => {
+  const root = await mkdtemp(path.join(tmpdir(), 'ds-projet-'));
+  const data = await mkdtemp(path.join(tmpdir(), 'ds-donnees-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  t.after(() => rm(data, { recursive: true, force: true }));
+  await mkdir(path.join(root, 'src'), { recursive: true });
+  await mkdir(path.join(root, 'node_modules', 'x'), { recursive: true });
+  await writeFile(path.join(root, 'src', 'App.tsx'), 'export const App = 1;\n');
+  await writeFile(path.join(root, 'node_modules', 'x', 'index.js'), 'x');
+  await writeFile(path.join(root, 'package.json'), '{"scripts":{}}');
+  await writeFile(path.join(root, 'vite.config.ts'), 'export default {};');
+  await writeFile(path.join(root, '.env'), 'SECRET=1');
+  const code = new CodeStore(root, data, true);
+  assert.deepEqual(
+    (await code.catalogue()).map((f) => f.file),
+    ['src/App.tsx'],
+  );
+  for (const file of [
+    'package.json',
+    'vite.config.ts',
+    '.env',
+    'node_modules/x/index.js',
+    '../dehors.ts',
+  ])
+    assert.equal(code.isEditable(file), false, file);
+  // Création d'une page : search vide, puis annulation qui supprime le fichier.
+  const p = await code.propose([
+    {
+      file: 'src/pages/Profil.tsx',
+      search: '',
+      replace: 'export const Profil = () => null;\n',
+    },
+  ]);
+  assert.equal(p.hunks[0].removed.length, 0);
+  await assert.rejects(
+    code.propose([{ file: 'src/App.tsx', search: '', replace: 'x' }]),
+    /existe déjà/,
+  );
+  await code.apply(p.id);
+  const created = path.join(root, 'src', 'pages', 'Profil.tsx');
+  assert.match(await readFile(created, 'utf8'), /Profil/);
+  await code.revert(p.id);
+  await assert.rejects(readFile(created, 'utf8'));
+  // Hors projet, la création reste interdite.
+  const studio = new CodeStore(root, data);
+  await assert.rejects(
+    studio.propose([{ file: 'app/client/Neuf.tsx', search: '', replace: 'x' }]),
+    /Création refusée/,
+  );
+});
+
+test('projet ouvert : un fichier choisi mais absent est proposé à la création', async (t) => {
+  const root = await mkdtemp(path.join(tmpdir(), 'ds-projet-'));
+  const data = await mkdtemp(path.join(tmpdir(), 'ds-donnees-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  t.after(() => rm(data, { recursive: true, force: true }));
+  const inputs: string[] = [];
+  const answers = [
+    JSON.stringify({ files: ['src/Accueil.tsx'] }),
+    JSON.stringify({
+      message: 'Je crée la page Accueil.',
+      edits: [
+        {
+          file: 'src/Accueil.tsx',
+          search: '',
+          replace: 'export const Accueil = () => null;\n',
+        },
+      ],
+    }),
+  ];
+  const ask: Ask = async (system, input) => {
+    inputs.push(system + '\n' + input);
+    return answers.shift()!;
+  };
+  const reply = await proposeCode(
+    ask,
+    new CodeStore(root, data, true),
+    'crée une page accueil',
+    [],
+    undefined,
+    undefined,
+    {},
+    'mon-proto',
+  );
+  assert.ok(reply.proposal);
+  assert.match(inputs[0], /projet « mon-proto »/);
+  assert.deepEqual(JSON.parse(inputs[1].split('\n').at(-1)!).new_files, [
+    'src/Accueil.tsx',
+  ]);
+});

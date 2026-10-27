@@ -2248,3 +2248,91 @@ h2[id] {
   color: var(--studio-muted);
   font-style: italic;
 }
+
+/* Ouvrir un projet : dossier Git et fichier Figma. */
+.open-project {
+  display: flex;
+  justify-content: center;
+  padding: 40px 28px;
+}
+.open-project section {
+  width: min(720px, 100%);
+  background: var(--studio-surface);
+  border: 1px solid var(--studio-border);
+  border-radius: var(--studio-radius-lg);
+  padding: 28px;
+}
+.open-project h1 {
+  margin: 0 0 6px;
+}
+.open-project h2 {
+  font-size: 14px;
+  margin: 24px 0 8px;
+}
+.open-lead {
+  color: var(--studio-muted);
+  margin: 0;
+}
+.open-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: end;
+}
+.open-status {
+  margin: 8px 0 0;
+  padding: 8px 10px;
+  border-radius: var(--studio-radius);
+  font-size: 12px;
+  word-break: break-word;
+}
+.open-status.ok {
+  background: var(--studio-success-bg);
+  color: var(--studio-success-text);
+}
+.open-status.warn {
+  background: var(--studio-warning-bg);
+  color: var(--studio-warning-text);
+}
+.open-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 24px;
+}
+.project-badge {
+  max-width: 260px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+@media (max-width: 560px) {
+  .open-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+.project-run {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  padding: 10px 18px;
+  border-bottom: 1px solid var(--studio-border);
+  font-size: 13px;
+}
+.project-run details {
+  flex-basis: 100%;
+}
+.project-run pre {
+  max-height: 200px;
+  overflow: auto;
+  font-size: 11px;
+  background: var(--studio-well);
+  padding: 8px;
+  border-radius: var(--studio-radius);
+  white-space: pre-wrap;
+}
+.project-idle {
+  padding: 60px 20px;
+  text-align: center;
+  color: var(--studio-muted);
+}

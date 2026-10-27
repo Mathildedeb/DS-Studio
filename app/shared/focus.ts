@@ -5,8 +5,8 @@ import { z } from 'zod';
 // décrites par le registre et lues sur le rendu : aucune n'est exécutée.
 export const focusSchema = z
   .object({
-    page: z.enum(['design-system']),
-    kind: z.enum(['component', 'token']),
+    page: z.enum(['design-system', 'preview']),
+    kind: z.enum(['component', 'token', 'page']),
     name: z.string().max(80),
     path: z.array(z.string().max(80)).max(10),
     level: z.string().max(20).optional(),
@@ -22,4 +22,8 @@ export const focusSchema = z
 export type Focus = z.infer<typeof focusSchema>;
 
 export const focusLabel = (f: Focus) =>
-  f.kind === 'token' ? `token ${f.name}` : f.path.join(' › ');
+  f.kind === 'token'
+    ? `token ${f.name}`
+    : f.kind === 'page'
+      ? `page ${f.name} (${f.value}) · ${f.props?.format ?? ''}`
+      : f.path.join(' › ');

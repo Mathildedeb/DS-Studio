@@ -36,11 +36,13 @@ try {
     ),
   );
   // Seul FIGMA_TOKEN est lu dans .env ; il n'est jamais affiché ni envoyé au navigateur.
-  const figmaToken =
-    process.env.FIGMA_TOKEN ||
-    (await readPrivate(path.join(root, '.env'), 16_000)
-      .then((raw) => parseEnv(raw).FIGMA_TOKEN)
-      .catch(() => undefined));
+  // Les tests e2e coupent Figma : aucun appel réseau avec le vrai jeton.
+  const figmaToken = process.env.DS_STUDIO_NO_FIGMA
+    ? undefined
+    : process.env.FIGMA_TOKEN ||
+      (await readPrivate(path.join(root, '.env'), 16_000)
+        .then((raw) => parseEnv(raw).FIGMA_TOKEN)
+        .catch(() => undefined));
   const store = new Store(directory, seed);
   await store.init();
   let stopping = false;

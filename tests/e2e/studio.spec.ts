@@ -7,9 +7,7 @@ test('boucle centrale réelle : diff, validation, propagation, recharge, annulat
   await expect(
     page.getByRole('heading', { name: 'Design System', level: 1 }),
   ).toBeVisible();
-  await expect(
-    page.getByText('Figma non connecté', { exact: true }),
-  ).toBeVisible();
+  await expect(page.getByText(/^Figma non connecté/).first()).toBeVisible();
   // Le DS est vide de composants : la propagation se lit sur les variables
   // de tokens de l'iframe Preview, et sur la liste des tokens.
   const mobile = page.frameLocator('iframe');
@@ -377,4 +375,30 @@ test('V2 : ajouter puis supprimer un token, chaque fois par le diff', async ({
   await expect(dialog).toContainText('supprimé');
   await dialog.getByRole('button', { name: 'Valider et enregistrer' }).click();
   await expect(row).toHaveCount(0);
+});
+
+test('Ouvrir un projet : dossier Git et lien Figma depuis l’en-tête', async ({
+  page,
+}) => {
+  const folder = process.cwd();
+  const name = folder.split('/').at(-1)!;
+  await page.goto('/#tableau-de-bord');
+  await page.getByRole('button', { name: 'Ouvrir un projet' }).click();
+  await expect(
+    page.getByRole('heading', { name: 'Ouvrir un projet', level: 1 }),
+  ).toBeVisible();
+  await page.getByLabel('Chemin du dossier').fill(folder);
+  await page.getByLabel('Lien du fichier Figma').focus();
+  await expect(page.getByText(`Dépôt Git « ${name} »`)).toBeVisible();
+  await page
+    .getByLabel('Lien du fichier Figma')
+    .fill('https://www.figma.com/design/KpumlnYQdqqk0j0Q0GxPmA/Test');
+  await page.getByRole('button', { name: 'Vérifier' }).click();
+  await expect(page.locator('.open-status').last()).toContainText(
+    'Figma non connecté',
+  );
+  await page.getByRole('button', { name: 'Ouvrir le projet' }).click();
+  await expect(page.locator('.project-badge')).toContainText(name);
+  await page.reload();
+  await expect(page.locator('.project-badge')).toContainText(name);
 });

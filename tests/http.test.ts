@@ -502,3 +502,39 @@ test('Preview : formats et pages enregistrés, valeurs hors bornes refusées', a
   };
   assert.equal((await post('preview', tooWide)).status, 400);
 });
+
+test('Ouvrir un projet : dossier Git inspecté, liens invalides refusés', async (t) => {
+  const { origin, post } = await fixture(t);
+  assert.deepEqual(await (await fetch(origin + '/api/connection')).json(), {
+    saved: {},
+  });
+  // Le dépôt de DS-Studio lui-même sert de dossier Git d'essai.
+  const inspected = await (
+    await post('connection/inspect', { folder: root })
+  ).json();
+  assert.equal(inspected.name, path.basename(root));
+  assert.ok(inspected.git, 'dépôt Git détecté');
+  assert.equal(
+    (await post('connection/inspect', { folder: 'relatif' })).status,
+    400,
+  );
+  assert.equal(
+    (
+      await post('connection', {
+        folder: root,
+        figmaUrl: 'https://evil.invalid/x',
+      })
+    ).status,
+    400,
+  );
+  const figmaUrl = 'https://www.figma.com/design/KpumlnYQdqqk0j0Q0GxPmA/Test';
+  const saved = await (
+    await post('connection', { folder: root, figmaUrl })
+  ).json();
+  assert.equal(saved.saved.figmaUrl, figmaUrl);
+  assert.equal(saved.project.name, path.basename(root));
+  assert.deepEqual(
+    (await (await fetch(origin + '/api/connection')).json()).saved,
+    saved.saved,
+  );
+});

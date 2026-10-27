@@ -160,7 +160,16 @@ export const previewSchema = z
     pages: z
       .array(
         z
-          .object({ id: z.string().regex(/^[a-z0-9-]{1,40}$/), name: label })
+          .object({
+            id: z.string().regex(/^[a-z0-9-]{1,40}$/),
+            name: label,
+            // Route de la page dans le projet ouvert (ex. /profil).
+            path: z
+              .string()
+              .max(200)
+              .regex(/^\/[A-Za-z0-9\-._~/?=&#%]*$/, 'Chemin attendu : /page')
+              .optional(),
+          })
           .strict(),
       )
       .min(1)
