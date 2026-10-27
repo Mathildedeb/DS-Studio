@@ -4,6 +4,7 @@ import path from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { z } from 'zod';
 import { proposeSchema } from '../shared/model.js';
+import { focusSchema } from '../shared/focus.js';
 import { Store, StudioError } from './store.js';
 import { ProjectStore } from './project.js';
 import { projectSchema } from '../shared/project.js';
@@ -133,6 +134,8 @@ export async function createStudioServer(options: {
           }
           if (url.pathname === '/api/clodo')
             return send(200, await dashboard.readClodo());
+          if (url.pathname === '/api/preview')
+            return send(200, await dashboard.readPreview());
           if (url.pathname === '/api/code/last')
             return send(200, await code.last());
           if (url.pathname === '/api/roadmap')
@@ -219,6 +222,8 @@ export async function createStudioServer(options: {
         // Code : Clodo propose, l'étudiante valide le diff, le serveur écrit.
         if (url.pathname === '/api/clodo')
           return send(200, await dashboard.saveClodo(body));
+        if (url.pathname === '/api/preview')
+          return send(200, await dashboard.savePreview(body));
         if (url.pathname === '/api/code/apply') {
           const b = z.object({ id: z.string().uuid() }).strict().parse(body);
           return send(200, await code.apply(b.id));
@@ -241,6 +246,7 @@ export async function createStudioServer(options: {
                     .strict(),
                 )
                 .max(10),
+              focus: focusSchema.optional(),
             })
             .strict()
             .parse(body);
@@ -252,16 +258,20 @@ export async function createStudioServer(options: {
           const cancel = () => controller.abort();
           res.once('close', cancel);
           try {
-            return send(
-              200,
-              await proposeCode(
-                ask,
-                code,
-                b.message,
-                b.history,
-                controller.signal,
-              ),
+            const { changes, ...reply } = await proposeCode(
+              ask,
+              code,
+              b.message,
+              b.history,
+              controller.signal,
+              b.focus,
+              store.snapshot().tokens,
             );
+            // Clodo a choisi des tokens : même diff et même validation qu'à la main.
+            const tokenProposal = changes?.length
+              ? store.propose(store.snapshot().revision, changes, 'claude')
+              : null;
+            return send(200, { ...reply, tokenProposal });
           } finally {
             busy = false;
             active.delete(controller);
@@ -284,6 +294,7 @@ export async function createStudioServer(options: {
                     .strict(),
                 )
                 .max(10),
+              focus: focusSchema.optional(),
             })
             .strict()
             .parse(body);
@@ -337,6 +348,7 @@ export async function createStudioServer(options: {
                     .catch(() => 'indisponible')),
                 rules: await context('DESIGN_RULES.md'),
                 history: b.history,
+                focus: b.focus,
               },
               controller.signal,
             );

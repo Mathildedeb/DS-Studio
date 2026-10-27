@@ -11,10 +11,7 @@ import { createStudioServer } from '../app/server/http.js';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const seed = tokensSchema.parse(
   JSON.parse(
-    await readFile(
-      path.join(root, 'workspace/design-system.tokens.json'),
-      'utf8',
-    ),
+    await readFile(path.join(root, 'tests/fixtures/tokens.json'), 'utf8'),
   ),
 );
 async function fixture(
@@ -426,4 +423,82 @@ test('bulle Clodo : position enregistrée, valeurs hors écran refusées', async
   );
   for (const bad of [{ x: 2, y: 0 }, { x: 0.5 }, { x: 0, y: 0, z: 1 }])
     assert.equal((await post('clodo', bad)).status, 400);
+});
+
+test('sélection de la page DS transmise à Clodo, forme stricte', async (t) => {
+  const inputs: string[] = [];
+  const { post } = await fixture(t, false, async (_system, input) => {
+    inputs.push(input);
+    return JSON.stringify({ files: [], message: 'Rien à faire.' });
+  });
+  const focus = {
+    page: 'design-system',
+    kind: 'component',
+    name: 'ExampleForm',
+    path: ['ExampleForm'],
+    level: 'organism',
+    source: 'React · DesignSystem.tsx › ExampleForm',
+    selector: 'form.ds-form',
+    props: {},
+    tokens: ['space.md'],
+  };
+  const ok = await post('code', {
+    message: 'Change le spacing de ce composant',
+    history: [],
+    focus,
+  });
+  assert.equal(ok.status, 200);
+  assert.equal(JSON.parse(inputs[0]).focus.name, 'ExampleForm');
+  assert.equal(
+    (
+      await post('code', {
+        message: 'x',
+        history: [],
+        focus: { ...focus, script: 'non' },
+      })
+    ).status,
+    400,
+  );
+});
+
+test('un seul chat : Clodo peut choisir les tokens, soumis au diff', async (t) => {
+  const { post, store } = await fixture(t, false, async () =>
+    JSON.stringify({
+      changes: [{ key: 'space.md', value: 12 }],
+      files: [],
+      message: 'Je resserre space.md : tous les composants qui l’utilisent.',
+    }),
+  );
+  const response = await post('code', {
+    message: 'Resserre les espacements',
+    history: [],
+  });
+  assert.equal(response.status, 200);
+  const reply = await response.json();
+  assert.equal(reply.proposal, null);
+  assert.deepEqual(reply.tokenProposal.patches, [
+    { key: 'space.md', type: 'dimension', before: 16, after: 12 },
+  ]);
+  assert.equal(reply.tokenProposal.source, 'claude');
+  assert.equal(store.snapshot().revision, 0, 'rien avant validation');
+});
+
+test('Preview : formats et pages enregistrés, valeurs hors bornes refusées', async (t) => {
+  const { origin, post } = await fixture(t);
+  const initial = await (await fetch(origin + '/api/preview')).json();
+  assert.deepEqual(
+    initial.formats.map((f: { name: string }) => f.name),
+    ['iPhone', 'Tablette', 'Desktop'],
+  );
+  const next = {
+    ...initial,
+    pages: [...initial.pages, { id: 'profil-ab12', name: 'Profil' }],
+  };
+  assert.equal((await post('preview', next)).status, 200);
+  assert.deepEqual(await (await fetch(origin + '/api/preview')).json(), next);
+  const tooWide = {
+    ...next,
+    formats: [{ id: 'x', name: 'X', width: 99999, height: 800 }],
+  };
+  assert.equal((await post('preview', tooWide)).status, 400);
 });

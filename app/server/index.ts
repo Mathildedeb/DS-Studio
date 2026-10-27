@@ -28,7 +28,9 @@ try {
   const seed = tokensSchema.parse(
     JSON.parse(
       await fs.readFile(
-        path.join(root, 'workspace', 'design-system.tokens.json'),
+        // Les tests e2e partent de leurs propres tokens ; sinon, ceux du workspace.
+        process.env.DS_STUDIO_TOKENS_SEED ??
+          path.join(root, 'workspace', 'design-system.tokens.json'),
         'utf8',
       ),
     ),

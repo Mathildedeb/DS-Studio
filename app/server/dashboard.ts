@@ -6,6 +6,9 @@ import {
   checklistSchema,
   clodoSchema,
   defaultClodo,
+  defaultPreview,
+  previewSchema,
+  type PreviewConfig,
   defaultAtelierLayout,
   defaultLayout,
   layoutSchema,
@@ -114,6 +117,23 @@ export class DashboardStore {
     return this.write(
       path.join(this.directory, 'clodo.json'),
       clodoSchema.parse(position),
+    );
+  }
+  async readPreview(): Promise<PreviewConfig> {
+    try {
+      return previewSchema.parse(
+        JSON.parse(
+          await readPrivate(path.join(this.directory, 'preview.json'), 20_000),
+        ),
+      );
+    } catch {
+      return defaultPreview;
+    }
+  }
+  savePreview(config: unknown) {
+    return this.write(
+      path.join(this.directory, 'preview.json'),
+      previewSchema.parse(config),
     );
   }
   saveChecklist(checklist: Checklist) {

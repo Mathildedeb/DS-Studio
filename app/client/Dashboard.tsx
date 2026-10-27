@@ -193,22 +193,17 @@ export default function Dashboard({
             </small>
           </p>
           <div className="token-swatches" aria-label="Couleurs principales">
-            {(
-              [
-                'color.brand',
-                'color.text',
-                'color.muted',
-                'color.border',
-                'color.danger',
-                'color.success',
-              ] as const
-            ).map((k) => (
-              <span
-                key={k}
-                title={`${k} · ${tokens[k].$value}`}
-                style={{ background: tokens[k].$value }}
-              />
-            ))}
+            {/* Les six premières couleurs du DS, quelle que soit leur liste. */}
+            {Object.entries(tokens)
+              .filter(([, t]) => t.$type === 'color')
+              .slice(0, 6)
+              .map(([k, t]) => (
+                <span
+                  key={k}
+                  title={`${k} · ${t.$value}`}
+                  style={{ background: String(t.$value) }}
+                />
+              ))}
           </div>
           <p className="figma-line">
             {figma?.file ? (

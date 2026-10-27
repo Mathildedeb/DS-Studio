@@ -1,18 +1,20 @@
 import { useEffect, useRef, useState } from 'react';
-import { Catalogue, Scenario } from './DesignSystem.js';
+import { Scenario } from './DesignSystem.js';
+import {
+  ComponentWorkspace,
+  DsTabs,
+  TokenTable,
+  type Tab,
+} from './AtomicPage.js';
+import { focusLabel, type Focus } from '../shared/focus.js';
+import { usedBy } from './dsRegistry.js';
 import Chat, { type ChatMessage } from './Chat.js';
 import CodeReview from './CodeReview.js';
 import Clodo from './Clodo.js';
 import type { CodeProposal } from '../server/code.js';
 import Dashboard from './Dashboard.js';
-import Board from './Board.js';
+import PreviewPage from './PreviewPage.js';
 import type { FigmaFileStatus } from '../../connectors/figma/reader.js';
-import { atelierIds, defaultAtelierLayout } from '../shared/dashboard.js';
-
-const atelierTitles = {
-  tokens: 'Tokens et composants',
-  preview: 'Aperçu responsive',
-};
 import { useTokenDraft } from './useTokenDraft.js';
 import {
   bootstrap,
@@ -28,14 +30,9 @@ import {
   type Proposal,
   type State,
   type TokenKey,
+  type TokenType,
 } from '../shared/model.js';
 
-const devices = [
-  { label: 'Compact · 320', width: 320 },
-  { label: 'Standard · 375', width: 375 },
-  { label: 'Grand · 430', width: 430 },
-  { label: 'Desktop · 1024', width: 1024 },
-];
 function useDesignState() {
   const [state, setState] = useState<State>();
   const [error, setError] = useState('');
@@ -71,14 +68,18 @@ function useDesignState() {
   }, []);
   return { state, setState, error };
 }
-// Le tableau de bord est l'accueil ; #atelier ouvre l'espace de travail du DS.
-// Les ancres internes de l'atelier (#ds-title…) restent dans l'atelier.
+// Le tableau de bord est l'accueil ; #design-system et #preview sont les deux
+// pages de travail. Les ancres internes (#ds-title…) et l'ancien #atelier
+// restent sur la page Design System.
+type View = 'dashboard' | 'ds' | 'preview';
 function useView() {
-  const read = () =>
+  const read = (): View =>
     location.hash === '' || location.hash === '#tableau-de-bord'
       ? 'dashboard'
-      : ('atelier' as const);
-  const [view, setView] = useState<'atelier' | 'dashboard'>(read);
+      : location.hash === '#preview'
+        ? 'preview'
+        : 'ds';
+  const [view, setView] = useState<View>(read);
   useEffect(() => {
     const onHash = () => {
       setView(read());
@@ -96,12 +97,15 @@ function announceChange() {
 }
 export function Preview() {
   const { state, error } = useDesignState();
-  const scenario =
-    new URLSearchParams(location.search).get('scenario') ?? 'cards';
+  const params = new URLSearchParams(location.search);
   return state ? (
-    <Scenario tokens={state.tokens} scenario={scenario} />
+    <Scenario
+      tokens={state.tokens}
+      scenario={params.get('scenario') ?? 'cards'}
+      title={params.get('title') ?? ''}
+    />
   ) : (
-    <p role="alert">{error || 'Chargement du scénario…'}</p>
+    <p role="alert">{error || 'Chargement de la page…'}</p>
   );
 }
 export default function App() {
@@ -113,26 +117,40 @@ export default function App() {
       const saved = JSON.parse(
         sessionStorage.getItem('ds-studio-token-draft-v2') || 'null',
       );
-      if (tokenKeys.includes(saved?.key)) return saved.key;
+      if (typeof saved?.key === 'string') return saved.key;
     } catch {
       /* Facultatif. */
     }
     return 'color.brand';
   });
+  // Token sélectionné disparu (supprimé, liste vide) : on passe au premier.
+  useEffect(() => {
+    if (state && !state.tokens[key] && tokenKeys(state.tokens).length)
+      setKey(tokenKeys(state.tokens)[0]);
+  }, [state, key]);
   const { draft, setDraft, recovered, discard } = useTokenDraft(
     key,
-    state?.tokens[key].$value,
+    state?.tokens[key]?.$value,
   );
+  const [adding, setAdding] = useState(false);
+  const [newToken, setNewToken] = useState<{
+    key: string;
+    type: TokenType;
+    value: string;
+  }>({ key: '', type: 'color', value: '' });
   const [search, setSearch] = useState('');
+  const [tab, setTab] = useState<Tab>('tokens');
+  const [componentFocus, setComponentFocus] = useState<Focus>();
+  const openToken = (k: TokenKey) => {
+    setKey(k);
+    setTab('tokens');
+  };
   const [agents, setAgents] = useState<Bootstrap['agents']>([]);
   const [proposal, setProposal] = useState<Proposal>();
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
-  const [device, setDevice] = useState(1);
-  const [scenario, setScenario] = useState('cards');
   const [message, setMessage] = useState('');
   const [chat, setChat] = useState<ChatMessage[]>([]);
-  const [chatMode, setChatMode] = useState<'tokens' | 'code'>('tokens');
   const [codeProposal, setCodeProposal] = useState<CodeProposal>();
   const [codeBusy, setCodeBusy] = useState(false);
   const [codeError, setCodeError] = useState('');
@@ -175,7 +193,7 @@ export default function App() {
     addEventListener('keydown', onKey);
     return () => removeEventListener('keydown', onKey);
   }, [clodoOpen]);
-  const current = state?.tokens[key].$value;
+  const current = state?.tokens[key]?.$value;
 
   useEffect(() => {
     if (proposal) {
@@ -196,9 +214,9 @@ export default function App() {
     }
   }
   async function proposeToken() {
-    if (!state) return;
+    const token = state?.tokens[key];
+    if (!state || !token) return;
     await perform(async () => {
-      const token = state.tokens[key];
       const value = token.$type === 'dimension' ? Number(draft) : draft;
       setProposal(
         await request<Proposal>('proposals', {
@@ -207,6 +225,38 @@ export default function App() {
         }),
       );
     });
+  }
+  // Ajout et suppression passent par le même diff que les modifications.
+  async function addToken() {
+    if (!state) return;
+    await perform(async () => {
+      const { key: name, type, value } = newToken;
+      setProposal(
+        await request<Proposal>('proposals', {
+          revision: state.revision,
+          changes: [
+            {
+              key: name.trim(),
+              type,
+              value: type === 'dimension' ? Number(value) : value.trim(),
+            },
+          ],
+        }),
+      );
+      setNewToken({ key: '', type, value: '' });
+      setAdding(false);
+    });
+  }
+  async function removeToken() {
+    if (!state?.tokens[key]) return;
+    await perform(async () =>
+      setProposal(
+        await request<Proposal>('proposals', {
+          revision: state.revision,
+          changes: [{ key, value: null }],
+        }),
+      ),
+    );
   }
   async function accept() {
     if (!proposal) return;
@@ -219,13 +269,30 @@ export default function App() {
         /* Facultatif. */
       }
       setState(next);
+      // Un token créé est sélectionné seulement une fois enregistré.
+      const added = proposal.patches.find((p) => p.before === null);
+      if (added) setKey(added.key);
       setProposal(undefined);
       announceChange();
       setNotice(`Révision ${next.revision} enregistrée sur disque.`);
     });
     setSaving(false);
   }
-  async function sendMessage(agentId: string) {
+  // Ce que regarde l'étudiante dans la page Design System, envoyé au chat.
+  const focus: Focus | undefined =
+    view !== 'ds' || !state
+      ? undefined
+      : tab === 'tokens'
+        ? state.tokens[key] && {
+            page: 'design-system',
+            kind: 'token',
+            name: key,
+            path: [key],
+            value: state.tokens[key].$value,
+            tokens: [key],
+          }
+        : componentFocus;
+  async function sendMessage() {
     if (!state || !message.trim() || thinking) return;
     const text = message;
     setMessage('');
@@ -236,33 +303,19 @@ export default function App() {
     const abort = new AbortController();
     controller.current = abort;
     try {
-      if (chatMode === 'code') {
-        const coded = await request<{
-          message: string;
-          proposal: CodeProposal | null;
-        }>('code', { message: text, history: previous }, abort.signal);
-        setChat((c) => [...c, { role: 'assistant', text: coded.message }]);
-        if (coded.proposal) {
-          setCodeError('');
-          setCodeProposal(coded.proposal);
-        }
-        return;
-      }
-      const result = await request<{
+      // Un seul chat : Clodo choisit de proposer des tokens ou du code, et
+      // chaque proposition passe par son diff avant toute écriture.
+      const reply = await request<{
         message: string;
-        proposal: Proposal | null;
-      }>(
-        'agent',
-        {
-          agent: agentId,
-          message: text,
-          revision: state.revision,
-          history: previous,
-        },
-        abort.signal,
-      );
-      setChat((c) => [...c, { role: 'assistant', text: result.message }]);
-      if (result.proposal) setProposal(result.proposal);
+        proposal: CodeProposal | null;
+        tokenProposal: Proposal | null;
+      }>('code', { message: text, history: previous, focus }, abort.signal);
+      setChat((c) => [...c, { role: 'assistant', text: reply.message }]);
+      if (reply.proposal) {
+        setCodeError('');
+        setCodeProposal(reply.proposal);
+      }
+      if (reply.tokenProposal) setProposal(reply.tokenProposal);
     } catch (e) {
       setError(
         abort.signal.aborted
@@ -293,12 +346,11 @@ export default function App() {
         onMessage={setMessage}
         thinking={thinking}
         available={!!status?.available}
-        onSend={() => void sendMessage(agentId)}
+        onSend={() => void sendMessage()}
         onStop={() => controller.current?.abort()}
-        mode={chatMode}
-        onMode={setChatMode}
-        lastCode={lastCode}
         onClose={onClose}
+        focus={focus && focusLabel(focus)}
+        lastCode={lastCode}
         onRevert={() =>
           void perform(async () => {
             if (!lastCode) return;
@@ -311,17 +363,26 @@ export default function App() {
     );
   };
   const staleProposal = !!proposal && proposal.revision !== state.revision;
+  const selected = state.tokens[key];
+  // Le contraste marque / texte ne s'affiche que si ces deux couleurs existent.
+  const colorOf = (k: string) => {
+    const t = state.tokens[k];
+    return t?.$type === 'color' ? t.$value : undefined;
+  };
+  const brand = colorOf('color.brand');
+  const onBrand = colorOf('color.onBrand');
+  const brandContrast = brand && onBrand ? contrast(brand, onBrand) : undefined;
   const draftContrast =
+    brand &&
+    onBrand &&
     /^#[0-9a-fA-F]{6}$/.test(draft) &&
     (key === 'color.brand' || key === 'color.onBrand')
       ? contrast(
-          key === 'color.brand' ? draft : state.tokens['color.brand'].$value,
-          key === 'color.onBrand'
-            ? draft
-            : state.tokens['color.onBrand'].$value,
+          key === 'color.brand' ? draft : brand,
+          key === 'color.onBrand' ? draft : onBrand,
         )
       : undefined;
-  const matchingKeys = tokenKeys.filter((k) =>
+  const matchingKeys = tokenKeys(state.tokens).filter((k) =>
     k.toLowerCase().includes(search.trim().toLowerCase()),
   );
   const feedback = (
@@ -379,7 +440,7 @@ export default function App() {
   );
   return (
     <>
-      {view === 'atelier' && (
+      {view === 'ds' && (
         <a className="skip-link" href="#ds-title">
           Aller aux tokens
         </a>
@@ -400,10 +461,16 @@ export default function App() {
             Tableau de bord
           </a>
           <a
-            href="#atelier"
-            aria-current={view === 'atelier' ? 'page' : undefined}
+            href="#design-system"
+            aria-current={view === 'ds' ? 'page' : undefined}
           >
-            Atelier
+            Design System
+          </a>
+          <a
+            href="#preview"
+            aria-current={view === 'preview' ? 'page' : undefined}
+          >
+            Preview
           </a>
         </nav>
         <div className="header-status">
@@ -442,11 +509,16 @@ export default function App() {
             onError={setError}
           />
         </>
-      ) : (
+      ) : view === 'ds' ? (
         <>
           <div className="intro">
             <div>
-              <h1>L’atelier</h1>
+              <h1 id="ds-title" tabIndex={-1}>
+                Design System
+              </h1>
+              <p>
+                Lisière · exemple fictif, sources locales · r{state.revision}
+              </p>
             </div>
             <div className="intro-actions">
               <button onClick={() => void perform(exportTokens)}>
@@ -482,260 +554,286 @@ export default function App() {
           {feedback}
           {history}
           <main className="studio-main">
-            <Board
-              name="atelier"
-              label="atelier"
-              ids={atelierIds}
-              titles={atelierTitles}
-              fallback={defaultAtelierLayout}
-              onError={setError}
-              render={(id) =>
-                id === 'tokens' ? (
-                  <section
-                    className="panel ds-panel"
-                    aria-labelledby="ds-title"
+            <section className="panel ds-panel" aria-labelledby="ds-title">
+              <DsTabs tab={tab} onTab={setTab} />
+              <div
+                className="ds-workspace"
+                role="tabpanel"
+                id="panel-tokens"
+                aria-labelledby="tab-tokens"
+                hidden={tab !== 'tokens'}
+              >
+                <div className="ds-list">
+                  <div className="editor-title">
+                    <h3>Tokens sémantiques</h3>
+                    <span>{tokenKeys(state.tokens).length} tokens</span>
+                  </div>
+                  <button
+                    type="button"
+                    className="token-add"
+                    aria-expanded={adding}
+                    onClick={() => setAdding(!adding)}
                   >
-                    <div className="panel-heading">
-                      <span className="panel-index">B</span>
-                      <div>
-                        <h2 id="ds-title" tabIndex={-1}>
-                          Design System
-                        </h2>
-                        <p>Lisière · exemple fictif, sources locales</p>
-                      </div>
-                      <span className="revision-tag">r{state.revision}</span>
-                    </div>
-                    <div className="token-editor">
-                      <div className="editor-title">
-                        <h3>Tokens sémantiques</h3>
-                        <span>{tokenKeys.length} tokens</span>
-                      </div>
-                      <label className="field token-search">
-                        Rechercher un token
+                    + Token
+                  </button>
+                  {adding && (
+                    <form
+                      className="token-new"
+                      onSubmit={(e) => {
+                        e.preventDefault();
+                        void addToken();
+                      }}
+                    >
+                      <label className="field">
+                        Nom du token
                         <input
-                          type="search"
-                          value={search}
-                          onChange={(e) => setSearch(e.target.value)}
-                          placeholder="color, space, font…"
+                          value={newToken.key}
+                          onChange={(e) =>
+                            setNewToken({ ...newToken, key: e.target.value })
+                          }
+                          placeholder="color.brand, space.md…"
+                          maxLength={60}
+                          required
                         />
                       </label>
-                      <p className="token-hint" role="status">
-                        {matchingKeys.length} résultat(s).{' '}
-                        {search && 'La sélection courante reste accessible.'}
-                      </p>
-                      <div className="swatches">
-                        {matchingKeys
-                          .filter((k) => k.startsWith('color.'))
-                          .map((k) => (
-                            <button
-                              title={k}
-                              aria-label={`Sélectionner ${k}`}
-                              aria-pressed={key === k}
-                              key={k}
-                              style={{
-                                background: String(state.tokens[k].$value),
-                              }}
-                              onClick={() => setKey(k)}
-                            >
-                              <span className="sr-only">{k}</span>
-                            </button>
-                          ))}
-                      </div>
-                      <form
-                        className="token-form"
-                        onSubmit={(e) => {
-                          e.preventDefault();
-                          void proposeToken();
-                        }}
-                      >
-                        <label className="field">
-                          Token
-                          <select
-                            value={key}
-                            onChange={(e) => setKey(e.target.value as TokenKey)}
-                          >
-                            {[...new Set([key, ...matchingKeys])].map((k) => (
-                              <option key={k}>{k}</option>
-                            ))}
-                          </select>
-                        </label>
-                        <label className="field">
-                          Valeur
-                          {state.tokens[key].$type === 'fontFamily' ? (
-                            <select
-                              value={draft}
-                              onChange={(e) => setDraft(e.target.value)}
-                            >
-                              {['system-ui', 'Arial', 'Georgia', 'Verdana'].map(
-                                (f) => (
-                                  <option key={f}>{f}</option>
-                                ),
-                              )}
-                            </select>
-                          ) : (
-                            <input
-                              aria-label="Valeur du token"
-                              value={draft}
-                              onChange={(e) => setDraft(e.target.value)}
-                              required
-                              type={
-                                state.tokens[key].$type === 'dimension'
-                                  ? 'number'
-                                  : 'text'
-                              }
-                              min={
-                                state.tokens[key].$type === 'dimension'
-                                  ? 0
-                                  : undefined
-                              }
-                              max={
-                                state.tokens[key].$type === 'dimension'
-                                  ? 128
-                                  : undefined
-                              }
-                              step={
-                                state.tokens[key].$type === 'dimension'
-                                  ? 'any'
-                                  : undefined
-                              }
-                              maxLength={20}
-                            />
-                          )}
-                        </label>
-                        <button
-                          className="studio-primary"
-                          disabled={!boot || draft === String(current)}
+                      <label className="field">
+                        Type du token
+                        <select
+                          value={newToken.type}
+                          onChange={(e) =>
+                            setNewToken({
+                              ...newToken,
+                              type: e.target.value as TokenType,
+                            })
+                          }
                         >
-                          Proposer
-                        </button>
-                      </form>
-                      {state.tokens[key].$type === 'color' && (
-                        <label className="color-picker">
-                          Choisir visuellement
-                          <input
-                            aria-label="Sélecteur de couleur"
-                            type="color"
-                            value={
-                              /^#[0-9a-fA-F]{6}$/.test(draft)
-                                ? draft
-                                : String(current)
-                            }
-                            onChange={(e) => setDraft(e.target.value)}
-                          />
-                        </label>
-                      )}
-                      {draft !== String(current) && (
-                        <p className="draft-status" role="status">
-                          {recovered
-                            ? 'Brouillon récupéré dans cet onglet.'
-                            : 'Brouillon non enregistré.'}{' '}
-                          Rien n’est appliqué.
-                          <button type="button" onClick={discard}>
-                            Abandonner le brouillon
-                          </button>
+                          <option value="color">Couleur</option>
+                          <option value="dimension">Dimension (px)</option>
+                          <option value="fontFamily">Police</option>
+                        </select>
+                      </label>
+                      <label className="field">
+                        Valeur initiale
+                        <input
+                          value={newToken.value}
+                          onChange={(e) =>
+                            setNewToken({ ...newToken, value: e.target.value })
+                          }
+                          placeholder={
+                            newToken.type === 'color'
+                              ? '#RRGGBB'
+                              : newToken.type === 'dimension'
+                                ? '16'
+                                : 'Inter, system-ui…'
+                          }
+                          maxLength={60}
+                          required
+                        />
+                      </label>
+                      <button className="studio-primary">
+                        Proposer l’ajout
+                      </button>
+                    </form>
+                  )}
+                  <label className="field token-search">
+                    Rechercher un token
+                    <input
+                      type="search"
+                      value={search}
+                      onChange={(e) => setSearch(e.target.value)}
+                      placeholder="color, space, font…"
+                    />
+                  </label>
+                  <p className="token-hint" role="status">
+                    {matchingKeys.length} résultat(s).{' '}
+                    {search && 'La sélection courante reste accessible.'}
+                  </p>
+                  <TokenTable
+                    tokens={state.tokens}
+                    keys={matchingKeys}
+                    selected={key}
+                    onSelect={setKey}
+                  />
+                </div>
+                {!selected ? (
+                  <div className="ds-detail token-editor">
+                    <p className="ds-stage-empty">
+                      Aucun token pour l’instant. Ajoutez-en avec « + Token »,
+                      importez un JSON, ou demandez à Clodo.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="ds-detail token-editor">
+                    <header className="ds-detail-head">
+                      <div>
+                        <h2>{key}</h2>
+                        <p>
+                          {selected.$type} · --{key.replaceAll('.', '-')}
                         </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => void removeToken()}
+                        disabled={!boot}
+                      >
+                        Supprimer ce token
+                      </button>
+                    </header>
+                    <div className="ds-stage token-sample">
+                      {selected.$type === 'color' ? (
+                        <span
+                          className="token-sample-color"
+                          style={{ background: draft }}
+                        />
+                      ) : selected.$type === 'dimension' ? (
+                        <span
+                          className="token-sample-size"
+                          style={{ width: `${Number(draft) || 0}px` }}
+                        />
+                      ) : (
+                        <span style={{ fontFamily: draft, fontSize: 28 }}>
+                          Aa · Bb · 123
+                        </span>
                       )}
-                      <p className="token-hint">
-                        {state.tokens[key].$type === 'color'
-                          ? '#RRGGBB · '
-                          : state.tokens[key].$type === 'dimension'
-                            ? 'Pixels, de 0 à 128 · '
-                            : ''}
-                        Rien n’est écrit avant validation.
+                      <small>Aperçu du brouillon, taille réelle</small>
+                    </div>
+                    <p className="token-hint">
+                      Utilisé par :{' '}
+                      {usedBy(key).join(', ') || 'aucun composant'}
+                    </p>
+                    <form
+                      className="token-form"
+                      onSubmit={(e) => {
+                        e.preventDefault();
+                        void proposeToken();
+                      }}
+                    >
+                      <label className="field">
+                        Token
+                        <select
+                          value={key}
+                          onChange={(e) => setKey(e.target.value)}
+                        >
+                          {[...new Set([key, ...matchingKeys])].map((k) => (
+                            <option key={k}>{k}</option>
+                          ))}
+                        </select>
+                      </label>
+                      <label className="field">
+                        Valeur
+                        <input
+                          aria-label="Valeur du token"
+                          value={draft}
+                          onChange={(e) => setDraft(e.target.value)}
+                          required
+                          type={
+                            selected.$type === 'dimension' ? 'number' : 'text'
+                          }
+                          min={selected.$type === 'dimension' ? 0 : undefined}
+                          max={selected.$type === 'dimension' ? 128 : undefined}
+                          step={
+                            selected.$type === 'dimension' ? 'any' : undefined
+                          }
+                          maxLength={60}
+                        />
+                      </label>
+                      <button
+                        className="studio-primary"
+                        disabled={!boot || draft === String(current)}
+                      >
+                        Proposer
+                      </button>
+                    </form>
+                    {selected.$type === 'color' && (
+                      <label className="color-picker">
+                        Choisir visuellement
+                        <input
+                          aria-label="Sélecteur de couleur"
+                          type="color"
+                          value={
+                            /^#[0-9a-fA-F]{6}$/.test(draft)
+                              ? draft
+                              : String(current)
+                          }
+                          onChange={(e) => setDraft(e.target.value)}
+                        />
+                      </label>
+                    )}
+                    {draft !== String(current) && (
+                      <p className="draft-status" role="status">
+                        {recovered
+                          ? 'Brouillon récupéré dans cet onglet.'
+                          : 'Brouillon non enregistré.'}{' '}
+                        Rien n’est appliqué.
+                        <button type="button" onClick={discard}>
+                          Abandonner le brouillon
+                        </button>
                       </p>
+                    )}
+                    <p className="token-hint">
+                      {selected.$type === 'color'
+                        ? '#RRGGBB · '
+                        : selected.$type === 'dimension'
+                          ? 'Pixels, de 0 à 128 · '
+                          : 'Nom de police · '}
+                      Rien n’est écrit avant validation.
+                    </p>
+                    {brandContrast !== undefined && (
                       <p className="contrast" aria-live="polite">
                         Marque / texte sur marque :{' '}
-                        <strong>
-                          {contrast(
-                            state.tokens['color.brand'].$value,
-                            state.tokens['color.onBrand'].$value,
-                          ).toFixed(2)}
-                          :1
-                        </strong>{' '}
-                        ·{' '}
-                        {contrast(
-                          state.tokens['color.brand'].$value,
-                          state.tokens['color.onBrand'].$value,
-                        ) >= 4.5
+                        <strong>{brandContrast.toFixed(2)}:1</strong> ·{' '}
+                        {brandContrast >= 4.5
                           ? 'AA texte courant'
                           : 'Contraste à améliorer'}
                       </p>
-                      {draftContrast !== undefined &&
-                        draft !== String(current) && (
-                          <p className="contrast" role="status">
-                            Contraste proposé :{' '}
-                            <strong>{draftContrast.toFixed(2)}:1</strong> ·{' '}
-                            {draftContrast >= 4.5
-                              ? 'AA texte courant'
-                              : 'Contraste à améliorer'}
-                            . Cette indication ne certifie pas tous les états du
-                            composant.
-                          </p>
-                        )}
-                    </div>
-                    <Catalogue tokens={state.tokens} />
-                  </section>
-                ) : (
-                  <section
-                    className="panel mobile-panel"
-                    aria-labelledby="mobile-title"
-                  >
-                    <div className="panel-heading">
-                      <span className="panel-index">C</span>
-                      <div>
-                        <h2 id="mobile-title" tabIndex={-1}>
-                          Aperçu responsive
-                        </h2>
-                        <p>De vrais composants, à largeur réelle</p>
-                      </div>
-                    </div>
-                    <div className="preview-controls">
-                      <label className="field">
-                        Viewport
-                        <select
-                          value={device}
-                          onChange={(e) => setDevice(Number(e.target.value))}
-                        >
-                          {devices.map((d, i) => (
-                            <option key={d.width} value={i}>
-                              {d.label}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
-                      <label className="field">
-                        Scénario
-                        <select
-                          value={scenario}
-                          onChange={(e) => setScenario(e.target.value)}
-                        >
-                          <option value="cards">Découvrir</option>
-                          <option value="form">Inscription</option>
-                        </select>
-                      </label>
-                    </div>
-                    <div className="viewport-scroll">
-                      <iframe
-                        title="Aperçu responsive"
-                        src={`/?preview=1&scenario=${scenario}`}
-                        width={devices[device].width}
-                        height={760}
-                      />
-                    </div>
-                    <div className="panel-foot">
-                      {devices[device].width} px CSS · aucun zoom appliqué ·
-                      défilez si nécessaire
-                    </div>
-                  </section>
-                )
-              }
-            />
+                    )}
+                    {draftContrast !== undefined &&
+                      draft !== String(current) && (
+                        <p className="contrast" role="status">
+                          Contraste proposé :{' '}
+                          <strong>{draftContrast.toFixed(2)}:1</strong> ·{' '}
+                          {draftContrast >= 4.5
+                            ? 'AA texte courant'
+                            : 'Contraste à améliorer'}
+                          . Cette indication ne certifie pas tous les états du
+                          composant.
+                        </p>
+                      )}
+                  </div>
+                )}
+              </div>
+              <ComponentWorkspace
+                tokens={state.tokens}
+                tab={tab}
+                onTab={setTab}
+                onToken={openToken}
+                onFocus={setComponentFocus}
+              />
+            </section>
           </main>
-          <footer className="studio-footer">
-            <span>DS-Studio V2 · Fait pour être transformé.</span>
-            <span>JSON local → validation → composants partagés</span>
-          </footer>
         </>
+      ) : (
+        <>
+          <div className="intro">
+            <div>
+              <h1 id="preview-title" tabIndex={-1}>
+                Preview
+              </h1>
+              <p>De vrais composants, à largeur réelle</p>
+            </div>
+          </div>
+          {feedback}
+          {history}
+          <main className="studio-main">
+            <PreviewPage onError={setError} />
+          </main>
+        </>
+      )}
+      {view !== 'dashboard' && (
+        <footer className="studio-footer">
+          <span>DS-Studio V2 · Fait pour être transformé.</span>
+          <span>JSON local → validation → composants partagés</span>
+        </footer>
       )}
       <Clodo open={clodoOpen} onOpen={() => setClodoOpen(true)}>
         {chatBox('claude', () => setClodoOpen(false))}
@@ -798,10 +896,18 @@ export default function App() {
                 <tr key={p.key}>
                   <th>{p.key}</th>
                   <td>
-                    <del>{p.before}</del>
+                    {p.before === null ? (
+                      <span className="diff-none">absent</span>
+                    ) : (
+                      <del>{p.before}</del>
+                    )}
                   </td>
                   <td>
-                    <ins>{p.after}</ins>
+                    {p.after === null ? (
+                      <span className="diff-none">supprimé</span>
+                    ) : (
+                      <ins>{p.after}</ins>
+                    )}
                   </td>
                 </tr>
               ))}

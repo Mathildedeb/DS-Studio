@@ -5,14 +5,14 @@ import { createHash, randomUUID } from 'node:crypto';
 import {
   applyChanges,
   diff,
+  migrateV1,
   stateSchema,
   tokensSchema,
+  type Change,
   type State,
   type Tokens,
   type Proposal,
   type Revision,
-  type TokenKey,
-  type TokenValue,
 } from '../shared/model.js';
 
 export class StudioError extends Error {
@@ -44,6 +44,14 @@ export class Store {
       const raw = await readPrivate(this.file);
       this.state = parseStoredState(raw);
       this.digest = this.hash(raw);
+      // Migration v1 → v2 : l'original est conservé à côté, puis remplacé.
+      if (this.state.version !== JSON.parse(raw).version) {
+        await atomicWrite(
+          path.join(this.directory, `state.v1-${randomUUID()}.json`),
+          raw,
+        );
+        await this.write(this.state);
+      }
     } catch (e) {
       if ((e as NodeJS.ErrnoException).code !== 'ENOENT')
         throw new StudioError(
@@ -51,7 +59,7 @@ export class Store {
           500,
         );
       this.state = {
-        version: 1,
+        version: 2,
         revision: 0,
         tokens: structuredClone(this.seed),
         history: [],
@@ -67,7 +75,7 @@ export class Store {
   }
   propose(
     revision: number,
-    changes: { key: TokenKey; value: TokenValue }[],
+    changes: Change[],
     source: Revision['source'] = 'manual',
   ): Proposal {
     if (revision !== this.state.revision)
@@ -92,6 +100,7 @@ export class Store {
       revision,
       diff(this.state.tokens, tokens).map((p) => ({
         key: p.key,
+        type: p.type,
         value: p.after,
       })),
       'import',
@@ -101,14 +110,14 @@ export class Store {
     const event = this.state.history.find((r) => r.id === id);
     if (!event) throw new StudioError('Révision inconnue.', 404);
     for (const p of event.patches)
-      if (this.state.tokens[p.key].$value !== p.after)
+      if ((this.state.tokens[p.key]?.$value ?? null) !== p.after)
         throw new StudioError(
           `Conflit sur ${p.key} : un changement plus récent serait perdu.`,
           409,
         );
     return this.propose(
       revision,
-      event.patches.map((p) => ({ key: p.key, value: p.before })),
+      event.patches.map((p) => ({ key: p.key, type: p.type, value: p.before })),
       'undo',
     );
   }
@@ -133,7 +142,7 @@ export class Store {
         revision: this.state.revision + 1,
         tokens: applyChanges(
           this.state.tokens,
-          p.patches.map((x) => ({ key: x.key, value: x.after })),
+          p.patches.map((x) => ({ key: x.key, type: x.type, value: x.after })),
         ),
         history: [
           ...this.state.history,
@@ -170,8 +179,10 @@ export class Store {
   }
 }
 
+// Lit un état v2, ou un état v1 converti par migrateV1 (journal conservé).
 export function parseStoredState(raw: string): State {
-  const state = stateSchema.parse(JSON.parse(raw));
+  const json = JSON.parse(raw);
+  const state = stateSchema.parse(json?.version === 1 ? migrateV1(json) : json);
   if (state.history.length !== state.revision)
     throw new Error('Historique incohérent');
   for (const [i, r] of state.history.entries())
@@ -182,10 +193,11 @@ export function parseStoredState(raw: string): State {
     if (new Set(r.patches.map((p) => p.key)).size !== r.patches.length)
       throw new Error('Doublon');
     for (const p of r.patches)
-      if (tokens[p.key].$value !== p.after) throw new Error('Patch incohérent');
+      if ((tokens[p.key]?.$value ?? null) !== p.after)
+        throw new Error('Patch incohérent');
     tokens = applyChanges(
       tokens,
-      r.patches.map((p) => ({ key: p.key, value: p.before })),
+      r.patches.map((p) => ({ key: p.key, type: p.type, value: p.before })),
     );
   }
   return state;

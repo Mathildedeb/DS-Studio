@@ -3,41 +3,49 @@ import { test, expect } from '@playwright/test';
 test('boucle centrale réelle : diff, validation, propagation, recharge, annulation sélective', async ({
   page,
 }) => {
-  await page.goto('/#atelier');
-  await expect(page.getByRole('heading', { name: 'L’atelier' })).toBeVisible();
+  await page.goto('/#design-system');
+  await expect(
+    page.getByRole('heading', { name: 'Design System', level: 1 }),
+  ).toBeVisible();
   await expect(
     page.getByText('Figma non connecté', { exact: true }),
   ).toBeVisible();
-  const catalogue = page.locator('.ds-panel');
+  // Le DS est vide de composants : la propagation se lit sur les variables
+  // de tokens de l'iframe Preview, et sur la liste des tokens.
   const mobile = page.frameLocator('iframe');
-  const mainButton = catalogue.getByRole('button', {
-    name: 'Action principale',
-    exact: true,
-  });
-  await expect(mainButton).toHaveCSS('background-color', 'rgb(49, 84, 196)');
+  const open = (name: string) =>
+    page
+      .getByRole('navigation', { name: 'Vues' })
+      .getByRole('link', { name, exact: true })
+      .click();
+  const row = (key: string) =>
+    page
+      .locator('.token-table tr')
+      .filter({ has: page.getByRole('button', { name: key, exact: true }) });
+  const cssVar = (name: string) =>
+    mobile
+      .locator('.ds')
+      .evaluate(
+        (el, n) => getComputedStyle(el).getPropertyValue(n).trim(),
+        name,
+      );
+  await expect(row('color.brand')).toContainText('#3F3F46');
   await page.getByLabel('Valeur du token').fill('#8A3B20');
   await page.getByRole('button', { name: 'Proposer', exact: true }).click();
   const dialog = page.getByRole('dialog');
   await expect(dialog).toBeVisible();
-  await expect(dialog).toContainText('#3154C4');
+  await expect(dialog).toContainText('#3F3F46');
   await expect(dialog).toContainText('#8A3B20');
-  await expect(mainButton).toHaveCSS('background-color', 'rgb(49, 84, 196)');
   await dialog.getByRole('button', { name: 'Ne pas appliquer' }).click();
-  await expect(mainButton).toHaveCSS('background-color', 'rgb(49, 84, 196)');
+  await expect(row('color.brand')).toContainText('#3F3F46');
   await page.getByRole('button', { name: 'Proposer', exact: true }).click();
   await dialog.getByRole('button', { name: 'Valider et enregistrer' }).click();
-  await expect(mainButton).toHaveCSS('background-color', 'rgb(138, 59, 32)');
-  await expect(
-    catalogue.getByRole('button', { name: 'Réserver une place', exact: true }),
-  ).toHaveCSS('background-color', 'rgb(138, 59, 32)');
-  await expect(
-    mobile.getByRole('button', { name: 'Réserver une place', exact: true }),
-  ).toHaveCSS('background-color', 'rgb(138, 59, 32)');
-  await expect(
-    mobile.getByRole('button', { name: 'Découvrir', exact: true }),
-  ).toHaveCSS('background-color', 'rgb(138, 59, 32)');
+  await expect(row('color.brand')).toContainText('#8A3B20');
+  await open('Preview');
+  await expect.poll(() => cssVar('--color-brand')).toBe('#8A3B20');
+  await open('Design System');
   await page.reload();
-  await expect(mainButton).toHaveCSS('background-color', 'rgb(138, 59, 32)');
+  await expect(row('color.brand')).toContainText('#8A3B20');
   await page
     .getByRole('combobox', { name: 'Token', exact: true })
     .selectOption('space.md');
@@ -49,28 +57,32 @@ test('boucle centrale réelle : diff, validation, propagation, recharge, annulat
     .getByRole('button', { name: 'Annuler la révision 1', exact: true })
     .click();
   await dialog.getByRole('button', { name: 'Valider et enregistrer' }).click();
-  await expect(mainButton).toHaveCSS('background-color', 'rgb(49, 84, 196)');
-  await expect(mainButton).toHaveCSS('padding-left', '22px');
-  await expect(
-    mobile.getByRole('button', { name: 'Réserver une place', exact: true }),
-  ).toHaveCSS('background-color', 'rgb(49, 84, 196)');
+  await expect(row('color.brand')).toContainText('#3F3F46');
+  await expect(row('space.md')).toContainText('22px');
+  await open('Preview');
+  await expect.poll(() => cssVar('--color-brand')).toBe('#3F3F46');
+  await expect.poll(() => cssVar('--space-md')).toBe('22px');
   await page.screenshot({ path: 'test-results/studio.png', fullPage: true });
 });
 
-test('largeurs réelles, interactions, formulaire et desktop responsive', async ({
-  page,
-}) => {
-  await page.goto('/#atelier');
+test('largeurs réelles, formats et pages de la Preview', async ({ page }) => {
+  await page.goto('/#preview');
   const frame = page.frameLocator('iframe');
-  for (const [value, width] of [
-    ['0', 320],
-    ['1', 375],
-    ['2', 430],
-    ['3', 1024],
+  const formats = page.getByRole('group', { name: 'Format' });
+  const pages = page.getByRole('group', { name: 'Page' });
+  // Un format créé à la main rejoint iPhone, Tablette et Desktop.
+  await formats.getByRole('button', { name: '+ Format' }).click();
+  await page.getByLabel('Nom du format').fill('Compact');
+  await page.getByLabel('Largeur (px)').fill('320');
+  await page.getByLabel('Hauteur (px)').fill('640');
+  await page.getByRole('button', { name: 'Ajouter', exact: true }).click();
+  for (const [name, width] of [
+    ['Compact', 320],
+    ['iPhone', 393],
+    ['Tablette', 820],
+    ['Desktop', 1440],
   ] as const) {
-    await page
-      .getByRole('combobox', { name: 'Viewport', exact: true })
-      .selectOption(value);
+    await formats.getByRole('button', { name: new RegExp(`^${name}`) }).click();
     await expect(page.locator('iframe')).toHaveAttribute(
       'width',
       String(width),
@@ -87,34 +99,25 @@ test('largeurs réelles, interactions, formulaire et desktop responsive', async 
         .locator('body')
         .evaluate((el) => el.scrollWidth <= window.innerWidth),
     ).toBe(true);
-    const columns = await frame
-      .locator('.scenario-grid')
-      .evaluate(
-        (el) => getComputedStyle(el).gridTemplateColumns.split(' ').length,
-      );
-    expect(columns).toBe(width >= 700 ? 2 : 1);
   }
+  await expect(frame.getByRole('heading', { name: 'Découvrir' })).toBeVisible();
+  await expect(frame.getByText('Page vide.', { exact: false })).toBeVisible();
+  // Une page ajoutée s'ouvre vide avec son nom, puis se renomme.
+  await pages.getByRole('button', { name: '+ Page' }).click();
+  await page.getByLabel('Nom de la page').fill('Profil');
+  await page.getByRole('button', { name: 'Ajouter', exact: true }).click();
+  await expect(frame.getByRole('heading', { name: 'Profil' })).toBeVisible();
+  await pages.getByRole('button', { name: 'Renommer' }).click();
+  await page.getByLabel('Nouveau nom').fill('Mon profil');
   await page
-    .getByRole('combobox', { name: 'Viewport', exact: true })
-    .selectOption('1');
-  await frame
-    .getByRole('button', { name: 'Réserver une place', exact: true })
+    .getByRole('button', { name: 'Renommer', exact: true })
+    .last()
     .click();
   await expect(
-    frame.getByRole('button', { name: 'Réservation confirmée ✓' }),
+    frame.getByRole('heading', { name: 'Mon profil' }),
   ).toBeVisible();
-  await frame.getByRole('button', { name: 'Favoris', exact: true }).click();
-  await expect(
-    frame.getByText('Vos ateliers favoris apparaîtront ici.'),
-  ).toBeVisible();
-  await page
-    .getByRole('combobox', { name: 'Scénario', exact: true })
-    .selectOption('form');
-  await frame.getByLabel('Votre prénom').fill('Camille');
-  await frame.getByLabel('Adresse e-mail').fill('camille@example.com');
-  await frame.getByRole('checkbox').check();
-  await frame.getByRole('button', { name: 'S’inscrire', exact: true }).click();
-  await expect(frame.getByText(/Merci ! Démonstration locale/)).toBeVisible();
+  await page.reload();
+  await expect(pages.getByRole('button', { name: 'Mon profil' })).toBeVisible();
   await page.setViewportSize({ width: 700, height: 900 });
   expect(
     await page
@@ -126,7 +129,7 @@ test('largeurs réelles, interactions, formulaire et desktop responsive', async 
 test('entrée couleur invalide sans mutation et clavier du diff', async ({
   page,
 }) => {
-  await page.goto('/#atelier');
+  await page.goto('/#design-system');
   await page.getByLabel('Valeur du token').fill('red');
   await page.getByRole('button', { name: 'Proposer', exact: true }).click();
   await expect(page.getByRole('alert')).toContainText('Données invalides');
@@ -143,7 +146,7 @@ test('entrée couleur invalide sans mutation et clavier du diff', async ({
 test('export navigateur, import valide avec diff, fichier invalide sans écriture', async ({
   page,
 }) => {
-  await page.goto('/#atelier');
+  await page.goto('/#design-system');
   await expect(
     page.getByRole('heading', { name: 'Tokens sémantiques' }),
   ).toBeVisible();
@@ -183,7 +186,7 @@ test('export navigateur, import valide avec diff, fichier invalide sans écritur
 test('V2 : contraste proposé immédiat sans modifier les composants enregistrés', async ({
   page,
 }) => {
-  await page.goto('/#atelier');
+  await page.goto('/#design-system');
   await page
     .getByRole('combobox', { name: 'Token', exact: true })
     .selectOption('color.brand');
@@ -226,7 +229,7 @@ test('V2 : brief privé persistant, indépendant du mode IA', async ({
 test('V2 : recherche, brouillon récupéré après recharge et abandon sans écriture', async ({
   page,
 }) => {
-  await page.goto('/#atelier');
+  await page.goto('/#design-system');
   const before = await (await page.request.get('/api/state')).json();
   await page.getByLabel('Rechercher un token').fill('space');
   await expect(
@@ -260,14 +263,14 @@ test('V2 : conflit multi-onglets visible dans le diff, aucune perte de données'
   page,
   context,
 }) => {
-  await page.goto('/#atelier');
+  await page.goto('/#design-system');
   await page
     .getByRole('combobox', { name: 'Token', exact: true })
     .selectOption('color.brand');
   await page.getByLabel('Valeur du token').fill('#223355');
   await page.getByRole('button', { name: 'Proposer', exact: true }).click();
   const other = await context.newPage();
-  await other.goto('/#atelier');
+  await other.goto('/#design-system');
   await other
     .getByRole('combobox', { name: 'Token', exact: true })
     .selectOption('color.brand');
@@ -291,7 +294,7 @@ test('V2 : conflit multi-onglets visible dans le diff, aucune perte de données'
 test('V2 : capacité de session périmée simulée sans rejeu ambigu', async ({
   page,
 }) => {
-  await page.goto('/#atelier');
+  await page.goto('/#design-system');
   await page.getByRole('heading', { name: 'Tokens sémantiques' }).waitFor();
   const boot = await (await page.request.get('/api/bootstrap')).json();
   // Un seul refus certain avant mutation, comme une capacité périmée après restart.
@@ -331,7 +334,7 @@ test('V2 : clavier, mobile 375 px et absence de stockage navigateur', async ({
     };
   });
   await page.setViewportSize({ width: 375, height: 812 });
-  await page.goto('/#atelier');
+  await page.goto('/#design-system');
   await page.getByRole('heading', { name: 'Tokens sémantiques' }).waitFor();
   await page.keyboard.press('Tab');
   await expect(
@@ -348,4 +351,30 @@ test('V2 : clavier, mobile 375 px et absence de stockage navigateur', async ({
   expect(
     await page.locator('body').evaluate((el) => el.scrollWidth <= innerWidth),
   ).toBe(true);
+});
+
+test('V2 : ajouter puis supprimer un token, chaque fois par le diff', async ({
+  page,
+}) => {
+  await page.goto('/#design-system');
+  const dialog = page.getByRole('dialog');
+  const row = page
+    .locator('.token-table tr')
+    .filter({ has: page.getByRole('button', { name: 'color.accent' }) });
+  await page.getByRole('button', { name: '+ Token' }).click();
+  await page.getByLabel('Nom du token').fill('color.accent');
+  await page.getByLabel('Type du token').selectOption('color');
+  await page.getByLabel('Valeur initiale').fill('#112233');
+  await page.getByRole('button', { name: 'Proposer l’ajout' }).click();
+  await expect(dialog).toContainText('absent');
+  await expect(dialog).toContainText('#112233');
+  await dialog.getByRole('button', { name: 'Valider et enregistrer' }).click();
+  await expect(row).toContainText('#112233');
+  await expect(
+    page.getByRole('heading', { name: 'color.accent', level: 2 }),
+  ).toBeVisible();
+  await page.getByRole('button', { name: 'Supprimer ce token' }).click();
+  await expect(dialog).toContainText('supprimé');
+  await dialog.getByRole('button', { name: 'Valider et enregistrer' }).click();
+  await expect(row).toHaveCount(0);
 });

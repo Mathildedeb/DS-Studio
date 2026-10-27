@@ -14,10 +14,7 @@ import { Store } from '../app/server/store.js';
 import { tokensSchema, contrast } from '../app/shared/model.js';
 const seed = tokensSchema.parse(
   JSON.parse(
-    await readFile(
-      new URL('../workspace/design-system.tokens.json', import.meta.url),
-      'utf8',
-    ),
+    await readFile(new URL('./fixtures/tokens.json', import.meta.url), 'utf8'),
   ),
 );
 async function fixture(t: { after: (fn: () => Promise<void>) => void }) {
@@ -87,7 +84,16 @@ test('entrées, imports et types invalides sont rejetés sans effet disque', asy
       ]),
     /deux fois/,
   );
-  assert.throws(() => store.proposeImport(0, {}));
+  assert.throws(() =>
+    store.proposeImport(0, { 'Pas un nom': seed['color.brand'] }),
+  );
+  assert.throws(
+    () => store.propose(0, [{ key: 'color.neuf', value: '#123456' }]),
+    /Type requis/,
+  );
+  assert.throws(() =>
+    store.propose(0, [{ key: 'space.md', type: 'color', value: '#123456' }]),
+  );
   assert.throws(() => store.proposeImport(0, { ...seed, secret: 'no' }));
   assert.throws(() =>
     store.propose(0, [{ key: 'font.family', value: 'url(evil)' }]),
@@ -225,3 +231,78 @@ test(
     assert.equal(await readFile(target, 'utf8'), original);
   },
 );
+
+test('V2 : tokens en liste libre, ajout et suppression dans le journal', async (t) => {
+  const { dir, store } = await fixture(t);
+  const add = store.propose(0, [
+    { key: 'color.accent', type: 'color', value: '#112233' },
+  ]);
+  assert.deepEqual(add.patches, [
+    { key: 'color.accent', type: 'color', before: null, after: '#112233' },
+  ]);
+  await store.commit(add.id);
+  const remove = store.propose(1, [{ key: 'space.lg', value: null }]);
+  await store.commit(remove.id);
+  assert.equal(store.snapshot().tokens['space.lg'], undefined);
+  // Tout vider : un import vide supprime chaque token, annulable ensuite.
+  const empty = store.proposeImport(2, {});
+  await store.commit(empty.id);
+  assert.deepEqual(store.snapshot().tokens, {});
+  const reopened = new Store(dir, seed);
+  await reopened.init();
+  assert.deepEqual(reopened.snapshot().tokens, {});
+  const undo = reopened.proposeUndo(3, reopened.snapshot().history[2].id);
+  await reopened.commit(undo.id);
+  assert.equal(reopened.snapshot().tokens['color.accent'].$value, '#112233');
+  assert.equal(reopened.snapshot().tokens['space.lg'], undefined);
+});
+test('V2 : migration d’un état v1, journal conservé et original sauvegardé', async (t) => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'ds-migrate-'));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const before = structuredClone(seed);
+  const after = structuredClone(seed);
+  after['color.brand'].$value = '#ABCDEF';
+  after['space.md'].$value = 20;
+  const v1 = {
+    version: 1,
+    revision: 1,
+    tokens: after,
+    history: [
+      {
+        id: '11111111-1111-4111-8111-111111111111',
+        revision: 1,
+        date: '2026-10-27T10:00:00.000Z',
+        source: 'manual',
+        patches: [
+          {
+            key: 'color.brand',
+            before: before['color.brand'].$value,
+            after: '#ABCDEF',
+          },
+          { key: 'space.md', before: before['space.md'].$value, after: 20 },
+        ],
+      },
+    ],
+  };
+  const raw = JSON.stringify(v1, null, 2) + '\n';
+  await writeFile(path.join(dir, 'state.json'), raw);
+  const store = new Store(dir, seed);
+  await store.init();
+  const state = store.snapshot();
+  assert.equal(state.version, 2);
+  assert.deepEqual(state.tokens, after);
+  assert.deepEqual(
+    state.history[0].patches.map((p) => p.type),
+    ['color', 'dimension'],
+  );
+  const saved = JSON.parse(await readFile(store.file, 'utf8'));
+  assert.equal(saved.version, 2);
+  const { readdir } = await import('node:fs/promises');
+  const backup = (await readdir(dir)).find((f) => f.startsWith('state.v1-'));
+  assert(backup, 'original v1 conservé');
+  assert.equal(await readFile(path.join(dir, backup), 'utf8'), raw);
+  // L'historique migré reste annulable.
+  const undo = store.proposeUndo(1, state.history[0].id);
+  await store.commit(undo.id);
+  assert.deepEqual(store.snapshot().tokens, before);
+});

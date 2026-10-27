@@ -2,18 +2,11 @@ import { useEffect, useRef } from 'react';
 
 export type ChatMessage = { role: 'user' | 'assistant'; text: string };
 
-const suggestions = {
-  tokens: [
-    'Propose une couleur de marque plus chaleureuse.',
-    'Vérifie le contraste de mes boutons.',
-    'Quels tokens revoir pour les écrans coach ?',
-  ],
-  code: [
-    'Ajoute un widget « Notes » au tableau de bord.',
-    'Arrondis davantage les cartes du tableau de bord.',
-    'Ajoute une tâche « Icônes » à la checklist par défaut.',
-  ],
-};
+const suggestions = [
+  'Propose une couleur de marque plus chaleureuse.',
+  'Resserre l’espacement de ce composant.',
+  'Vérifie le contraste de mes boutons.',
+];
 
 // L'état de la conversation reste dans App ; ce composant ne fait qu'afficher.
 export default function Chat({
@@ -26,11 +19,10 @@ export default function Chat({
   available,
   onSend,
   onStop,
-  mode,
-  onMode,
+  onClose,
+  focus,
   lastCode,
   onRevert,
-  onClose,
 }: {
   agentName: string;
   detail: string;
@@ -41,11 +33,12 @@ export default function Chat({
   available: boolean;
   onSend: () => void;
   onStop: () => void;
-  mode: 'tokens' | 'code';
-  onMode: (mode: 'tokens' | 'code') => void;
+  onClose?: () => void;
+  // Élément sélectionné dans la page Design System, envoyé avec la demande.
+  focus?: string;
+  // Dernière modification de code appliquée, annulable depuis la barre.
   lastCode?: { id: string; files: string[] };
   onRevert: () => void;
-  onClose?: () => void;
 }) {
   const log = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -62,23 +55,6 @@ export default function Chat({
           <span className={`chat-status ${available ? 'on' : 'off'}`}>
             {available ? 'Disponible' : 'Indisponible'}
           </span>
-        </div>
-        <div
-          className="chat-mode"
-          role="group"
-          aria-label="Ce que Clodo propose"
-        >
-          {(['tokens', 'code'] as const).map((m) => (
-            <button
-              key={m}
-              type="button"
-              aria-pressed={mode === m}
-              onClick={() => onMode(m)}
-              disabled={thinking}
-            >
-              {m === 'tokens' ? 'Tokens' : 'Code'}
-            </button>
-          ))}
         </div>
         {onClose && (
           <button
@@ -101,12 +77,11 @@ export default function Chat({
         {!chat.length && (
           <div className="chat-empty">
             <p>
-              {mode === 'code'
-                ? `Demandez une modification de l’atelier. ${agentName} propose le code, vous validez le diff avant toute écriture.`
-                : `Posez une question sur votre Design System. ${agentName} propose, vous validez chaque changement dans le diff.`}
+              Demandez une modification. {agentName} choisit de changer des
+              tokens ou le code, et vous validez le diff avant toute écriture.
             </p>
             <div className="chat-suggestions">
-              {suggestions[mode].map((s) => (
+              {suggestions.map((s) => (
                 <button
                   key={s}
                   type="button"
@@ -136,12 +111,9 @@ export default function Chat({
           </p>
         )}
       </div>
-      {lastCode && (
-        <p className="chat-applied">
-          Code modifié : {lastCode.files.join(', ')}
-          <button type="button" onClick={onRevert} disabled={thinking}>
-            Annuler cette modification
-          </button>
+      {focus && (
+        <p className="chat-focus" role="status">
+          Sélection : <strong>{focus}</strong>
         </p>
       )}
       <form
@@ -167,13 +139,20 @@ export default function Chat({
             }
           }}
           maxLength={8000}
-          placeholder={
-            mode === 'code'
-              ? `Décrire une modification pour ${agentName}…`
-              : `Écrire à ${agentName}…`
-          }
+          placeholder={`Écrire à ${agentName}…`}
           disabled={thinking}
         />
+        {lastCode && !thinking && (
+          <button
+            type="button"
+            className="chat-undo"
+            onClick={onRevert}
+            aria-label={`Annuler la dernière modification de code (${lastCode.files.join(', ')})`}
+            title={`Annuler la dernière modification : ${lastCode.files.join(', ')}`}
+          >
+            ↶
+          </button>
+        )}
         {thinking ? (
           <button type="button" className="chat-stop" onClick={onStop}>
             Arrêter
@@ -193,8 +172,9 @@ export default function Chat({
         <summary>Ce qui est envoyé</summary>
         <p>{detail}</p>
         <p>
-          Tokens, workspace/PFE.md, brief privé, roadmap, DESIGN_RULES.md et 10
-          messages récents. Aucun outil ni commande ; propositions seulement.
+          Tokens, workspace/PFE.md, brief privé, roadmap, DESIGN_RULES.md, 10
+          messages récents et l’élément sélectionné dans la page Design System.
+          Aucun outil ni commande ; propositions seulement.
         </p>
       </details>
     </div>
