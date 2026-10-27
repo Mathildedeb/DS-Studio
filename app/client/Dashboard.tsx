@@ -11,6 +11,7 @@ import {
   type WidgetId,
 } from '../shared/dashboard.js';
 import type { Tokens } from '../shared/model.js';
+import type { FigmaFileStatus } from '../../connectors/figma/reader.js';
 
 const titles: Record<WidgetId, string> = {
   brief: 'Mon PFE',
@@ -147,11 +148,13 @@ export default function Dashboard({
   tokens,
   revision,
   lastChange,
+  figma,
   onError,
 }: {
   tokens: Tokens;
   revision: number;
   lastChange?: string;
+  figma?: FigmaFileStatus;
   onError: (message: string) => void;
 }) {
   const [roadmap, setRoadmap] = useState<Roadmap>();
@@ -207,6 +210,26 @@ export default function Dashboard({
               />
             ))}
           </div>
+          <p className="figma-line">
+            {figma?.file ? (
+              <>
+                <a href={figma.file.url} target="_blank" rel="noreferrer">
+                  {figma.label}
+                </a>
+                <small>
+                  Modifié le{' '}
+                  {new Date(figma.file.lastModified).toLocaleDateString(
+                    'fr-FR',
+                  )}{' '}
+                  · {figma.file.pages.length} page(s)
+                </small>
+              </>
+            ) : (
+              <span className="muted">
+                {figma?.label ?? 'Figma non connecté'}
+              </span>
+            )}
+          </p>
         </>
       );
     if (!roadmap) return <p className="muted">Chargement de la roadmap…</p>;

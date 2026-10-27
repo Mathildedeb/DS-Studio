@@ -334,3 +334,10 @@ test('disposition de l’atelier enregistrée ; ancienne disposition convertie',
     ],
   });
 });
+test('Figma : statut en lecture seule, sans jeton par défaut, écriture toujours absente', async (t) => {
+  const { origin, post } = await fixture(t);
+  const status = await (await fetch(origin + '/api/figma')).json();
+  assert.equal(status.connected, false);
+  assert.match(status.label, /jeton absent/);
+  assert.equal((await post('figma', {})).status, 404);
+});

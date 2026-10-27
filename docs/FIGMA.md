@@ -1,9 +1,17 @@
 # Figma : source de vérité réelle, pas intégration simulée
 
-**V2 : NOT IMPLEMENTED / non connecté.** Aucune authentification, lecture ou écriture
-Figma n’a été réalisée. Aucun fichier explicitement autorisé n’a été fourni. Les
-outils Figma présents dans une session de développement ne sont pas distribués
-avec ce starter et ne constituent pas une connexion de l’application.
+**Lecture seule : PARTIAL (testée avec un faux Figma, pas avec un vrai jeton).**
+`connectors/figma/reader.ts` lit le nom, la date de modification et les pages
+d’un fichier par l’API REST officielle, avec le jeton personnel de l’étudiant
+(`FIGMA_TOKEN` dans `.env`, portée _File content : Read-only_). Le fichier vient
+du lien Figma du brief privé, sinon de `workspace/roadmap.json`. Le jeton reste côté
+serveur ; les erreurs Figma sont réécrites sans leur corps ; réponse en cache 60 s.
+**Écriture : NOT IMPLEMENTED.** Les variables ne sont pas lues : l’API des variables
+est réservée à l’offre Enterprise. Les outils Figma d’une session de développement
+ne constituent pas une connexion de l’application.
+
+Écart assumé : le jeton personnel remplace l’OAuth recommandé ci-dessous, plus lourd
+à déclarer. Il est limité à la lecture et révocable dans les paramètres Figma.
 
 La [documentation Figma officielle du serveur distant](https://developers.figma.com/docs/figma-mcp-server/remote-server-installation/)
 indique que seuls les clients du catalogue autorisé peuvent se connecter. Un

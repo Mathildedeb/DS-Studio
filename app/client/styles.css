@@ -1592,3 +1592,19 @@ h2[id] {
     justify-content: flex-start;
   }
 }
+.figma-status.connected {
+  color: var(--studio-success-text);
+  text-decoration: none;
+}
+.figma-status.connected:hover {
+  text-decoration: underline;
+}
+.figma-line {
+  margin-top: 12px !important;
+  padding-top: 10px;
+  border-top: 1px solid var(--studio-border);
+}
+.figma-line small {
+  display: block;
+  color: var(--studio-muted);
+}

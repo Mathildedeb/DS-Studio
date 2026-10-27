@@ -14,12 +14,14 @@ import { ClaudeAdapter } from '../../connectors/agents/claude.js';
 import { unvalidatedAdapter } from '../../connectors/agents/unvalidated.js';
 import type { AgentAdapter } from '../../connectors/agents/types.js';
 import { figmaStatus } from '../../connectors/figma/contract.js';
+import { FigmaReader } from '../../connectors/figma/reader.js';
 import type { RecordInfo } from '../../scripts/runtime.mjs';
 
 export async function createStudioServer(options: {
   root: string;
   store: Store;
   agent?: AgentAdapter;
+  figma?: FigmaReader;
   dev?: boolean;
   control?: { record: RecordInfo; stop: () => void };
 }) {
@@ -31,6 +33,7 @@ export async function createStudioServer(options: {
   };
   const project = new ProjectStore(store.directory);
   const dashboard = new DashboardStore(store.directory, root);
+  const figma = options.figma ?? new FigmaReader(undefined);
   const csrf = randomBytes(32).toString('hex');
   let busy = false;
   const active = new Set<AbortController>();
@@ -111,6 +114,16 @@ export async function createStudioServer(options: {
             );
           if (url.pathname === '/api/project')
             return send(200, await project.read());
+          if (url.pathname === '/api/figma') {
+            // Fichier : lien du brief privé, sinon lien Figma de la roadmap.
+            const brief = (await project.read()).project.figmaUrl;
+            const fromRoadmap = await readRoadmap(root)
+              .then(
+                (r) => r.links.find((l) => l.url.includes('figma.com'))?.url,
+              )
+              .catch(() => undefined);
+            return send(200, await figma.status(brief || fromRoadmap));
+          }
           if (url.pathname === '/api/roadmap')
             return send(200, await readRoadmap(root));
           if (url.pathname === '/api/dashboard')

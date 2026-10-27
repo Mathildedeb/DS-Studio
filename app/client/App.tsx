@@ -3,6 +3,7 @@ import { Catalogue, Scenario } from './DesignSystem.js';
 import Chat, { type ChatMessage } from './Chat.js';
 import Dashboard from './Dashboard.js';
 import Board from './Board.js';
+import type { FigmaFileStatus } from '../../connectors/figma/reader.js';
 import { atelierIds, defaultAtelierLayout } from '../shared/dashboard.js';
 
 const atelierTitles = {
@@ -104,6 +105,7 @@ export function Preview() {
 export default function App() {
   const { state, setState, error: stateError } = useDesignState();
   const [boot, setBoot] = useState<Bootstrap>();
+  const [figma, setFigma] = useState<FigmaFileStatus>();
   const [key, setKey] = useState<TokenKey>(() => {
     try {
       const saved = JSON.parse(
@@ -139,6 +141,9 @@ export default function App() {
     bootstrap()
       .then(setBoot)
       .catch((e) => setError(e.message));
+    request<FigmaFileStatus>('figma')
+      .then(setFigma)
+      .catch(() => undefined);
     return () => controller.current?.abort();
   }, []);
   useEffect(() => {
@@ -356,9 +361,20 @@ export default function App() {
         </nav>
         <div className="header-status">
           <span className="local-badge">● Local · V2</span>
-          <span className="muted">
-            {boot?.figma.label ?? 'Figma non connecté'}
-          </span>
+          {figma?.file ? (
+            <a
+              className="figma-status connected"
+              href={figma.file.url}
+              target="_blank"
+              rel="noreferrer"
+            >
+              {figma.label}
+            </a>
+          ) : (
+            <span className="muted">
+              {figma?.label ?? boot?.figma.label ?? 'Figma non connecté'}
+            </span>
+          )}
           <button
             onClick={() => setHistoryOpen(!historyOpen)}
             aria-expanded={historyOpen}
@@ -375,6 +391,7 @@ export default function App() {
             tokens={state.tokens}
             revision={state.revision}
             lastChange={state.history.at(-1)?.date}
+            figma={figma}
             onError={setError}
           />
         </>

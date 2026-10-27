@@ -1,9 +1,12 @@
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { parseEnv } from 'node:util';
 import { tokensSchema } from '../shared/model.js';
 import { Store } from './store.js';
 import { createStudioServer } from './http.js';
+import { readPrivate } from './files.js';
+import { FigmaReader } from '../../connectors/figma/reader.js';
 import { acquireLease } from '../../scripts/runtime.mjs';
 
 const root = path.resolve(
@@ -30,6 +33,12 @@ try {
       ),
     ),
   );
+  // Seul FIGMA_TOKEN est lu dans .env ; il n'est jamais affiché ni envoyé au navigateur.
+  const figmaToken =
+    process.env.FIGMA_TOKEN ||
+    (await readPrivate(path.join(root, '.env'), 16_000)
+      .then((raw) => parseEnv(raw).FIGMA_TOKEN)
+      .catch(() => undefined));
   const store = new Store(directory, seed);
   await store.init();
   let stopping = false;
@@ -45,6 +54,7 @@ try {
     root,
     store,
     dev: process.argv.includes('--dev'),
+    figma: new FigmaReader(figmaToken?.trim() || undefined),
     control: {
       record: lease.record,
       stop: () => {
@@ -57,7 +67,7 @@ try {
     app.server.listen(port, '127.0.0.1', () => resolve());
   });
   console.log(
-    `DS-Studio · http://127.0.0.1:${port}\nMode manuel autonome · Figma non connecté · Ctrl+C pour fermer.`,
+    `DS-Studio · http://127.0.0.1:${port}\nMode manuel autonome · Figma ${figmaToken ? 'en lecture seule (jeton détecté)' : 'non connecté'} · Ctrl+C pour fermer.`,
   );
   process.once('SIGINT', stop);
   process.once('SIGTERM', stop);
