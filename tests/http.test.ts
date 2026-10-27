@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import http from 'node:http';
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -20,12 +20,16 @@ const seed = tokensSchema.parse(
 async function fixture(
   t: { after: (fn: () => Promise<void>) => void },
   dev = false,
+  ask: (system: string, input: string) => Promise<string> = async () => {
+    throw new Error('Claude Code indisponible (simulation).');
+  },
+  projectRoot = root,
 ) {
   const directory = await mkdtemp(path.join(tmpdir(), 'ds-http-'));
   const store = new Store(directory, seed);
   await store.init();
   const app = await createStudioServer({
-    root,
+    root: projectRoot,
     store,
     dev,
     agent: {
@@ -38,6 +42,7 @@ async function fixture(
       },
     },
     // Jamais le vrai CLI dans les tests : ni réseau ni quota consommé.
+    ask,
     claude: {
       id: 'claude',
       async status() {
@@ -352,4 +357,53 @@ test('Figma : statut en lecture seule, sans jeton par défaut, écriture toujour
   assert.equal(status.connected, false);
   assert.match(status.label, /jeton absent/);
   assert.equal((await post('figma', {})).status, 404);
+});
+test('code par Clodo : proposition, session exigée, application puis annulation', async (t) => {
+  // Copie temporaire : le test n'écrit jamais dans les fichiers de l'étudiante.
+  const copy = await mkdtemp(path.join(tmpdir(), 'ds-code-root-'));
+  t.after(() => rm(copy, { recursive: true, force: true }));
+  await mkdir(path.join(copy, 'workspace'), { recursive: true });
+  await mkdir(path.join(copy, 'app', 'client'), { recursive: true });
+  const file = path.join(copy, 'workspace', 'DECISIONS.md');
+  const original = '# Journal de décisions du projet\n';
+  await writeFile(file, original);
+  const answers = [
+    JSON.stringify({ files: ['workspace/DECISIONS.md'] }),
+    JSON.stringify({
+      message: 'J’ajoute une ligne.',
+      edits: [
+        {
+          file: 'workspace/DECISIONS.md',
+          search: '# Journal de décisions du projet',
+          replace: '# Journal de décisions du projet\n\nTest Clodo.',
+        },
+      ],
+    }),
+  ];
+  const { origin, post } = await fixture(
+    t,
+    false,
+    async () => answers.shift()!,
+    copy,
+  );
+  const proposed = await post('code', {
+    message: 'Ajoute une ligne',
+    history: [],
+  });
+  assert.equal(proposed.status, 200);
+  const { proposal } = await proposed.json();
+  assert.equal(await readFile(file, 'utf8'), original, 'rien avant validation');
+  assert.equal(
+    (await post('code/apply', { id: proposal.id }, { 'X-DS-Studio': 'faux' }))
+      .status,
+    403,
+  );
+  assert.equal((await post('code/apply', { id: proposal.id })).status, 200);
+  assert.match(await readFile(file, 'utf8'), /Test Clodo\./);
+  assert.equal(
+    (await (await fetch(origin + '/api/code/last')).json()).id,
+    proposal.id,
+  );
+  assert.equal((await post('code/revert', { id: proposal.id })).status, 200);
+  assert.equal(await readFile(file, 'utf8'), original);
 });

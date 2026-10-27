@@ -2,11 +2,18 @@ import { useEffect, useRef } from 'react';
 
 export type ChatMessage = { role: 'user' | 'assistant'; text: string };
 
-const suggestions = [
-  'Propose une couleur de marque plus chaleureuse.',
-  'Vérifie le contraste de mes boutons.',
-  'Quels tokens revoir pour les écrans coach ?',
-];
+const suggestions = {
+  tokens: [
+    'Propose une couleur de marque plus chaleureuse.',
+    'Vérifie le contraste de mes boutons.',
+    'Quels tokens revoir pour les écrans coach ?',
+  ],
+  code: [
+    'Ajoute un widget « Notes » au tableau de bord.',
+    'Arrondis davantage les cartes du tableau de bord.',
+    'Ajoute une tâche « Icônes » à la checklist par défaut.',
+  ],
+};
 
 // L'état de la conversation reste dans App ; ce composant ne fait qu'afficher.
 export default function Chat({
@@ -19,6 +26,10 @@ export default function Chat({
   available,
   onSend,
   onStop,
+  mode,
+  onMode,
+  lastCode,
+  onRevert,
 }: {
   agentName: string;
   detail: string;
@@ -29,6 +40,10 @@ export default function Chat({
   available: boolean;
   onSend: () => void;
   onStop: () => void;
+  mode: 'tokens' | 'code';
+  onMode: (mode: 'tokens' | 'code') => void;
+  lastCode?: { id: string; files: string[] };
+  onRevert: () => void;
 }) {
   const log = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -46,6 +61,23 @@ export default function Chat({
             {available ? 'Disponible' : 'Indisponible'}
           </span>
         </div>
+        <div
+          className="chat-mode"
+          role="group"
+          aria-label="Ce que Clodo propose"
+        >
+          {(['tokens', 'code'] as const).map((m) => (
+            <button
+              key={m}
+              type="button"
+              aria-pressed={mode === m}
+              onClick={() => onMode(m)}
+              disabled={thinking}
+            >
+              {m === 'tokens' ? 'Tokens' : 'Code'}
+            </button>
+          ))}
+        </div>
       </header>
       <div
         className="chat-log"
@@ -56,11 +88,12 @@ export default function Chat({
         {!chat.length && (
           <div className="chat-empty">
             <p>
-              Posez une question sur votre Design System. {agentName} propose,
-              vous validez chaque changement dans le diff.
+              {mode === 'code'
+                ? `Demandez une modification de l’atelier. ${agentName} propose le code, vous validez le diff avant toute écriture.`
+                : `Posez une question sur votre Design System. ${agentName} propose, vous validez chaque changement dans le diff.`}
             </p>
             <div className="chat-suggestions">
-              {suggestions.map((s) => (
+              {suggestions[mode].map((s) => (
                 <button
                   key={s}
                   type="button"
@@ -90,6 +123,14 @@ export default function Chat({
           </p>
         )}
       </div>
+      {lastCode && (
+        <p className="chat-applied">
+          Code modifié : {lastCode.files.join(', ')}
+          <button type="button" onClick={onRevert} disabled={thinking}>
+            Annuler cette modification
+          </button>
+        </p>
+      )}
       <form
         className="chat-composer"
         onSubmit={(e) => {
@@ -113,7 +154,11 @@ export default function Chat({
             }
           }}
           maxLength={8000}
-          placeholder={`Écrire à ${agentName}…`}
+          placeholder={
+            mode === 'code'
+              ? `Décrire une modification pour ${agentName}…`
+              : `Écrire à ${agentName}…`
+          }
           disabled={thinking}
         />
         {thinking ? (

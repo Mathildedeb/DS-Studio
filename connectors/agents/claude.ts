@@ -19,8 +19,6 @@ export const restrictedArgs = [
   '',
   '--disable-slash-commands',
   '--no-session-persistence',
-  '--system-prompt',
-  agentInstruction,
 ];
 
 // L'installateur officiel place le CLI dans ~/.local/bin, souvent absent du PATH
@@ -68,6 +66,21 @@ export class ClaudeAdapter implements AgentAdapter {
     }
   }
   async reply(message: string, context: AgentContext, signal?: AbortSignal) {
+    return parseAgentJson(
+      await this.ask(
+        agentInstruction,
+        JSON.stringify({ context, message }),
+        signal,
+      ),
+    );
+  }
+  // Un appel sans outil : consigne en --system-prompt, données par stdin, texte final.
+  async ask(
+    system: string,
+    input: string,
+    signal?: AbortSignal,
+    timeout = 120_000,
+  ) {
     const status = await this.status();
     if (!status.available) throw new Error(status.detail);
     // Dossier vide : ni CLAUDE.md ni réglages du projet ne sont chargés.
@@ -103,11 +116,11 @@ export class ClaudeAdapter implements AgentAdapter {
     try {
       const raw = await runCli(
         this.binary,
-        [...this.baseArgs, ...restrictedArgs],
-        JSON.stringify({ context, message }),
+        [...this.baseArgs, ...restrictedArgs, '--system-prompt', system],
+        input,
         { cwd, env },
         signal,
-        120_000,
+        timeout,
         cli,
       );
       let result: {
@@ -131,7 +144,7 @@ export class ClaudeAdapter implements AgentAdapter {
         throw new Error(
           'Le CLI a tenté d’utiliser un outil. Intégration refusée.',
         );
-      return parseAgentJson(result.result ?? '');
+      return result.result ?? '';
     } finally {
       await rm(cwd, { recursive: true, force: true });
     }

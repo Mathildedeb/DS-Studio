@@ -16,7 +16,7 @@ import type { FigmaFileStatus } from '../../connectors/figma/reader.js';
 const titles: Record<WidgetId, string> = {
   brief: 'Mon PFE',
   checklist: 'Checklist de production',
-  countdown: 'Compte à rebours',
+  countdown: 'Jours restants',
   roadmap: 'Roadmap DS et écrans',
   designSystem: 'Design System',
 };

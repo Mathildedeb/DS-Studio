@@ -11,6 +11,8 @@ import { DashboardStore, readRoadmap } from './dashboard.js';
 import { checklistSchema } from '../shared/dashboard.js';
 import { CodexAdapter } from '../../connectors/agents/codex.js';
 import { ClaudeAdapter } from '../../connectors/agents/claude.js';
+import { proposeCode, type Ask } from '../../connectors/agents/coder.js';
+import { CodeStore } from './code.js';
 import { unvalidatedAdapter } from '../../connectors/agents/unvalidated.js';
 import type { AgentAdapter } from '../../connectors/agents/types.js';
 import { figmaStatus } from '../../connectors/figma/contract.js';
@@ -22,6 +24,7 @@ export async function createStudioServer(options: {
   store: Store;
   agent?: AgentAdapter;
   claude?: AgentAdapter;
+  ask?: Ask;
   figma?: FigmaReader;
   dev?: boolean;
   control?: { record: RecordInfo; stop: () => void };
@@ -34,6 +37,9 @@ export async function createStudioServer(options: {
   };
   const project = new ProjectStore(store.directory);
   const dashboard = new DashboardStore(store.directory, root);
+  const code = new CodeStore(root, store.directory);
+  const claudeCli = new ClaudeAdapter();
+  const ask: Ask = options.ask ?? ((...a) => claudeCli.ask(...a));
   const figma = options.figma ?? new FigmaReader(undefined);
   const csrf = randomBytes(32).toString('hex');
   let busy = false;
@@ -125,6 +131,8 @@ export async function createStudioServer(options: {
               .catch(() => undefined);
             return send(200, await figma.status(brief || fromRoadmap));
           }
+          if (url.pathname === '/api/code/last')
+            return send(200, await code.last());
           if (url.pathname === '/api/roadmap')
             return send(200, await readRoadmap(root));
           if (url.pathname === '/api/dashboard')
@@ -205,6 +213,56 @@ export async function createStudioServer(options: {
         if (url.pathname === '/api/commit') {
           const b = z.object({ id: z.string().uuid() }).strict().parse(body);
           return send(200, await store.commit(b.id));
+        }
+        // Code : Clodo propose, l'étudiante valide le diff, le serveur écrit.
+        if (url.pathname === '/api/code/apply') {
+          const b = z.object({ id: z.string().uuid() }).strict().parse(body);
+          return send(200, await code.apply(b.id));
+        }
+        if (url.pathname === '/api/code/revert') {
+          const b = z.object({ id: z.string().uuid() }).strict().parse(body);
+          return send(200, await code.revert(b.id));
+        }
+        if (url.pathname === '/api/code') {
+          const b = z
+            .object({
+              message: z.string().trim().min(1).max(8000),
+              history: z
+                .array(
+                  z
+                    .object({
+                      role: z.enum(['user', 'assistant']),
+                      text: z.string().max(12000),
+                    })
+                    .strict(),
+                )
+                .max(10),
+            })
+            .strict()
+            .parse(body);
+          if (busy)
+            throw new StudioError('Une demande IA est déjà en cours.', 429);
+          busy = true;
+          const controller = new AbortController();
+          active.add(controller);
+          const cancel = () => controller.abort();
+          res.once('close', cancel);
+          try {
+            return send(
+              200,
+              await proposeCode(
+                ask,
+                code,
+                b.message,
+                b.history,
+                controller.signal,
+              ),
+            );
+          } finally {
+            busy = false;
+            active.delete(controller);
+            res.off('close', cancel);
+          }
         }
         if (url.pathname === '/api/agent') {
           const b = z
@@ -371,7 +429,7 @@ function urlSafeMessage(error: unknown) {
   // Les erreurs agent sont rédigées dans l'adaptateur, jamais de stderr brut ni de stack.
   const message = (error as Error).message ?? '';
   if (
-    /^(CLI |Codex |Claude Code |Version non|Échec Codex|Échec Claude Code|Délai CLI|Demande interrompue|Le CLI|Réponse CLI|Réponse Claude Code|claude non|gemini non|Impossible de démarrer)/.test(
+    /^(CLI |Codex |Claude Code |Version non|Échec Codex|Échec Claude Code|Délai CLI|Demande interrompue|Le CLI|Réponse CLI|Réponse Claude Code|Passage |Fichier |Chemin refusé|Trop de modifications|Aucune modification|claude non|gemini non|Impossible de démarrer)/.test(
       message,
     )
   )

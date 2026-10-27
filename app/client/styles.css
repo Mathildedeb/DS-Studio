@@ -1608,3 +1608,81 @@ h2[id] {
   display: block;
   color: var(--studio-muted);
 }
+.chat-mode {
+  display: flex;
+  margin-left: auto;
+  padding: 3px;
+  border-radius: 999px;
+  background: #f0f0f0;
+}
+.chat-mode button {
+  border: 0;
+  box-shadow: none;
+  background: transparent;
+  border-radius: 999px;
+  padding: 5px 12px;
+  font-size: 12px;
+  color: #686868;
+}
+.chat-mode button[aria-pressed='true'] {
+  background: #111;
+  color: #fff;
+}
+.chat-applied {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 0;
+  padding: 8px 8px 8px 14px;
+  border-radius: 999px;
+  background: var(--studio-success-bg);
+  color: var(--studio-success-text);
+  font-size: 12px;
+}
+.chat-applied button {
+  border: 0;
+  box-shadow: none;
+  border-radius: 999px;
+  background: #fff;
+  padding: 5px 12px;
+  font-size: 12px;
+}
+.code-review {
+  width: min(900px, 95vw);
+  max-width: none;
+}
+.code-hunk h3 {
+  font-size: 12px;
+  margin: 16px 0 6px;
+}
+.code-hunk h3 span {
+  color: var(--studio-muted);
+  font-weight: 400;
+}
+.code-hunk pre {
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: #fafafa;
+  border: 1px solid var(--studio-border);
+  font-size: 12px;
+  line-height: 1.5;
+  overflow: auto;
+}
+.code-hunk del,
+.code-hunk ins {
+  display: block;
+  white-space: pre;
+  padding: 0 4px;
+  text-decoration: none;
+}
+.code-hunk del {
+  background: #fef2f2;
+  color: #b91c1c;
+}
+.code-hunk ins {
+  background: #f0fdf4;
+  color: #15803d;
+}

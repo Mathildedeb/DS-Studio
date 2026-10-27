@@ -66,3 +66,27 @@ présente JSON/stream-json. L’authentification et les callbacks de permissions
 à éprouver dans un vrai processus embarqué. Ne pas utiliser de mode yolo ou
 supposer qu’un login étudiant permet un usage gratuit sans quota. Même série de
 tests que Claude avant d’exposer un bouton actif.
+
+## Clodo en mode Code — TESTED sous macOS (CLI 2.1.311)
+
+Même confinement que le mode Tokens : Clodo n’a aucun outil et ne touche jamais au disque.
+`connectors/agents/coder.ts` fait deux appels sans outil. Le premier montre la demande
+et la liste des fichiers modifiables, et Clodo en choisit cinq au plus. Le second envoie
+ces fichiers, et Clodo répond par des remplacements exacts `{file, search, replace}`.
+`app/server/code.ts` est le seul auteur des écritures :
+
+- liste blanche : `app/client/*.tsx|ts|css`, `workspace/PFE.md`, `DESIGN_RULES.md`,
+  `DECISIONS.md`, `roadmap.json`. Jamais le serveur, les connecteurs, les tests, les
+  scripts, `package.json`, `.env` ni `.ds-studio/` ; liens symboliques refusés ;
+- chaque passage `search` doit exister une seule fois, sinon rien n’est préparé ;
+- le diff est affiché, et rien n’est écrit avant « Appliquer » (usage unique, 30 min) ;
+- l’écriture est refusée si un fichier a changé depuis la proposition ;
+- avant chaque écriture, l’original est copié dans `.ds-studio/code-history/`, et
+  l’annulation est refusée si le fichier a été retouché depuis.
+
+Testé : liste blanche, chemins détournés, lien symbolique, passage absent ou ambigu,
+fichier changé, usage unique, annulation, session exigée, faux Clodo de bout en bout
+(sans quota). Essai réel : renommage d’un titre de widget, proposé puis appliqué depuis
+l’atelier. **Non testé** : demandes longues sur plusieurs fichiers, Windows et Linux.
+Limites : aucune vérification TypeScript après application (l’erreur s’affiche dans
+l’atelier), et l’historique du chat est perdu quand l’atelier se recharge.

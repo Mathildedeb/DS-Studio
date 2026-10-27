@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { Catalogue, Scenario } from './DesignSystem.js';
 import Chat, { type ChatMessage } from './Chat.js';
+import CodeReview from './CodeReview.js';
+import type { CodeProposal } from '../server/code.js';
 import Dashboard from './Dashboard.js';
 import Board from './Board.js';
 import type { FigmaFileStatus } from '../../connectors/figma/reader.js';
@@ -130,6 +132,11 @@ export default function App() {
   const [scenario, setScenario] = useState('cards');
   const [message, setMessage] = useState('');
   const [chat, setChat] = useState<ChatMessage[]>([]);
+  const [chatMode, setChatMode] = useState<'tokens' | 'code'>('tokens');
+  const [codeProposal, setCodeProposal] = useState<CodeProposal>();
+  const [codeBusy, setCodeBusy] = useState(false);
+  const [codeError, setCodeError] = useState('');
+  const [lastCode, setLastCode] = useState<{ id: string; files: string[] }>();
   const view = useView();
   const [thinking, setThinking] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -143,6 +150,9 @@ export default function App() {
       .catch((e) => setError(e.message));
     request<FigmaFileStatus>('figma')
       .then(setFigma)
+      .catch(() => undefined);
+    request<{ id: string; files: string[] } | null>('code/last')
+      .then((l) => setLastCode(l ?? undefined))
       .catch(() => undefined);
     return () => controller.current?.abort();
   }, []);
@@ -213,6 +223,18 @@ export default function App() {
     const abort = new AbortController();
     controller.current = abort;
     try {
+      if (chatMode === 'code') {
+        const coded = await request<{
+          message: string;
+          proposal: CodeProposal | null;
+        }>('code', { message: text, history: previous }, abort.signal);
+        setChat((c) => [...c, { role: 'assistant', text: coded.message }]);
+        if (coded.proposal) {
+          setCodeError('');
+          setCodeProposal(coded.proposal);
+        }
+        return;
+      }
       const result = await request<{
         message: string;
         proposal: Proposal | null;
@@ -260,6 +282,17 @@ export default function App() {
         available={!!status?.available}
         onSend={() => void sendMessage(agentId)}
         onStop={() => controller.current?.abort()}
+        mode={chatMode}
+        onMode={setChatMode}
+        lastCode={lastCode}
+        onRevert={() =>
+          void perform(async () => {
+            if (!lastCode) return;
+            await request('code/revert', { id: lastCode.id });
+            setNotice(`Modification annulée : ${lastCode.files.join(', ')}.`);
+            setLastCode(undefined);
+          })
+        }
       />
     );
   };
@@ -709,6 +742,30 @@ export default function App() {
           </footer>
         </>
       )}
+      <CodeReview
+        proposal={codeProposal}
+        busy={codeBusy}
+        error={codeError}
+        onCancel={() => setCodeProposal(undefined)}
+        onApply={async () => {
+          if (!codeProposal) return;
+          setCodeBusy(true);
+          setCodeError('');
+          try {
+            const applied = await request<{ id: string; files: string[] }>(
+              'code/apply',
+              { id: codeProposal.id },
+            );
+            setCodeProposal(undefined);
+            setLastCode(applied);
+            setNotice(`Code modifié : ${applied.files.join(', ')}.`);
+          } catch (e) {
+            setCodeError((e as Error).message);
+          } finally {
+            setCodeBusy(false);
+          }
+        }}
+      />
       <dialog
         ref={dialog}
         onCancel={(e) => {
