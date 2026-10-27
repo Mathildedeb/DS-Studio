@@ -21,6 +21,7 @@ export async function createStudioServer(options: {
   root: string;
   store: Store;
   agent?: AgentAdapter;
+  claude?: AgentAdapter;
   figma?: FigmaReader;
   dev?: boolean;
   control?: { record: RecordInfo; stop: () => void };
@@ -28,7 +29,7 @@ export async function createStudioServer(options: {
   const { root, store } = options;
   const adapters: Record<string, AgentAdapter> = {
     codex: options.agent ?? new CodexAdapter(),
-    claude: new ClaudeAdapter(),
+    claude: options.claude ?? new ClaudeAdapter(),
     gemini: unvalidatedAdapter('gemini'),
   };
   const project = new ProjectStore(store.directory);

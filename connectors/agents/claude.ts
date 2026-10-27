@@ -1,5 +1,6 @@
+import { existsSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import path from 'node:path';
 import { agentInstruction, parseAgentJson, runCli } from './codex.js';
 import type { AgentAdapter, AgentContext } from './types.js';
@@ -22,11 +23,23 @@ export const restrictedArgs = [
   agentInstruction,
 ];
 
+// L'installateur officiel place le CLI dans ~/.local/bin, souvent absent du PATH
+// d'un serveur lancé hors terminal (lanceur, app). On le cherche aussi là.
+export function findClaude(home = homedir()) {
+  const installed = path.join(
+    home,
+    '.local',
+    'bin',
+    process.platform === 'win32' ? 'claude.exe' : 'claude',
+  );
+  return existsSync(installed) ? installed : 'claude';
+}
+
 export class ClaudeAdapter implements AgentAdapter {
   id = 'claude';
   // baseArgs sert aux tests : un faux CLI lancé par Node, identique sur les trois OS.
   constructor(
-    private binary = 'claude',
+    private binary = findClaude(),
     private baseArgs: string[] = [],
   ) {}
   async status() {

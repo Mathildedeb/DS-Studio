@@ -37,6 +37,18 @@ async function fixture(
         throw new Error('Codex indisponible : authentification nécessaire.');
       },
     },
+    // Jamais le vrai CLI dans les tests : ni réseau ni quota consommé.
+    claude: {
+      id: 'claude',
+      async status() {
+        return { available: false, detail: 'Non authentifié (simulation)' };
+      },
+      async reply() {
+        throw new Error(
+          'Claude Code indisponible : vérifiez « claude auth status », Internet et le quota.',
+        );
+      },
+    },
   });
   await new Promise<void>((r) => app.server.listen(0, '127.0.0.1', r));
   t.after(async () => {

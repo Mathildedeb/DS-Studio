@@ -8,9 +8,10 @@ import {
 import { unvalidatedAdapter } from '../connectors/agents/unvalidated.js';
 import {
   ClaudeAdapter,
+  findClaude,
   restrictedArgs as claudeArgs,
 } from '../connectors/agents/claude.js';
-import { mkdtemp, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 test('CLI réellement absent : erreur exploitable et mode manuel disponible', async () => {
@@ -163,4 +164,13 @@ test('sortie UTF-8 scindée entre buffers conservée', async () => {
     '',
   );
   assert.equal(result, 'é');
+});
+test('Claude : CLI cherché dans ~/.local/bin, sinon dans le PATH', async () => {
+  const home = await mkdtemp(path.join(tmpdir(), 'ds-studio-home-'));
+  assert.equal(findClaude(home), 'claude');
+  const bin = path.join(home, '.local', 'bin');
+  await mkdir(bin, { recursive: true });
+  const name = process.platform === 'win32' ? 'claude.exe' : 'claude';
+  await writeFile(path.join(bin, name), '');
+  assert.equal(findClaude(home), path.join(bin, name));
 });

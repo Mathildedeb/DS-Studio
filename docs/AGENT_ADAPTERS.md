@@ -36,7 +36,7 @@ Le protocole et la version ont été exécutés, pas seulement décrits. Pour ch
 la version acceptée, refaire le smoke test, le test hostile, le refus sans auth,
 la proposition/validation via API et les essais sur chaque OS cible.
 
-## Claude Code — PARTIAL (testé avec un faux CLI, pas avec le vrai)
+## Claude Code — TESTED sous macOS avec 2.1.311 (affiché « Clodo »)
 
 `connectors/agents/claude.ts` lance `claude -p` selon la
 [documentation officielle headless](https://code.claude.com/docs/en/headless) :
@@ -49,11 +49,14 @@ Une réponse en plus d’un tour ou avec `permission_denials` est refusée : san
 le modèle répond en un tour. Authentification par `claude` puis `/login`, faite
 par l’utilisateur ; DS-Studio ne lit pas le trousseau ni les fichiers du compte.
 
-Testé (macOS, faux CLI lancé par Node) : réponse convertie en proposition, tentative
-d’outil refusée, échec de compte sans fuite de stderr, CLI absent. **Non testé** :
-le vrai CLI, la reconnaissance de chaque option par la version installée, le quota,
-l’arrêt d’un vrai processus et les réglages utilisateur (hooks) malgré
-`--setting-sources ""`. Aucune version n’est encore qualifiée. Ne pas remplacer
+Testé avec un faux CLI lancé par Node : réponse convertie en proposition, tentative
+d’outil refusée, échec de compte sans fuite de stderr, CLI absent. Testé avec le vrai
+CLI 2.1.311 sous macOS (connexion par abonnement claude.ai, usage personnel local) :
+options reconnues par `--help`, une question réelle depuis l’atelier, réponse JSON
+valide. Le CLI est cherché dans `~/.local/bin` (installateur officiel) puis dans le
+PATH. Les tests automatisés injectent un faux adaptateur : ils ne consomment aucun
+quota. **Non testé** : quota épuisé, arrêt d’un vrai processus en cours, Windows et
+Linux, et l’effet des hooks utilisateur malgré `--setting-sources ""`. Ne pas remplacer
 cette qualification par `--dangerously-skip-permissions`.
 
 ## Gemini CLI — NOT IMPLEMENTED
