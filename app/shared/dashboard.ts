@@ -74,6 +74,7 @@ export const checklistSchema = z
 export type Checklist = z.infer<typeof checklistSchema>;
 
 export const widgetIds = [
+  'brief',
   'checklist',
   'countdown',
   'roadmap',
@@ -100,7 +101,8 @@ export const defaultLayout: Layout = {
   widgets: [
     { id: 'checklist', size: 'm' },
     { id: 'countdown', size: 's' },
-    { id: 'roadmap', size: 'm' },
+    { id: 'brief', size: 'm' },
     { id: 'designSystem', size: 's' },
+    { id: 'roadmap', size: 'l' },
   ],
 };

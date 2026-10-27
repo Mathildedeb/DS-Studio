@@ -204,7 +204,8 @@ test('V2 : contraste proposé immédiat sans modifier les composants enregistré
 test('V2 : brief privé persistant, indépendant du mode IA', async ({
   page,
 }) => {
-  await page.goto('/#atelier');
+  // Le brief vit dans le tableau de bord.
+  await page.goto('/');
   await page.getByText('Mon PFE · brief privé', { exact: true }).click();
   await page
     .getByLabel('Nom du PFE', { exact: true })
@@ -222,9 +223,6 @@ test('V2 : brief privé persistant, indépendant du mode IA', async ({
   await expect(page.getByLabel('Nom du PFE', { exact: true })).toHaveValue(
     'Mon atelier accessible',
   );
-  await expect(
-    page.getByRole('combobox', { name: 'Mode de travail' }),
-  ).toHaveValue('manual');
 });
 
 test('V2 : recherche, brouillon récupéré après recharge et abandon sans écriture', async ({

@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
 import { Catalogue, Scenario } from './DesignSystem.js';
-import ProjectBrief from './ProjectBrief.js';
 import Chat, { type ChatMessage } from './Chat.js';
 import Dashboard from './Dashboard.js';
 import { useTokenDraft } from './useTokenDraft.js';
@@ -119,7 +118,6 @@ export default function App() {
   const [notice, setNotice] = useState('');
   const [device, setDevice] = useState(1);
   const [scenario, setScenario] = useState('cards');
-  const [agent, setAgent] = useState('manual');
   const [message, setMessage] = useState('');
   const [chat, setChat] = useState<ChatMessage[]>([]);
   const view = useView();
@@ -136,11 +134,11 @@ export default function App() {
     return () => controller.current?.abort();
   }, []);
   useEffect(() => {
-    if (agent !== 'manual')
+    if (view === 'atelier')
       request<Bootstrap['agents']>('agents')
         .then(setAgents)
         .catch((e) => setError(e.message));
-  }, [agent]);
+  }, [view]);
   const current = state?.tokens[key].$value;
 
   useEffect(() => {
@@ -435,45 +433,7 @@ export default function App() {
                   <p>Un assistant, pas un pilote automatique</p>
                 </div>
               </div>
-              <div className="panel-body">
-                <ProjectBrief />
-                <label className="field">
-                  Mode de travail
-                  <select
-                    value={agent}
-                    onChange={(e) => {
-                      // Pas de conversation partagée entre fournisseurs.
-                      setAgent(e.target.value);
-                      setChat([]);
-                    }}
-                  >
-                    <option value="manual">Manuel · sans compte IA</option>
-                    <option value="claude">Claude Code · expérimental</option>
-                  </select>
-                </label>
-                {agent === 'manual' ? (
-                  <div className="agent-empty">
-                    <div className="line-icon">✳</div>
-                    <h3>Le Design System vous appartient.</h3>
-                    <p>
-                      Aucun compte nécessaire. Sélectionnez un token dans le
-                      panneau central, modifiez sa valeur et examinez le diff
-                      avant de l’appliquer.
-                    </p>
-                    <ol>
-                      <li>Choisissez une couleur.</li>
-                      <li>Proposez un changement.</li>
-                      <li>Validez et observez les deux vues.</li>
-                    </ol>
-                    <p className="privacy-note">
-                      Les changements restent sur votre machine. Figma et l’IA
-                      sont facultatifs.
-                    </p>
-                  </div>
-                ) : (
-                  chatBox(agent)
-                )}
-              </div>
+              <div className="panel-body">{chatBox('claude')}</div>
               <div className="panel-foot">
                 Périmètre : contexte PFE + tokens autorisés
               </div>

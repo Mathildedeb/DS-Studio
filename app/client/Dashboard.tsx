@@ -1,5 +1,6 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { request } from './api.js';
+import ProjectBrief from './ProjectBrief.js';
 import {
   defaultLayout,
   widgetIds,
@@ -14,6 +15,7 @@ import {
 import type { Tokens } from '../shared/model.js';
 
 const titles: Record<WidgetId, string> = {
+  brief: 'Mon PFE',
   checklist: 'Checklist de production',
   countdown: 'Compte à rebours',
   roadmap: 'Roadmap DS et écrans',
@@ -218,6 +220,7 @@ export default function Dashboard({
   };
 
   const body = (id: WidgetId): ReactNode => {
+    if (id === 'brief') return <ProjectBrief />;
     if (id === 'checklist')
       return checklist ? (
         <ChecklistWidget items={checklist} onChange={saveChecklist} />
