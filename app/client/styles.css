@@ -666,6 +666,32 @@ del {
   font-size: 12px;
   margin: 0;
 }
+.ds-dialog-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  background: rgb(0 0 0 / 0.4);
+}
+.ds-dialog {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  z-index: 101;
+  transform: translate(-50%, -50%);
+  width: min(90vw, 420px);
+  display: grid;
+  gap: var(--space-md);
+  justify-items: start;
+  padding: var(--space-lg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-control);
+  background: var(--color-surface);
+  color: var(--color-text);
+}
+.ds-dialog h2,
+.ds-dialog p {
+  margin: 0;
+}
 .ds-nav {
   display: flex;
   gap: var(--space-sm);

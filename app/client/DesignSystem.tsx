@@ -1,4 +1,5 @@
 import { useState, type CSSProperties, type ReactNode } from 'react';
+import * as Dialog from '@radix-ui/react-dialog';
 import { tokenCss, type Tokens } from '../shared/model.js';
 
 export function DSProvider({
@@ -118,6 +119,31 @@ export function Navigation() {
     </nav>
   );
 }
+// Radix gère focus, Échap et lecteurs d’écran ; le style reste dans styles.css.
+// Le portail vise le conteneur .ds pour garder les variables de tokens.
+export function WorkshopDialog() {
+  const [root, setRoot] = useState<HTMLElement | null>(null);
+  return (
+    <span ref={(el) => setRoot(el?.closest<HTMLElement>('.ds') ?? null)}>
+      <Dialog.Root>
+        <Dialog.Trigger className="ds-button secondary">
+          Voir le programme
+        </Dialog.Trigger>
+        <Dialog.Portal container={root}>
+          <Dialog.Overlay className="ds-dialog-overlay" />
+          <Dialog.Content className="ds-dialog">
+            <Dialog.Title>Programme de l’atelier</Dialog.Title>
+            <Dialog.Description>
+              45 minutes pour observer, échanger puis prototyper une idée
+              ensemble. Contenu de démonstration.
+            </Dialog.Description>
+            <Dialog.Close className="ds-button primary">Fermer</Dialog.Close>
+          </Dialog.Content>
+        </Dialog.Portal>
+      </Dialog.Root>
+    </span>
+  );
+}
 export function Catalogue({ tokens }: { tokens: Tokens }) {
   return (
     <DSProvider tokens={tokens}>
@@ -148,6 +174,13 @@ export function Catalogue({ tokens }: { tokens: Tokens }) {
         <section>
           <div className="section-label">04 / NAVIGATION</div>
           <Navigation />
+        </section>
+        <section>
+          <div className="section-label">05 / SUPERPOSITION</div>
+          <WorkshopDialog />
+          <p className="ds-caption">
+            Composant Radix UI : Échap ferme, le focus reste dans la fenêtre.
+          </p>
         </section>
       </div>
     </DSProvider>
