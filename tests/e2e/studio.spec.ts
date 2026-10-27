@@ -4,9 +4,7 @@ test('boucle centrale réelle : diff, validation, propagation, recharge, annulat
   page,
 }) => {
   await page.goto('/#atelier');
-  await expect(
-    page.getByRole('heading', { name: 'Une source. Toutes les vues.' }),
-  ).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'L’atelier' })).toBeVisible();
   await expect(
     page.getByText('Figma non connecté', { exact: true }),
   ).toBeVisible();

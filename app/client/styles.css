@@ -1446,12 +1446,6 @@ h2[id] {
 }
 
 @media (max-width: 900px) {
-  .board-item {
-    grid-column: span 12;
-  }
-  .board-resize {
-    display: none;
-  }
   .view-nav {
     margin-left: 0;
   }
@@ -1580,6 +1574,14 @@ h2[id] {
 .board-resize:active::after {
   opacity: 1;
   background: #3a83f7;
+}
+@media (max-width: 900px) {
+  .board-item {
+    grid-column: 1 / -1;
+  }
+  .board-resize {
+    display: none;
+  }
 }
 @media (max-width: 740px) {
   .studio-main {

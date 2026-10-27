@@ -382,12 +382,7 @@ export default function App() {
         <>
           <div className="intro">
             <div>
-              <span className="eyebrow">STARTER PÉDAGOGIQUE / M2 UX/UI</span>
-              <h1>Une source. Toutes les vues.</h1>
-              <p>
-                Explorez, proposez, validez. Construisez ensuite votre propre
-                outil.
-              </p>
+              <h1>L’atelier</h1>
             </div>
             <div className="intro-actions">
               <button onClick={() => void perform(exportTokens)}>
@@ -422,11 +417,6 @@ export default function App() {
           </div>
           {feedback}
           {history}
-          <nav className="panel-nav" aria-label="Panneaux de l’atelier">
-            <a href="#agent-title">1 · Contexte et assistant</a>
-            <a href="#ds-title">2 · Tokens et composants</a>
-            <a href="#mobile-title">3 · Aperçu responsive</a>
-          </nav>
           <main className="studio-main">
             <Board
               name="atelier"
