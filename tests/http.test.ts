@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import http from 'node:http';
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -245,7 +245,7 @@ test('tableau de bord : roadmap versionnée et disposition privée validée', as
   assert(roadmap.steps.length > 0);
   const initial = await (await fetch(origin + '/api/dashboard')).json();
   assert(initial.widgets.some((w: { id: string }) => w.id === 'checklist'));
-  const layout = { widgets: [{ id: 'roadmap', size: 'l' }] };
+  const layout = { widgets: [{ id: 'roadmap', span: 12 }] };
   assert.equal((await post('dashboard', layout)).status, 200);
   assert.deepEqual(
     await (await fetch(origin + '/api/dashboard')).json(),
@@ -258,14 +258,15 @@ test('tableau de bord : roadmap versionnée et disposition privée validée', as
     layout,
   );
   for (const bad of [
-    { widgets: [{ id: 'inconnu', size: 'l' }] },
+    { widgets: [{ id: 'inconnu', span: 12 }] },
     {
       widgets: [
-        { id: 'roadmap', size: 's' },
-        { id: 'roadmap', size: 'm' },
+        { id: 'roadmap', span: 4 },
+        { id: 'roadmap', span: 8 },
       ],
     },
     { widgets: [], extra: true },
+    { widgets: [{ id: 'roadmap', span: 2 }] },
   ])
     assert.equal((await post('dashboard', bad)).status, 400);
   assert.equal(
@@ -295,4 +296,41 @@ test('checklist de production : amorcée par la roadmap puis enregistrée', asyn
     (await post('checklist', [{ ...initial[0], label: '' }])).status,
     400,
   );
+});
+test('disposition de l’atelier enregistrée ; ancienne disposition convertie', async (t) => {
+  const { origin, post, store } = await fixture(t);
+  const initial = await (await fetch(origin + '/api/atelier')).json();
+  assert.deepEqual(
+    initial.widgets.map((w: { id: string }) => w.id),
+    ['context', 'tokens', 'preview'],
+  );
+  const layout = {
+    widgets: [
+      { id: 'preview', span: 7 },
+      { id: 'tokens', span: 5 },
+    ],
+  };
+  assert.equal((await post('atelier', layout)).status, 200);
+  assert.deepEqual(await (await fetch(origin + '/api/atelier')).json(), layout);
+  assert.equal(
+    (await post('atelier', { widgets: [{ id: 'checklist', span: 6 }] })).status,
+    400,
+  );
+  // Fichier écrit par la version précédente : tailles s/m/l, widget retiré.
+  await writeFile(
+    path.join(store.directory, 'dashboard.json'),
+    JSON.stringify({
+      widgets: [
+        { id: 'countdown', size: 's' },
+        { id: 'chat', size: 'm' },
+        { id: 'roadmap', size: 'l' },
+      ],
+    }),
+  );
+  assert.deepEqual(await (await fetch(origin + '/api/dashboard')).json(), {
+    widgets: [
+      { id: 'countdown', span: 4 },
+      { id: 'roadmap', span: 12 },
+    ],
+  });
 });

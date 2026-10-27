@@ -1,44 +1,68 @@
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import {
+  atelierIds,
+  atelierLayoutSchema,
   checklistSchema,
+  defaultAtelierLayout,
   defaultLayout,
   layoutSchema,
   roadmapSchema,
   widgetIds,
   type Checklist,
-  type Layout,
 } from '../shared/dashboard.js';
 import { atomicWrite, readPrivate } from './files.js';
 import { StudioError } from './store.js';
 
-// Disposition et checklist : état privé du poste, comme le brief.
+// Anciennes tailles (V1 du tableau de bord) converties en colonnes.
+const legacySpans: Record<string, number> = { s: 4, m: 8, l: 12 };
+const boards = {
+  dashboard: {
+    file: 'dashboard.json',
+    schema: layoutSchema,
+    ids: widgetIds as readonly string[],
+    fallback: defaultLayout,
+  },
+  atelier: {
+    file: 'atelier.json',
+    schema: atelierLayoutSchema,
+    ids: atelierIds as readonly string[],
+    fallback: defaultAtelierLayout,
+  },
+};
+export type BoardName = keyof typeof boards;
+
+// Dispositions et checklist : état privé du poste, comme le brief.
 export class DashboardStore {
   private queue: Promise<unknown> = Promise.resolve();
-  private layoutFile: string;
   private checklistFile: string;
   constructor(
-    directory: string,
+    private directory: string,
     private root: string,
   ) {
-    this.layoutFile = path.join(directory, 'dashboard.json');
     this.checklistFile = path.join(directory, 'checklist.json');
   }
-  async read(): Promise<Layout> {
+  async read(name: BoardName) {
+    const board = boards[name];
     try {
-      const raw = JSON.parse(await readPrivate(this.layoutFile, 16000));
-      // Les widgets retirés d'une version précédente sont ignorés, pas refusés.
-      const known: string[] = [...widgetIds];
-      return layoutSchema.parse({
-        ...raw,
-        widgets: Array.isArray(raw?.widgets)
-          ? raw.widgets.filter((w: { id?: string }) => known.includes(w?.id!))
-          : raw?.widgets,
-      });
+      const raw = JSON.parse(
+        await readPrivate(path.join(this.directory, board.file), 16000),
+      );
+      // Les vues retirées d'une version précédente sont ignorées, pas refusées.
+      const widgets = Array.isArray(raw?.widgets)
+        ? raw.widgets
+            .filter((w: { id?: string }) => board.ids.includes(w?.id ?? ''))
+            .map(({ size, ...w }: { size?: string; span?: number }) =>
+              size && w.span === undefined
+                ? { ...w, span: legacySpans[size] }
+                : w,
+            )
+        : raw?.widgets;
+      return board.schema.parse({ ...raw, widgets });
     } catch (e) {
-      if ((e as NodeJS.ErrnoException).code === 'ENOENT') return defaultLayout;
+      if ((e as NodeJS.ErrnoException).code === 'ENOENT') return board.fallback;
       throw new StudioError(
-        'Disposition du tableau de bord invalide. Original préservé ; disposition par défaut affichée.',
+        'Disposition invalide. Original préservé ; disposition par défaut affichée.',
         500,
       );
     }
@@ -65,8 +89,12 @@ export class DashboardStore {
     this.queue = work.catch(() => {});
     return work;
   }
-  save(layout: Layout) {
-    return this.write(this.layoutFile, layoutSchema.parse(layout));
+  save(name: BoardName, layout: unknown) {
+    const board = boards[name];
+    return this.write(
+      path.join(this.directory, board.file),
+      board.schema.parse(layout),
+    );
   }
   saveChecklist(checklist: Checklist) {
     return this.write(this.checklistFile, checklistSchema.parse(checklist));

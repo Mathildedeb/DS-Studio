@@ -1,16 +1,14 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { request } from './api.js';
 import ProjectBrief from './ProjectBrief.js';
+import Board from './Board.js';
 import {
   defaultLayout,
   widgetIds,
-  widgetSizes,
   type Checklist,
-  type Layout,
   type Roadmap,
   type RoadmapStep,
   type WidgetId,
-  type WidgetSize,
 } from '../shared/dashboard.js';
 import type { Tokens } from '../shared/model.js';
 
@@ -20,11 +18,6 @@ const titles: Record<WidgetId, string> = {
   countdown: 'Compte à rebours',
   roadmap: 'Roadmap DS et écrans',
   designSystem: 'Design System',
-};
-const sizeNames: Record<WidgetSize, string> = {
-  s: 'petit',
-  m: 'moyen',
-  l: 'large',
 };
 const statusClass = {
   Terminé: 'done',
@@ -162,9 +155,7 @@ export default function Dashboard({
   onError: (message: string) => void;
 }) {
   const [roadmap, setRoadmap] = useState<Roadmap>();
-  const [layout, setLayout] = useState<Layout>();
   const [checklist, setChecklist] = useState<Checklist>();
-  const [adding, setAdding] = useState<WidgetId | ''>('');
   useEffect(() => {
     request<Roadmap>('roadmap')
       .then(setRoadmap)
@@ -172,51 +163,11 @@ export default function Dashboard({
     request<Checklist>('checklist')
       .then(setChecklist)
       .catch((e) => onError(e.message));
-    request<Layout>('dashboard')
-      .then(setLayout)
-      .catch((e) => {
-        setLayout(defaultLayout);
-        onError(e.message);
-      });
   }, []);
-  // Disposition et checklist sont enregistrées par le serveur, jamais dans le navigateur.
-  const save = (next: Layout) => {
-    setLayout(next);
-    request<Layout>('dashboard', next).catch((e) => onError(e.message));
-  };
+  // La checklist est enregistrée par le serveur, jamais dans le navigateur.
   const saveChecklist = (next: Checklist) => {
     setChecklist(next);
     request<Checklist>('checklist', next).catch((e) => onError(e.message));
-  };
-  if (!layout) return <p className="loading">Chargement du tableau de bord…</p>;
-  const shown = new Set(layout.widgets.map((w) => w.id));
-  const hidden = widgetIds.filter((id) => !shown.has(id));
-  const resize = (id: WidgetId, step: 1 | -1) =>
-    save({
-      widgets: layout.widgets.map((w) =>
-        w.id === id
-          ? {
-              ...w,
-              size: widgetSizes[
-                Math.min(2, Math.max(0, widgetSizes.indexOf(w.size) + step))
-              ],
-            }
-          : w,
-      ),
-    });
-  const move = (id: WidgetId, step: 1 | -1) => {
-    const widgets = [...layout.widgets];
-    const i = widgets.findIndex((w) => w.id === id);
-    const j = i + step;
-    if (j < 0 || j >= widgets.length) return;
-    [widgets[i], widgets[j]] = [widgets[j], widgets[i]];
-    save({ widgets });
-  };
-  const remove = (id: WidgetId) =>
-    save({ widgets: layout.widgets.filter((w) => w.id !== id) });
-  const add = (id: WidgetId) => {
-    save({ widgets: [...layout.widgets, { id, size: 'm' }] });
-    setAdding('');
   };
 
   const body = (id: WidgetId): ReactNode => {
@@ -324,89 +275,23 @@ export default function Dashboard({
               : 'Tableau de bord'}
           </h1>
         </div>
-        <div className="dashboard-tools">
-          {hidden.length > 0 && (
-            <form
-              onSubmit={(e) => {
-                e.preventDefault();
-                if (adding) add(adding);
-              }}
-            >
-              <label className="field">
-                Ajouter un widget
-                <select
-                  value={adding}
-                  onChange={(e) => setAdding(e.target.value as WidgetId)}
-                >
-                  <option value="">Choisir…</option>
-                  {hidden.map((id) => (
-                    <option key={id} value={id}>
-                      {titles[id]}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <button disabled={!adding}>Ajouter</button>
-            </form>
-          )}
-          <button onClick={() => save(defaultLayout)}>Réinitialiser</button>
-        </div>
       </div>
-      <div className="widget-grid">
-        {layout.widgets.map(({ id, size }, index) => (
-          <section
-            key={id}
-            className={`widget size-${size}`}
-            aria-labelledby={`widget-${id}`}
-          >
+      <Board
+        name="dashboard"
+        label="tableau de bord"
+        ids={widgetIds}
+        titles={titles}
+        fallback={defaultLayout}
+        onError={onError}
+        render={(id) => (
+          <section className="widget" aria-labelledby={`widget-${id}`}>
             <header className="widget-head">
               <h2 id={`widget-${id}`}>{titles[id]}</h2>
-              <div className="widget-actions">
-                <button
-                  onClick={() => move(id, -1)}
-                  disabled={index === 0}
-                  aria-label={`Déplacer ${titles[id]} avant`}
-                  title="Déplacer avant"
-                >
-                  ←
-                </button>
-                <button
-                  onClick={() => move(id, 1)}
-                  disabled={index === layout.widgets.length - 1}
-                  aria-label={`Déplacer ${titles[id]} après`}
-                  title="Déplacer après"
-                >
-                  →
-                </button>
-                <button
-                  onClick={() => resize(id, -1)}
-                  disabled={size === 's'}
-                  aria-label={`Réduire ${titles[id]} (actuellement ${sizeNames[size]})`}
-                  title="Réduire"
-                >
-                  −
-                </button>
-                <button
-                  onClick={() => resize(id, 1)}
-                  disabled={size === 'l'}
-                  aria-label={`Agrandir ${titles[id]} (actuellement ${sizeNames[size]})`}
-                  title="Agrandir"
-                >
-                  +
-                </button>
-                <button
-                  onClick={() => remove(id)}
-                  aria-label={`Retirer ${titles[id]}`}
-                  title="Retirer"
-                >
-                  ×
-                </button>
-              </div>
             </header>
             <div className="widget-body">{body(id)}</div>
           </section>
-        ))}
-      </div>
+        )}
+      />
     </main>
   );
 }

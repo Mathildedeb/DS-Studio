@@ -73,6 +73,29 @@ export const checklistSchema = z
   .max(150);
 export type Checklist = z.infer<typeof checklistSchema>;
 
+// Une vue occupe de 3 à 12 colonnes ; la souris ou les boutons changent cette largeur.
+export const minSpan = 3;
+export const maxSpan = 12;
+const boardSchema = <T extends readonly [string, ...string[]]>(ids: T) =>
+  z
+    .object({
+      widgets: z
+        .array(
+          z
+            .object({
+              id: z.enum(ids),
+              span: z.number().int().min(minSpan).max(maxSpan),
+            })
+            .strict(),
+        )
+        .max(ids.length)
+        .refine(
+          (w) => new Set(w.map((x) => x.id)).size === w.length,
+          'Vue en double.',
+        ),
+    })
+    .strict();
+
 export const widgetIds = [
   'brief',
   'checklist',
@@ -81,28 +104,27 @@ export const widgetIds = [
   'designSystem',
 ] as const;
 export type WidgetId = (typeof widgetIds)[number];
-export const widgetSizes = ['s', 'm', 'l'] as const;
-export type WidgetSize = (typeof widgetSizes)[number];
-export const layoutSchema = z
-  .object({
-    widgets: z
-      .array(
-        z.object({ id: z.enum(widgetIds), size: z.enum(widgetSizes) }).strict(),
-      )
-      .max(widgetIds.length)
-      .refine(
-        (w) => new Set(w.map((x) => x.id)).size === w.length,
-        'Widget en double.',
-      ),
-  })
-  .strict();
+export const layoutSchema = boardSchema(widgetIds);
 export type Layout = z.infer<typeof layoutSchema>;
 export const defaultLayout: Layout = {
   widgets: [
-    { id: 'checklist', size: 'm' },
-    { id: 'countdown', size: 's' },
-    { id: 'brief', size: 'm' },
-    { id: 'designSystem', size: 's' },
-    { id: 'roadmap', size: 'l' },
+    { id: 'checklist', span: 8 },
+    { id: 'countdown', span: 4 },
+    { id: 'brief', span: 8 },
+    { id: 'designSystem', span: 4 },
+    { id: 'roadmap', span: 12 },
+  ],
+};
+
+// Panneaux de l'atelier : mêmes règles que les widgets du tableau de bord.
+export const atelierIds = ['context', 'tokens', 'preview'] as const;
+export type AtelierId = (typeof atelierIds)[number];
+export const atelierLayoutSchema = boardSchema(atelierIds);
+export type AtelierLayout = z.infer<typeof atelierLayoutSchema>;
+export const defaultAtelierLayout: AtelierLayout = {
+  widgets: [
+    { id: 'context', span: 3 },
+    { id: 'tokens', span: 5 },
+    { id: 'preview', span: 4 },
   ],
 };

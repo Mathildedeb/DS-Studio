@@ -8,7 +8,7 @@ import { Store, StudioError } from './store.js';
 import { ProjectStore } from './project.js';
 import { projectSchema } from '../shared/project.js';
 import { DashboardStore, readRoadmap } from './dashboard.js';
-import { checklistSchema, layoutSchema } from '../shared/dashboard.js';
+import { checklistSchema } from '../shared/dashboard.js';
 import { CodexAdapter } from '../../connectors/agents/codex.js';
 import { ClaudeAdapter } from '../../connectors/agents/claude.js';
 import { unvalidatedAdapter } from '../../connectors/agents/unvalidated.js';
@@ -114,7 +114,9 @@ export async function createStudioServer(options: {
           if (url.pathname === '/api/roadmap')
             return send(200, await readRoadmap(root));
           if (url.pathname === '/api/dashboard')
-            return send(200, await dashboard.read());
+            return send(200, await dashboard.read('dashboard'));
+          if (url.pathname === '/api/atelier')
+            return send(200, await dashboard.read('atelier'));
           if (url.pathname === '/api/checklist')
             return send(200, await dashboard.readChecklist());
           if (url.pathname === '/api/state') return send(200, store.snapshot());
@@ -154,7 +156,9 @@ export async function createStudioServer(options: {
           return send(200, await project.save(b.base, b.project));
         }
         if (url.pathname === '/api/dashboard')
-          return send(200, await dashboard.save(layoutSchema.parse(body)));
+          return send(200, await dashboard.save('dashboard', body));
+        if (url.pathname === '/api/atelier')
+          return send(200, await dashboard.save('atelier', body));
         if (url.pathname === '/api/checklist')
           return send(
             200,
