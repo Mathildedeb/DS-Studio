@@ -131,6 +131,8 @@ export async function createStudioServer(options: {
               .catch(() => undefined);
             return send(200, await figma.status(brief || fromRoadmap));
           }
+          if (url.pathname === '/api/clodo')
+            return send(200, await dashboard.readClodo());
           if (url.pathname === '/api/code/last')
             return send(200, await code.last());
           if (url.pathname === '/api/roadmap')
@@ -215,6 +217,8 @@ export async function createStudioServer(options: {
           return send(200, await store.commit(b.id));
         }
         // Code : Clodo propose, l'étudiante valide le diff, le serveur écrit.
+        if (url.pathname === '/api/clodo')
+          return send(200, await dashboard.saveClodo(body));
         if (url.pathname === '/api/code/apply') {
           const b = z.object({ id: z.string().uuid() }).strict().parse(body);
           return send(200, await code.apply(b.id));

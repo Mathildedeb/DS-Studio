@@ -30,6 +30,7 @@ export default function Chat({
   onMode,
   lastCode,
   onRevert,
+  onClose,
 }: {
   agentName: string;
   detail: string;
@@ -44,6 +45,7 @@ export default function Chat({
   onMode: (mode: 'tokens' | 'code') => void;
   lastCode?: { id: string; files: string[] };
   onRevert: () => void;
+  onClose?: () => void;
 }) {
   const log = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -78,6 +80,17 @@ export default function Chat({
             </button>
           ))}
         </div>
+        {onClose && (
+          <button
+            type="button"
+            className="chat-close"
+            onClick={onClose}
+            aria-label={`Fermer ${agentName}`}
+            title="Fermer (Échap)"
+          >
+            ×
+          </button>
+        )}
       </header>
       <div
         className="chat-log"

@@ -4,12 +4,15 @@ import {
   atelierIds,
   atelierLayoutSchema,
   checklistSchema,
+  clodoSchema,
+  defaultClodo,
   defaultAtelierLayout,
   defaultLayout,
   layoutSchema,
   roadmapSchema,
   widgetIds,
   type Checklist,
+  type ClodoPosition,
 } from '../shared/dashboard.js';
 import { atomicWrite, readPrivate } from './files.js';
 import { StudioError } from './store.js';
@@ -94,6 +97,23 @@ export class DashboardStore {
     return this.write(
       path.join(this.directory, board.file),
       board.schema.parse(layout),
+    );
+  }
+  async readClodo(): Promise<ClodoPosition> {
+    try {
+      return clodoSchema.parse(
+        JSON.parse(
+          await readPrivate(path.join(this.directory, 'clodo.json'), 1000),
+        ),
+      );
+    } catch {
+      return defaultClodo;
+    }
+  }
+  saveClodo(position: unknown) {
+    return this.write(
+      path.join(this.directory, 'clodo.json'),
+      clodoSchema.parse(position),
     );
   }
   saveChecklist(checklist: Checklist) {

@@ -117,14 +117,24 @@ export const defaultLayout: Layout = {
 };
 
 // Panneaux de l'atelier : mêmes règles que les widgets du tableau de bord.
-export const atelierIds = ['context', 'tokens', 'preview'] as const;
+// Le chat n'est plus un panneau : Clodo vit dans une bulle flottante.
+export const atelierIds = ['tokens', 'preview'] as const;
 export type AtelierId = (typeof atelierIds)[number];
 export const atelierLayoutSchema = boardSchema(atelierIds);
 export type AtelierLayout = z.infer<typeof atelierLayoutSchema>;
 export const defaultAtelierLayout: AtelierLayout = {
   widgets: [
-    { id: 'context', span: 3 },
-    { id: 'tokens', span: 5 },
-    { id: 'preview', span: 4 },
+    { id: 'tokens', span: 7 },
+    { id: 'preview', span: 5 },
   ],
 };
+
+// Position de la bulle Clodo, en fraction de la fenêtre (0 = bord gauche ou haut).
+export const clodoSchema = z
+  .object({
+    x: z.number().min(0).max(1),
+    y: z.number().min(0).max(1),
+  })
+  .strict();
+export type ClodoPosition = z.infer<typeof clodoSchema>;
+export const defaultClodo: ClodoPosition = { x: 0.96, y: 0.92 };

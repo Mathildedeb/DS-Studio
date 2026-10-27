@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Catalogue, Scenario } from './DesignSystem.js';
 import Chat, { type ChatMessage } from './Chat.js';
 import CodeReview from './CodeReview.js';
+import Clodo from './Clodo.js';
 import type { CodeProposal } from '../server/code.js';
 import Dashboard from './Dashboard.js';
 import Board from './Board.js';
@@ -9,7 +10,6 @@ import type { FigmaFileStatus } from '../../connectors/figma/reader.js';
 import { atelierIds, defaultAtelierLayout } from '../shared/dashboard.js';
 
 const atelierTitles = {
-  context: 'Contexte et assistant',
   tokens: 'Tokens et composants',
   preview: 'Aperçu responsive',
 };
@@ -137,6 +137,7 @@ export default function App() {
   const [codeBusy, setCodeBusy] = useState(false);
   const [codeError, setCodeError] = useState('');
   const [lastCode, setLastCode] = useState<{ id: string; files: string[] }>();
+  const [clodoOpen, setClodoOpen] = useState(false);
   const view = useView();
   const [thinking, setThinking] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -157,11 +158,23 @@ export default function App() {
     return () => controller.current?.abort();
   }, []);
   useEffect(() => {
-    if (view === 'atelier')
+    if (clodoOpen)
       request<Bootstrap['agents']>('agents')
         .then(setAgents)
         .catch((e) => setError(e.message));
-  }, [view]);
+  }, [clodoOpen]);
+  useEffect(() => {
+    // Panneau ouvert : la page laisse la place à gauche, Échap le referme.
+    document.body.classList.toggle('clodo-open', clodoOpen);
+    if (!clodoOpen) return;
+    document.getElementById('chat-input')?.focus();
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && !document.querySelector('dialog[open]'))
+        setClodoOpen(false);
+    };
+    addEventListener('keydown', onKey);
+    return () => removeEventListener('keydown', onKey);
+  }, [clodoOpen]);
   const current = state?.tokens[key].$value;
 
   useEffect(() => {
@@ -269,7 +282,7 @@ export default function App() {
         <p>Lancez le serveur local puis rechargez cette page.</p>
       </main>
     );
-  const chatBox = (agentId: string) => {
+  const chatBox = (agentId: string, onClose?: () => void) => {
     const status = agents.find((a) => a.id === agentId);
     return (
       <Chat
@@ -285,6 +298,7 @@ export default function App() {
         mode={chatMode}
         onMode={setChatMode}
         lastCode={lastCode}
+        onClose={onClose}
         onRevert={() =>
           void perform(async () => {
             if (!lastCode) return;
@@ -476,26 +490,7 @@ export default function App() {
               fallback={defaultAtelierLayout}
               onError={setError}
               render={(id) =>
-                id === 'context' ? (
-                  <section
-                    className="panel agent-panel"
-                    aria-labelledby="agent-title"
-                  >
-                    <div className="panel-heading">
-                      <span className="panel-index">A</span>
-                      <div>
-                        <h2 id="agent-title" tabIndex={-1}>
-                          Contexte et assistant
-                        </h2>
-                        <p>Un assistant, pas un pilote automatique</p>
-                      </div>
-                    </div>
-                    <div className="panel-body">{chatBox('claude')}</div>
-                    <div className="panel-foot">
-                      Périmètre : contexte PFE + tokens autorisés
-                    </div>
-                  </section>
-                ) : id === 'tokens' ? (
+                id === 'tokens' ? (
                   <section
                     className="panel ds-panel"
                     aria-labelledby="ds-title"
@@ -742,6 +737,9 @@ export default function App() {
           </footer>
         </>
       )}
+      <Clodo open={clodoOpen} onOpen={() => setClodoOpen(true)}>
+        {chatBox('claude', () => setClodoOpen(false))}
+      </Clodo>
       <CodeReview
         proposal={codeProposal}
         busy={codeBusy}

@@ -319,7 +319,7 @@ test('disposition de l’atelier enregistrée ; ancienne disposition convertie',
   const initial = await (await fetch(origin + '/api/atelier')).json();
   assert.deepEqual(
     initial.widgets.map((w: { id: string }) => w.id),
-    ['context', 'tokens', 'preview'],
+    ['tokens', 'preview'],
   );
   const layout = {
     widgets: [
@@ -406,4 +406,24 @@ test('code par Clodo : proposition, session exigée, application puis annulation
   );
   assert.equal((await post('code/revert', { id: proposal.id })).status, 200);
   assert.equal(await readFile(file, 'utf8'), original);
+});
+test('bulle Clodo : position enregistrée, valeurs hors écran refusées', async (t) => {
+  const { origin, post, store } = await fixture(t);
+  assert.deepEqual(await (await fetch(origin + '/api/clodo')).json(), {
+    x: 0.96,
+    y: 0.92,
+  });
+  assert.equal((await post('clodo', { x: 0.1, y: 0.5 })).status, 200);
+  assert.deepEqual(await (await fetch(origin + '/api/clodo')).json(), {
+    x: 0.1,
+    y: 0.5,
+  });
+  assert.deepEqual(
+    JSON.parse(
+      await readFile(path.join(store.directory, 'clodo.json'), 'utf8'),
+    ),
+    { x: 0.1, y: 0.5 },
+  );
+  for (const bad of [{ x: 2, y: 0 }, { x: 0.5 }, { x: 0, y: 0, z: 1 }])
+    assert.equal((await post('clodo', bad)).status, 400);
 });
