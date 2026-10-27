@@ -238,3 +238,61 @@ test('mode manuel disponible immédiatement même si la détection IA ne répond
   assert.equal(response.status, 200);
   assert.equal(typeof (await response.json()).csrf, 'string');
 });
+test('tableau de bord : roadmap versionnée et disposition privée validée', async (t) => {
+  const { origin, post, store } = await fixture(t);
+  const roadmap = await (await fetch(origin + '/api/roadmap')).json();
+  assert.equal(roadmap.project.name, 'SynKro');
+  assert(roadmap.steps.length > 0);
+  const initial = await (await fetch(origin + '/api/dashboard')).json();
+  assert(initial.widgets.some((w: { id: string }) => w.id === 'checklist'));
+  const layout = { widgets: [{ id: 'roadmap', size: 'l' }] };
+  assert.equal((await post('dashboard', layout)).status, 200);
+  assert.deepEqual(
+    await (await fetch(origin + '/api/dashboard')).json(),
+    layout,
+  );
+  assert.deepEqual(
+    JSON.parse(
+      await readFile(path.join(store.directory, 'dashboard.json'), 'utf8'),
+    ),
+    layout,
+  );
+  for (const bad of [
+    { widgets: [{ id: 'inconnu', size: 'l' }] },
+    {
+      widgets: [
+        { id: 'roadmap', size: 's' },
+        { id: 'roadmap', size: 'm' },
+      ],
+    },
+    { widgets: [], extra: true },
+  ])
+    assert.equal((await post('dashboard', bad)).status, 400);
+  assert.equal(
+    (
+      await post('dashboard', layout, {
+        'X-DS-Studio': 'faux',
+      })
+    ).status,
+    403,
+  );
+});
+test('checklist de production : amorcée par la roadmap puis enregistrée', async (t) => {
+  const { origin, post, store } = await fixture(t);
+  const initial = await (await fetch(origin + '/api/checklist')).json();
+  assert(initial.length > 0);
+  assert(initial.every((i: { done: boolean }) => !i.done));
+  const next = [{ ...initial[0], done: true }];
+  assert.equal((await post('checklist', next)).status, 200);
+  assert.deepEqual(await (await fetch(origin + '/api/checklist')).json(), next);
+  assert.deepEqual(
+    JSON.parse(
+      await readFile(path.join(store.directory, 'checklist.json'), 'utf8'),
+    ),
+    next,
+  );
+  assert.equal(
+    (await post('checklist', [{ ...initial[0], label: '' }])).status,
+    400,
+  );
+});

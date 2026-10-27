@@ -3,7 +3,7 @@ import { test, expect } from '@playwright/test';
 test('boucle centrale réelle : diff, validation, propagation, recharge, annulation sélective', async ({
   page,
 }) => {
-  await page.goto('/');
+  await page.goto('/#atelier');
   await expect(
     page.getByRole('heading', { name: 'Une source. Toutes les vues.' }),
   ).toBeVisible();
@@ -62,7 +62,7 @@ test('boucle centrale réelle : diff, validation, propagation, recharge, annulat
 test('largeurs réelles, interactions, formulaire et desktop responsive', async ({
   page,
 }) => {
-  await page.goto('/');
+  await page.goto('/#atelier');
   const frame = page.frameLocator('iframe');
   for (const [value, width] of [
     ['0', 320],
@@ -128,7 +128,7 @@ test('largeurs réelles, interactions, formulaire et desktop responsive', async 
 test('entrée couleur invalide sans mutation et clavier du diff', async ({
   page,
 }) => {
-  await page.goto('/');
+  await page.goto('/#atelier');
   await page.getByLabel('Valeur du token').fill('red');
   await page.getByRole('button', { name: 'Proposer', exact: true }).click();
   await expect(page.getByRole('alert')).toContainText('Données invalides');
@@ -145,7 +145,7 @@ test('entrée couleur invalide sans mutation et clavier du diff', async ({
 test('export navigateur, import valide avec diff, fichier invalide sans écriture', async ({
   page,
 }) => {
-  await page.goto('/');
+  await page.goto('/#atelier');
   await expect(
     page.getByRole('heading', { name: 'Tokens sémantiques' }),
   ).toBeVisible();
@@ -185,7 +185,7 @@ test('export navigateur, import valide avec diff, fichier invalide sans écritur
 test('V2 : contraste proposé immédiat sans modifier les composants enregistrés', async ({
   page,
 }) => {
-  await page.goto('/');
+  await page.goto('/#atelier');
   await page
     .getByRole('combobox', { name: 'Token', exact: true })
     .selectOption('color.brand');
@@ -204,7 +204,7 @@ test('V2 : contraste proposé immédiat sans modifier les composants enregistré
 test('V2 : brief privé persistant, indépendant du mode IA', async ({
   page,
 }) => {
-  await page.goto('/');
+  await page.goto('/#atelier');
   await page.getByText('Mon PFE · brief privé', { exact: true }).click();
   await page
     .getByLabel('Nom du PFE', { exact: true })
@@ -230,7 +230,7 @@ test('V2 : brief privé persistant, indépendant du mode IA', async ({
 test('V2 : recherche, brouillon récupéré après recharge et abandon sans écriture', async ({
   page,
 }) => {
-  await page.goto('/');
+  await page.goto('/#atelier');
   const before = await (await page.request.get('/api/state')).json();
   await page.getByLabel('Rechercher un token').fill('space');
   await expect(
@@ -264,14 +264,14 @@ test('V2 : conflit multi-onglets visible dans le diff, aucune perte de données'
   page,
   context,
 }) => {
-  await page.goto('/');
+  await page.goto('/#atelier');
   await page
     .getByRole('combobox', { name: 'Token', exact: true })
     .selectOption('color.brand');
   await page.getByLabel('Valeur du token').fill('#223355');
   await page.getByRole('button', { name: 'Proposer', exact: true }).click();
   const other = await context.newPage();
-  await other.goto('/');
+  await other.goto('/#atelier');
   await other
     .getByRole('combobox', { name: 'Token', exact: true })
     .selectOption('color.brand');
@@ -295,7 +295,7 @@ test('V2 : conflit multi-onglets visible dans le diff, aucune perte de données'
 test('V2 : capacité de session périmée simulée sans rejeu ambigu', async ({
   page,
 }) => {
-  await page.goto('/');
+  await page.goto('/#atelier');
   await page.getByRole('heading', { name: 'Tokens sémantiques' }).waitFor();
   const boot = await (await page.request.get('/api/bootstrap')).json();
   // Un seul refus certain avant mutation, comme une capacité périmée après restart.
@@ -335,7 +335,7 @@ test('V2 : clavier, mobile 375 px et absence de stockage navigateur', async ({
     };
   });
   await page.setViewportSize({ width: 375, height: 812 });
-  await page.goto('/');
+  await page.goto('/#atelier');
   await page.getByRole('heading', { name: 'Tokens sémantiques' }).waitFor();
   await page.keyboard.press('Tab');
   await expect(

@@ -1,0 +1,345 @@
+{
+  "project": {
+    "name": "SynKro",
+    "tagline": "Ton coach, dans ta poche",
+    "deliveryDate": "2027-05-23",
+    "defenseDate": "2027-05-28"
+  },
+  "source": {
+    "label": "Notion · Roadmap PFE",
+    "url": "https://app.notion.com/p/3fe60f40714080938a53c3fb45a385b5",
+    "syncedAt": "2026-10-27"
+  },
+  "links": [
+    {
+      "label": "Notion · dossier PFE",
+      "url": "https://app.notion.com/p/3fe60f40714080938a53c3fb45a385b5"
+    },
+    {
+      "label": "Figma · fichier de travail",
+      "url": "https://www.figma.com/design/KpumlnYQdqqk0j0Q0GxPmA/Untitled"
+    },
+    {
+      "label": "GitHub · DS-Studio",
+      "url": "https://github.com/Mathildedeb/DS-Studio"
+    }
+  ],
+  "phases": [
+    "1. Note de cadrage",
+    "2. Recherche",
+    "3. Cadrage complet",
+    "4. Design System et UI",
+    "5. Prototype codé",
+    "6. Tests",
+    "7. Finalisation"
+  ],
+  "focusPhases": ["4. Design System et UI"],
+  "checklist": [
+    {
+      "group": "Fondations et tokens",
+      "items": [
+        "Palette de marque et couleurs sémantiques",
+        "Typographie : familles et échelle",
+        "Espacements et grille",
+        "Rayons et élévations",
+        "Contrastes AA vérifiés"
+      ]
+    },
+    {
+      "group": "Composants",
+      "items": [
+        "Boutons et leurs états",
+        "Champs de formulaire",
+        "Cartes de séance",
+        "Navigation coach et client",
+        "Documentation dans Figma"
+      ]
+    },
+    {
+      "group": "Écrans",
+      "items": [
+        "Écrans coach (mobile)",
+        "Écrans client (mobile)",
+        "Déclinaison tablette et ordinateur",
+        "Prototype cliquable des parcours critiques"
+      ]
+    }
+  ],
+  "steps": [
+    {
+      "title": "Rédaction de la note de cadrage",
+      "phase": "1. Note de cadrage",
+      "type": "Tâche",
+      "status": "Terminé",
+      "start": "2026-10-01",
+      "end": "2026-10-24",
+      "deliverable": "Note de cadrage (Notion)",
+      "skills": ["C3.1", "C3.2", "C3.3"],
+      "url": "https://app.notion.com/p/3ff60f4071408121b346ed59591a128b"
+    },
+    {
+      "title": "Intégrer les retours de la tutrice",
+      "phase": "1. Note de cadrage",
+      "type": "Tâche",
+      "status": "Terminé",
+      "start": "2026-10-26",
+      "end": "2026-10-31",
+      "deliverable": "",
+      "skills": [],
+      "url": "https://app.notion.com/p/3ff60f4071408127be26ef4927b24574"
+    },
+    {
+      "title": "Recrutement des participants (hors réseau)",
+      "phase": "2. Recherche",
+      "type": "Tâche",
+      "status": "Terminé",
+      "start": "2026-11-02",
+      "end": "2026-11-08",
+      "deliverable": "3 coachs et 3 clients recrutés",
+      "skills": ["C3.1"],
+      "url": "https://app.notion.com/p/3ff60f40714081589d67e093cc6c7d89"
+    },
+    {
+      "title": "Entretiens (3 coachs, 3 clients)",
+      "phase": "2. Recherche",
+      "type": "Tâche",
+      "status": "À venir",
+      "start": "2026-11-09",
+      "end": "2026-11-22",
+      "deliverable": "Guide d'entretien, notes d'entretiens",
+      "skills": ["C3.1"],
+      "url": "https://app.notion.com/p/3ff60f40714081bea729ce40a221f4c6"
+    },
+    {
+      "title": "Test des concurrents (Trainerize, Everfit, TrueCoach)",
+      "phase": "2. Recherche",
+      "type": "Tâche",
+      "status": "En cours",
+      "start": "2026-11-23",
+      "end": "2026-11-29",
+      "deliverable": "Benchmark confirmé, captures",
+      "skills": [],
+      "url": "https://app.notion.com/p/3ff60f40714081519155eeba98531f26"
+    },
+    {
+      "title": "Synthèse et personas",
+      "phase": "2. Recherche",
+      "type": "Tâche",
+      "status": "À venir",
+      "start": "2026-11-30",
+      "end": "2026-12-06",
+      "deliverable": "Personas coach et client, parcours actuel",
+      "skills": [],
+      "url": "https://app.notion.com/p/3ff60f40714081b8a458e7119a5d6d01"
+    },
+    {
+      "title": "Arborescence et navigation",
+      "phase": "3. Cadrage complet",
+      "type": "Tâche",
+      "status": "À venir",
+      "start": "2026-12-14",
+      "end": "2026-12-20",
+      "deliverable": "Arborescence coach et client",
+      "skills": ["C3.1"],
+      "url": "https://app.notion.com/p/3ff60f40714081a7a31bf1a80b0637bb"
+    },
+    {
+      "title": "User flows",
+      "phase": "3. Cadrage complet",
+      "type": "Tâche",
+      "status": "À venir",
+      "start": "2027-01-04",
+      "end": "2027-01-10",
+      "deliverable": "Parcours critiques",
+      "skills": ["C3.1"],
+      "url": "https://app.notion.com/p/3ff60f40714081ec978bfc0400a30d33"
+    },
+    {
+      "title": "Wireframes et gabarits (mobile, tablette, ordinateur)",
+      "phase": "3. Cadrage complet",
+      "type": "Tâche",
+      "status": "À venir",
+      "start": "2027-01-11",
+      "end": "2027-01-24",
+      "deliverable": "Wireframes",
+      "skills": ["C3.2"],
+      "url": "https://app.notion.com/p/3ff60f4071408155aba5c9badedc4d95"
+    },
+    {
+      "title": "Specs techniques finalisées",
+      "phase": "3. Cadrage complet",
+      "type": "Tâche",
+      "status": "À venir",
+      "start": "2027-01-25",
+      "end": "2027-01-30",
+      "deliverable": "SEO, accessibilité, navigateurs, RGPD",
+      "skills": ["C3.3"],
+      "url": "https://app.notion.com/p/3ff60f40714081b09f47c1e29afea694"
+    },
+    {
+      "title": "Dossier de cadrage complet rendu",
+      "phase": "3. Cadrage complet",
+      "type": "Jalon",
+      "status": "À venir",
+      "start": "2027-01-31",
+      "end": "",
+      "deliverable": "Dossier de cadrage (20 à 30 pages)",
+      "skills": ["C3.1", "C3.2", "C3.3"],
+      "url": "https://app.notion.com/p/3ff60f407140813e9ec6c7f1031e65f3"
+    },
+    {
+      "title": "Fondations et tokens",
+      "phase": "4. Design System et UI",
+      "type": "Tâche",
+      "status": "À venir",
+      "start": "2027-02-01",
+      "end": "2027-02-14",
+      "deliverable": "Couleurs, typo, espacements",
+      "skills": ["C3.4"],
+      "url": "https://app.notion.com/p/3ff60f40714081de8eb9c64fdf93426b"
+    },
+    {
+      "title": "Composants",
+      "phase": "4. Design System et UI",
+      "type": "Tâche",
+      "status": "À venir",
+      "start": "2027-02-15",
+      "end": "2027-02-28",
+      "deliverable": "Bibliothèque Figma documentée",
+      "skills": ["C3.4", "C3.5"],
+      "url": "https://app.notion.com/p/3ff60f4071408197b982f047e76f77e9"
+    },
+    {
+      "title": "Maquettes UI",
+      "phase": "4. Design System et UI",
+      "type": "Tâche",
+      "status": "À venir",
+      "start": "2027-03-01",
+      "end": "2027-03-14",
+      "deliverable": "Écrans haute fidélité",
+      "skills": ["C3.5"],
+      "url": "https://app.notion.com/p/3ff60f40714081a4b3d1dec400380e83"
+    },
+    {
+      "title": "Développement du prototype codé",
+      "phase": "5. Prototype codé",
+      "type": "Tâche",
+      "status": "À venir",
+      "start": "2027-03-15",
+      "end": "2027-04-11",
+      "deliverable": "Web app (parcours critiques)",
+      "skills": [],
+      "url": "https://app.notion.com/p/3ff60f40714081b197c4dfb069719475"
+    },
+    {
+      "title": "Recrutement des testeurs (nouveaux pour le cycle 2)",
+      "phase": "5. Prototype codé",
+      "type": "Tâche",
+      "status": "À venir",
+      "start": "2027-03-29",
+      "end": "2027-04-11",
+      "deliverable": "Panel de test, consentements",
+      "skills": ["C3.6"],
+      "url": "https://app.notion.com/p/3ff60f40714081b1a78cf70cf77b5960"
+    },
+    {
+      "title": "Test – cycle 1",
+      "phase": "6. Tests",
+      "type": "Tâche",
+      "status": "À venir",
+      "start": "2027-04-12",
+      "end": "2027-04-18",
+      "deliverable": "Protocole, résultats cycle 1",
+      "skills": ["C3.6"],
+      "url": "https://app.notion.com/p/3ff60f4071408105af13ea4c160f52ad"
+    },
+    {
+      "title": "Itérations",
+      "phase": "6. Tests",
+      "type": "Tâche",
+      "status": "À venir",
+      "start": "2027-04-19",
+      "end": "2027-04-25",
+      "deliverable": "Version corrigée",
+      "skills": ["C3.7"],
+      "url": "https://app.notion.com/p/3ff60f407140810e8adfd563da8f8396"
+    },
+    {
+      "title": "Test – cycle 2 (nouveaux participants)",
+      "phase": "6. Tests",
+      "type": "Tâche",
+      "status": "À venir",
+      "start": "2027-04-26",
+      "end": "2027-05-02",
+      "deliverable": "Résultats cycle 2",
+      "skills": ["C3.6"],
+      "url": "https://app.notion.com/p/3ff60f407140814ea5dddf1cf0f45d84"
+    },
+    {
+      "title": "Rapport de tests",
+      "phase": "6. Tests",
+      "type": "Tâche",
+      "status": "À venir",
+      "start": "2027-05-03",
+      "end": "2027-05-07",
+      "deliverable": "Rapport de tests utilisateurs",
+      "skills": ["C3.6", "C3.7"],
+      "url": "https://app.notion.com/p/3ff60f407140811183a4c7c50de1633c"
+    },
+    {
+      "title": "Mise en forme des livrables et préparation de l'oral",
+      "phase": "7. Finalisation",
+      "type": "Tâche",
+      "status": "À venir",
+      "start": "2027-05-08",
+      "end": "2027-05-13",
+      "deliverable": "PDF, support de présentation",
+      "skills": [],
+      "url": "https://app.notion.com/p/3ff60f40714081dd843ad95800d7133a"
+    },
+    {
+      "title": "Oral blanc",
+      "phase": "7. Finalisation",
+      "type": "Jalon",
+      "status": "À venir",
+      "start": "2027-05-14",
+      "end": "",
+      "deliverable": "",
+      "skills": [],
+      "url": "https://app.notion.com/p/3ff60f407140812abc27d1de2dabf8b1"
+    },
+    {
+      "title": "Ajustements après l'oral blanc",
+      "phase": "7. Finalisation",
+      "type": "Tâche",
+      "status": "À venir",
+      "start": "2027-05-15",
+      "end": "2027-05-22",
+      "deliverable": "",
+      "skills": [],
+      "url": "https://app.notion.com/p/3ff60f4071408185b23cf144ad53f989"
+    },
+    {
+      "title": "Rendu des livrables sur le Drive",
+      "phase": "7. Finalisation",
+      "type": "Jalon",
+      "status": "À venir",
+      "start": "2027-05-23",
+      "end": "",
+      "deliverable": "Livrables en PDF",
+      "skills": [],
+      "url": "https://app.notion.com/p/3ff60f407140817e875fdf145fc2075b"
+    },
+    {
+      "title": "Soutenance finale",
+      "phase": "7. Finalisation",
+      "type": "Jalon",
+      "status": "À venir",
+      "start": "2027-05-28",
+      "end": "",
+      "deliverable": "",
+      "skills": [],
+      "url": "https://app.notion.com/p/3ff60f40714081dcaeb0d05ba476e793"
+    }
+  ]
+}

@@ -7,6 +7,8 @@ import { proposeSchema } from '../shared/model.js';
 import { Store, StudioError } from './store.js';
 import { ProjectStore } from './project.js';
 import { projectSchema } from '../shared/project.js';
+import { DashboardStore, readRoadmap } from './dashboard.js';
+import { checklistSchema, layoutSchema } from '../shared/dashboard.js';
 import { CodexAdapter } from '../../connectors/agents/codex.js';
 import { ClaudeAdapter } from '../../connectors/agents/claude.js';
 import { unvalidatedAdapter } from '../../connectors/agents/unvalidated.js';
@@ -28,6 +30,7 @@ export async function createStudioServer(options: {
     gemini: unvalidatedAdapter('gemini'),
   };
   const project = new ProjectStore(store.directory);
+  const dashboard = new DashboardStore(store.directory, root);
   const csrf = randomBytes(32).toString('hex');
   let busy = false;
   const active = new Set<AbortController>();
@@ -108,6 +111,12 @@ export async function createStudioServer(options: {
             );
           if (url.pathname === '/api/project')
             return send(200, await project.read());
+          if (url.pathname === '/api/roadmap')
+            return send(200, await readRoadmap(root));
+          if (url.pathname === '/api/dashboard')
+            return send(200, await dashboard.read());
+          if (url.pathname === '/api/checklist')
+            return send(200, await dashboard.readChecklist());
           if (url.pathname === '/api/state') return send(200, store.snapshot());
           if (url.pathname === '/api/export')
             return send(200, store.snapshot().tokens);
@@ -144,6 +153,13 @@ export async function createStudioServer(options: {
             .parse(body);
           return send(200, await project.save(b.base, b.project));
         }
+        if (url.pathname === '/api/dashboard')
+          return send(200, await dashboard.save(layoutSchema.parse(body)));
+        if (url.pathname === '/api/checklist')
+          return send(
+            200,
+            await dashboard.saveChecklist(checklistSchema.parse(body)),
+          );
         if (url.pathname === '/api/proposals') {
           const b = proposeSchema.parse(body);
           return send(200, store.propose(b.revision, b.changes));
@@ -220,7 +236,25 @@ export async function createStudioServer(options: {
                 brief:
                   (await context('PFE.md')) +
                   '\nBrief privé DS-Studio :\n' +
-                  JSON.stringify((await project.read()).project),
+                  JSON.stringify((await project.read()).project) +
+                  // Roadmap résumée, sans liens : facultative si le fichier manque.
+                  '\nRoadmap PFE :\n' +
+                  (await readRoadmap(root)
+                    .then((r) =>
+                      JSON.stringify({
+                        project: r.project,
+                        steps: r.steps.map(
+                          ({ title, phase, status, start, end }) => ({
+                            title,
+                            phase,
+                            status,
+                            start,
+                            end,
+                          }),
+                        ),
+                      }),
+                    )
+                    .catch(() => 'indisponible')),
                 rules: await context('DESIGN_RULES.md'),
                 history: b.history,
               },
