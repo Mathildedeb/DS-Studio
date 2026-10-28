@@ -2423,6 +2423,38 @@ h2[id] {
   display: flex;
   gap: 6px;
 }
+.chat-circuit {
+  display: grid;
+  gap: 6px;
+  padding: 10px 12px;
+  border: 1px solid var(--studio-border);
+  border-radius: 14px;
+  background: var(--studio-surface-alt);
+  font-size: 12px;
+}
+.chat-circuit p {
+  margin: 0;
+}
+.chat-circuit ul {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.chat-circuit li {
+  display: flex;
+  gap: 6px;
+  align-items: baseline;
+}
+.chat-circuit li.circuit-todo,
+.chat-circuit em {
+  color: var(--studio-muted);
+}
+.chat-circuit div {
+  display: flex;
+  gap: 6px;
+}
 .figma-plugin summary {
   cursor: pointer;
 }

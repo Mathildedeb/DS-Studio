@@ -3,7 +3,7 @@ import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { z } from 'zod';
-import { proposeSchema } from '../shared/model.js';
+import { proposeSchema, type Proposal } from '../shared/model.js';
 import { focusSchema } from '../shared/focus.js';
 import { Store, StudioError } from './store.js';
 import { ProjectStore } from './project.js';
@@ -19,6 +19,7 @@ import { DevServer } from './devserver.js';
 import { atomicWrite, readPrivate } from './files.js';
 import { readProjectTokens, writeProjectTokens } from './projectTokens.js';
 import { BATCH, PublishCounter, gitStatus, publish } from './gitops.js';
+import { runTokensScript, type TokensScript } from './npm.js';
 import {
   figmaComponents,
   figmaImage,
@@ -31,6 +32,14 @@ import type { AgentAdapter } from '../../connectors/agents/types.js';
 import { figmaStatus } from '../../connectors/figma/contract.js';
 import { FigmaReader, figmaFileKey } from '../../connectors/figma/reader.js';
 import type { RecordInfo } from '../../scripts/runtime.mjs';
+
+// Étapes du circuit après une validation : fichier de tokens du projet, puis
+// fichiers générés pour son interface (npm run tokens).
+export interface Circuit {
+  revision: number;
+  code: { state: 'ok' | 'error' | 'absent'; detail?: string };
+  interface: TokensScript;
+}
 
 export async function createStudioServer(options: {
   root: string;
@@ -137,6 +146,48 @@ export async function createStudioServer(options: {
   // répondrait « Hôte refusé » et l'onglet resterait collé à l'ancien
   // processus ; on ferme la connexion pour qu'il rejoigne le nouveau serveur.
   let closing = false;
+  // Plugin Figma : dernier import reçu (en attente de validation dans
+  // DS-Studio), dernier passage du plugin, et compte rendu de synchronisation
+  // gardé avec le DS du projet pour la checklist du chat.
+  let figmaImport:
+    | {
+        store: Store;
+        proposal: Proposal;
+        file?: string;
+        skipped: { name: string; reason: string }[];
+      }
+    | undefined;
+  let pluginSeenAt = 0;
+  // Dernière validation de chaque DS : code et interface du projet mis à jour ?
+  const circuits = new WeakMap<Store, Circuit>();
+  const syncFile = () => path.join(store.directory, 'figma-sync.json');
+  const readSync = async () => {
+    try {
+      return JSON.parse(await readPrivate(syncFile(), 200_000));
+    } catch {
+      return null;
+    }
+  };
+  const pluginBody = async (req: http.IncomingMessage) => {
+    const chunks: Buffer[] = [];
+    let size = 0;
+    for await (const chunk of req) {
+      size += chunk.length;
+      if (size > 512_000)
+        throw new StudioError('Requête trop volumineuse.', 413);
+      chunks.push(chunk);
+    }
+    try {
+      return JSON.parse(Buffer.concat(chunks).toString('utf8')) as unknown;
+    } catch {
+      throw new StudioError('JSON invalide.');
+    }
+  };
+  const issues = z
+    .array(
+      z.object({ key: z.string().max(200), reason: z.string().max(300) }).strict(),
+    )
+    .max(1000);
   const vite = options.dev
     ? await (
         await import('vite')
@@ -176,35 +227,99 @@ export async function createStudioServer(options: {
       `default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'${options.dev ? ' ws://127.0.0.1:*' : ''}; frame-src 'self' http://localhost:* http://127.0.0.1:*; frame-ancestors 'self'; base-uri 'none'; form-action 'self'`,
     );
     try {
-      // Plugin Figma : seule entrée acceptée depuis une autre origine (« null »,
-      // l'iframe du plugin), en lecture seule, avec le code d'appairage.
-      // Figma n'accepte que « localhost » dans le manifeste du plugin : cette
-      // route seule accepte aussi cet hôte, toujours sur la boucle locale.
+      // Plugin Figma : seules entrées acceptées depuis une autre origine
+      // (« null », l'iframe du plugin), avec le code d'appairage. Figma
+      // n'accepte que « localhost » dans le manifeste du plugin : ces routes
+      // seules acceptent aussi cet hôte, toujours sur la boucle locale.
+      // Lire les tokens validés (GET sync), proposer un import par le diff
+      // (POST import, rien n'est écrit), rendre compte d'une synchronisation
+      // (POST report). Aucune route du plugin n'écrit de token.
+      const pluginRoute = req.url?.split('?')[0] ?? '';
       if (
-        req.url?.split('?')[0] === '/api/plugin/sync' &&
+        ['/api/plugin/sync', '/api/plugin/import', '/api/plugin/report'].includes(
+          pluginRoute,
+        ) &&
         (req.headers.host === `127.0.0.1:${port}` ||
           req.headers.host === `localhost:${port}`)
       ) {
         res.setHeader('Access-Control-Allow-Origin', 'null');
-        res.setHeader('Access-Control-Allow-Headers', 'X-DS-Plugin');
-        res.setHeader('Access-Control-Allow-Methods', 'GET');
+        res.setHeader(
+          'Access-Control-Allow-Headers',
+          'X-DS-Plugin, Content-Type',
+        );
+        res.setHeader('Access-Control-Allow-Methods', 'GET, POST');
         if (req.method === 'OPTIONS') {
           res.writeHead(204);
           return res.end();
         }
-        if (
-          req.method !== 'GET' ||
-          !(await pluginAllowed(req.headers['x-ds-plugin']))
-        )
+        if (req.method !== (pluginRoute === '/api/plugin/sync' ? 'GET' : 'POST'))
+          throw new StudioError('Méthode non autorisée.', 405);
+        if (!(await pluginAllowed(req.headers['x-ds-plugin'])))
           throw new StudioError('Code d’appairage du plugin invalide.', 403);
+        pluginSeenAt = Date.now();
         const saved = await connection.read();
-        const state = store.snapshot();
-        return send(200, {
-          project: (await connection.status()).project?.name ?? null,
-          figmaFileKey: figmaFileKey(saved.figmaUrl) ?? null,
-          revision: state.revision,
-          tokens: state.tokens,
-        });
+        const expected = figmaFileKey(saved.figmaUrl) ?? null;
+        if (pluginRoute === '/api/plugin/sync') {
+          const state = store.snapshot();
+          return send(200, {
+            project: (await connection.status()).project?.name ?? null,
+            figmaFileKey: expected,
+            revision: state.revision,
+            tokens: state.tokens,
+          });
+        }
+        const body = await pluginBody(req);
+        if (pluginRoute === '/api/plugin/import') {
+          const b = z
+            .object({
+              file: z.string().max(300).optional(),
+              fileKey: z.string().max(200).nullable(),
+              tokens: z.record(z.string(), z.unknown()),
+              skipped: z
+                .array(
+                  z
+                    .object({
+                      name: z.string().max(300),
+                      reason: z.string().max(300),
+                    })
+                    .strict(),
+                )
+                .max(1000),
+            })
+            .strict()
+            .parse(body);
+          if (expected && b.fileKey && b.fileKey !== expected)
+            throw new StudioError(
+              'Ce fichier Figma n’est pas celui du projet ouvert. Import refusé.',
+              409,
+            );
+          // Même chemin qu'un import JSON : un diff complet, validé à la main.
+          const proposal = store.proposeImport(store.snapshot().revision, b.tokens);
+          figmaImport = { store, proposal, file: b.file, skipped: b.skipped };
+          return send(200, {
+            added: proposal.patches.filter((p) => p.before === null).length,
+            changed: proposal.patches.filter(
+              (p) => p.before !== null && p.after !== null,
+            ).length,
+            removed: proposal.patches.filter((p) => p.after === null).length,
+          });
+        }
+        const b = z
+          .object({
+            revision: z.number().int().nonnegative(),
+            updated: z.number().int().nonnegative(),
+            created: z.number().int().nonnegative(),
+            same: z.number().int().nonnegative().optional(),
+            failed: issues,
+            warning: z.string().max(300).nullable().optional(),
+          })
+          .strict()
+          .parse(body);
+        await atomicWrite(
+          syncFile(),
+          JSON.stringify({ ...b, at: new Date().toISOString() }) + '\n',
+        );
+        return send(200, { ok: true });
       }
       if (req.headers.host !== `127.0.0.1:${port}`)
         throw new StudioError(
@@ -297,6 +412,57 @@ export async function createStudioServer(options: {
               token: await pluginToken(),
               manifest: path.join(root, 'figma-plugin', 'manifest.json'),
             });
+          // Import Figma en attente : proposé tant que le DS n'a pas bougé.
+          if (url.pathname === '/api/figma-import') {
+            if (
+              figmaImport &&
+              (figmaImport.store !== store ||
+                figmaImport.proposal.revision !== store.snapshot().revision)
+            )
+              figmaImport = undefined;
+            return send(
+              200,
+              figmaImport
+                ? {
+                    proposal: figmaImport.proposal,
+                    file: figmaImport.file ?? null,
+                    skipped: figmaImport.skipped,
+                  }
+                : null,
+            );
+          }
+          // Dernier compte rendu du plugin pour ce DS, et plugin ouvert ou non
+          // (il interroge DS-Studio toutes les 4 s en synchronisation auto).
+          if (url.pathname === '/api/figma-sync')
+            return send(200, {
+              report: await readSync(),
+              revision: store.snapshot().revision,
+              pluginOpen: Date.now() - pluginSeenAt < 12_000,
+            });
+          // État du circuit après la dernière validation (checklist du chat).
+          if (url.pathname === '/api/circuit') {
+            const project = (await connection.status()).project;
+            const saved = await connection.read();
+            const git = project
+              ? await gitStatus(project.folder).catch(() => null)
+              : null;
+            return send(200, {
+              revision: store.snapshot().revision,
+              step: circuits.get(store) ?? null,
+              figmaLinked: !!figmaFileKey(saved.figmaUrl),
+              figma: {
+                report: await readSync(),
+                pluginOpen: Date.now() - pluginSeenAt < 12_000,
+              },
+              git: project
+                ? {
+                    pending: await publishCounter.get(project.folder),
+                    batch: BATCH,
+                    branch: git?.branch ?? null,
+                  }
+                : null,
+            });
+          }
           if (url.pathname === '/api/git/status') {
             const project = (await connection.status()).project;
             if (!project)
@@ -398,16 +564,43 @@ export async function createStudioServer(options: {
         if (url.pathname === '/api/commit') {
           const b = z.object({ id: z.string().uuid() }).strict().parse(body);
           const next = await store.commit(b.id);
-          // Projet ouvert : le token validé part aussi dans son fichier DTCG.
+          if (figmaImport?.proposal.id === b.id) figmaImport = undefined;
+          // Projet ouvert : le token validé part aussi dans son fichier DTCG,
+          // puis les fichiers que son interface charge sont régénérés. Chaque
+          // étape est notée telle qu'elle s'est passée, pour la checklist.
           const project = (await connection.status()).project;
-          if (project && store !== base)
-            await writeProjectTokens(project.folder, next.tokens).catch((e) =>
-              console.error('Écriture des tokens du projet impossible :', e),
-            );
+          const step: Circuit = {
+            revision: next.revision,
+            code: { state: 'absent' },
+            interface: { state: 'absent' },
+          };
+          if (project && store !== base) {
+            try {
+              const file = await writeProjectTokens(project.folder, next.tokens);
+              step.code = file
+                ? { state: 'ok', detail: file }
+                : {
+                    state: 'error',
+                    detail: 'Le fichier de tokens du projet n’est pas au format DTCG : rien n’y a été écrit.',
+                  };
+            } catch (e) {
+              step.code = {
+                state: 'error',
+                detail: `Écriture du fichier de tokens impossible : ${(e as Error).message}`,
+              };
+            }
+            if (step.code.state === 'ok')
+              step.interface = await runTokensScript(project.folder);
+          }
+          circuits.set(store, step);
           await countChange();
           return send(200, next);
         }
         // Code : Clodo propose, l'étudiante valide le diff, le serveur écrit.
+        if (url.pathname === '/api/figma-import/dismiss') {
+          figmaImport = undefined;
+          return send(200, { ok: true });
+        }
         if (url.pathname === '/api/clodo')
           return send(200, await dashboard.saveClodo(body));
         if (url.pathname === '/api/preview')
@@ -471,6 +664,17 @@ export async function createStudioServer(options: {
               `Pas encore : ${pending}/${BATCH} modifications validées. La publication est proposée à ${BATCH}.`,
               409,
             );
+          // Projet relié à Figma : GitHub ne reçoit jamais un état que Figma
+          // n'a pas encore reçu (compte rendu du plugin à la même révision).
+          if (figmaFileKey((await connection.read()).figmaUrl)) {
+            const report = await readSync();
+            const revision = store.snapshot().revision;
+            if (!report || report.revision < revision)
+              throw new StudioError(
+                `Publication bloquée : Figma n’a pas encore reçu la révision ${revision}${report ? ` (dernière reçue : ${report.revision})` : ''}. Ouvre le plugin DS-Studio dans ton fichier Figma, synchronisation automatique cochée, puis réessaie.`,
+                409,
+              );
+          }
           const done = await publish(project.folder, b.message);
           // Push refusé : le compteur reste plein, on pourra réessayer.
           await publishCounter.reset(project.folder);

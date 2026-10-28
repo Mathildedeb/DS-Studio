@@ -26,4 +26,5 @@ export function control(
 export function alive(pid: number): boolean;
 export function leasePort(directory: string, name: string): Promise<number>;
 export function delay(ms: number): Promise<void>;
+export function npmCli(env?: NodeJS.ProcessEnv): Promise<string>;
 export function openBrowser(url: string): Promise<void>;

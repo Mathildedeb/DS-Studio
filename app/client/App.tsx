@@ -20,6 +20,7 @@ import type { Level } from './dsRegistry.js';
 import type { FigmaComponent } from '../../connectors/figma/library.js';
 import type { ConnectionStatus } from '../shared/connection.js';
 import type { PublishStatus } from '../server/gitops.js';
+import { circuitSteps, type CircuitData } from '../shared/circuit.js';
 import type { FigmaFileStatus } from '../../connectors/figma/reader.js';
 import { useTokenDraft } from './useTokenDraft.js';
 import {
@@ -220,6 +221,55 @@ export default function App() {
       .catch(() => undefined);
     return () => controller.current?.abort();
   }, []);
+  // Checklist de la dernière validation : relue toutes les 2 s tant qu'elle
+  // est affichée, pour passer d'elle-même de ⏳ ou ⚠️ à ✅ (plugin rouvert…).
+  const [watch, setWatch] = useState<number>();
+  const [circuit, setCircuit] = useState<CircuitData>();
+  useEffect(() => {
+    if (watch === undefined) return setCircuit(undefined);
+    let live = true;
+    const read = () =>
+      request<CircuitData>('circuit')
+        .then((c) => live && setCircuit(c))
+        .catch(() => undefined);
+    void read();
+    const timer = setInterval(read, 2000);
+    return () => {
+      live = false;
+      clearInterval(timer);
+    };
+  }, [watch]);
+  // Import envoyé par le plugin Figma (« Récupérer depuis Figma ») : son diff
+  // s'ouvre ici et Clodo l'annonce ; rien n'est écrit avant « Valider ».
+  const seenImport = useRef<string>(undefined);
+  useEffect(() => {
+    if (!connection?.project) return;
+    const timer = setInterval(async () => {
+      const pending = await request<{
+        proposal: Proposal;
+        file: string | null;
+        skipped: { name: string; reason: string }[];
+      } | null>('figma-import').catch(() => null);
+      if (!pending || pending.proposal.id === seenImport.current) return;
+      seenImport.current = pending.proposal.id;
+      const skipped = pending.skipped.length
+        ? ` ${pending.skipped.length} variable(s) non reprise(s) : ${pending.skipped
+            .slice(0, 5)
+            .map((s) => `${s.name} (${s.reason})`)
+            .join(', ')}${pending.skipped.length > 5 ? '…' : ''}.`
+        : '';
+      setProposal(pending.proposal);
+      setChat((c) => [
+        ...c,
+        {
+          role: 'assistant',
+          text: `Figma${pending.file ? ` (${pending.file})` : ''} : ${pending.proposal.patches.length} changement(s) récupéré(s). Vérifie le diff avant de valider.${skipped}`,
+        },
+      ]);
+      setClodoOpen(true);
+    }, 2000);
+    return () => clearInterval(timer);
+  }, [connection?.project]);
   useEffect(() => {
     if (clodoOpen)
       request<Bootstrap['agents']>('agents')
@@ -320,6 +370,9 @@ export default function App() {
       setProposal(undefined);
       announceChange();
       setNotice(`Révision ${next.revision} enregistrée sur disque.`);
+      setWatch(next.revision);
+      // Projet ouvert : la checklist s'affiche dans le chat de Clodo.
+      if (connection?.project) setClodoOpen(true);
       void offerPublish();
     });
     setSaving(false);
@@ -477,6 +530,13 @@ export default function App() {
         publish={publishCard}
         onPublish={(m) => void confirmPublish(m)}
         onDismissPublish={() => setPublishCard(undefined)}
+        circuit={
+          watch !== undefined && circuit
+            ? { revision: watch, steps: circuitSteps(circuit, watch) }
+            : undefined
+        }
+        onAskFix={askClodo}
+        onDismissCircuit={() => setWatch(undefined)}
         onRevert={() =>
           void perform(async () => {
             if (!lastCode) return;

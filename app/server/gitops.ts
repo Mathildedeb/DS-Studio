@@ -1,8 +1,8 @@
 import { execFile } from 'node:child_process';
-import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { StudioError } from './store.js';
 import { atomicWrite, readPrivate } from './files.js';
+import { runTokensScript } from './npm.js';
 
 // Publication du projet ouvert : rien ne part avant BATCH modifications
 // validées ; alors une nouvelle branche design/… est créée et poussée, après
@@ -143,16 +143,11 @@ export async function publish(folder: string, message: string) {
   for (let n = 2; await branchExists(folder, branch); n++)
     branch = `${base}-${n}`;
   await run(folder, ['switch', '-c', branch]);
-  // Les fichiers générés depuis les tokens (tokens.css…) suivent le JSON.
-  const scripts = await readFile(path.join(folder, 'package.json'), 'utf8')
-    .then((raw) => JSON.parse(raw).scripts ?? {})
-    .catch(() => ({}));
-  if (typeof scripts.tokens === 'string')
-    await new Promise<void>((resolve) =>
-      execFile('npm', ['run', 'tokens'], { cwd: folder, timeout: 60_000 }, () =>
-        resolve(),
-      ),
-    );
+  // Les fichiers générés depuis les tokens (tokens.css…) suivent le JSON ;
+  // s'ils ne peuvent pas être régénérés, rien n'est publié.
+  const generated = await runTokensScript(folder);
+  if (generated.state === 'error')
+    throw new StudioError(`Publication arrêtée : ${generated.detail}`, 409);
   const files = (await gitStatus(folder)).files;
   if (files.length) {
     await run(folder, ['add', '-A']);

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import type { PublishStatus } from '../server/gitops.js';
+import type { CircuitStep } from '../shared/circuit.js';
 
 export type ChatMessage = { role: 'user' | 'assistant'; text: string };
 
@@ -27,6 +28,9 @@ export default function Chat({
   publish,
   onPublish,
   onDismissPublish,
+  circuit,
+  onAskFix,
+  onDismissCircuit,
 }: {
   agentName: string;
   detail: string;
@@ -47,6 +51,10 @@ export default function Chat({
   publish?: { git: PublishStatus; busy: boolean; done?: string; error?: string };
   onPublish: (message: string) => void;
   onDismissPublish: () => void;
+  // Checklist de la dernière validation : DS, code, interface, Figma, GitHub.
+  circuit?: { revision: number; steps: CircuitStep[] };
+  onAskFix: (text: string) => void;
+  onDismissCircuit: () => void;
 }) {
   const [commitMessage, setCommitMessage] = useState('');
   const log = useRef<HTMLDivElement>(null);
@@ -120,6 +128,55 @@ export default function Chat({
           </p>
         )}
       </div>
+      {circuit && (
+        <section
+          className="chat-circuit"
+          aria-label={`Suivi de la révision ${circuit.revision}`}
+          aria-live="polite"
+        >
+          <p>
+            <strong>Révision {circuit.revision} : où en est la modification</strong>
+          </p>
+          <ul>
+            {circuit.steps.map((s) => (
+              <li key={s.label} className={`circuit-${s.state}`}>
+                <span aria-hidden="true">
+                  {{ ok: '✅', pending: '⏳', warn: '⚠️', todo: '⬜' }[s.state]}
+                </span>
+                <span>
+                  <strong>{s.label}</strong>
+                  <span className="sr-only">
+                    {' '}
+                    ({{ ok: 'fait', pending: 'en cours', warn: 'à corriger', todo: 'en attente' }[s.state]})
+                  </span>{' '}
+                  {s.detail}
+                  {s.fix && <em> → {s.fix}</em>}
+                </span>
+              </li>
+            ))}
+          </ul>
+          <div>
+            {circuit.steps.some((s) => s.state === 'warn') && (
+              <button
+                type="button"
+                onClick={() =>
+                  onAskFix(
+                    `Après la révision ${circuit.revision}, une étape n’est pas à jour : ${circuit.steps
+                      .filter((s) => s.state === 'warn')
+                      .map((s) => `${s.label} : ${s.detail}`)
+                      .join(' ; ')}. Explique-moi et propose une solution.`,
+                  )
+                }
+              >
+                Demander une solution à {agentName}
+              </button>
+            )}
+            <button type="button" onClick={onDismissCircuit}>
+              Masquer
+            </button>
+          </div>
+        </section>
+      )}
       {publish && (
         <section className="chat-publish" aria-label="Publier sur Git">
           {publish.done ? (

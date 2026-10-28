@@ -2,6 +2,7 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { StudioError } from './store.js';
+import { spawnNpm } from './npm.js';
 
 // Serveur de dev du projet ouvert, lancé seulement au clic de l'étudiante :
 // le script « dev » (ou « start ») de son package.json, dans son dossier.
@@ -53,20 +54,25 @@ export class DevServer {
       logs: [],
     };
     this.status = status;
+    const child = await spawnNpm(['install'], {
+      cwd: folder,
+      env: { ...process.env, FORCE_COLOR: '0' },
+      stdio: ['ignore', 'pipe', 'pipe'],
+      timeout: 300_000,
+    }).catch((e: Error) => {
+      status.logs.push(`Installation impossible : ${e.message}`);
+      status.state = 'error';
+      return null;
+    });
+    if (!child) return this.readFor(folder);
     await new Promise<void>((resolve) => {
-      const child = spawn('npm', ['install'], {
-        cwd: folder,
-        env: { ...process.env, FORCE_COLOR: '0' },
-        stdio: ['ignore', 'pipe', 'pipe'],
-        timeout: 300_000,
-      });
       const onData = (chunk: Buffer) => {
         for (const line of chunk.toString().split('\n'))
           if (line.trim()) status.logs.push(line.slice(0, 300));
         status.logs.splice(0, Math.max(0, status.logs.length - 200));
       };
-      child.stdout.on('data', onData);
-      child.stderr.on('data', onData);
+      child.stdout?.on('data', onData);
+      child.stderr?.on('data', onData);
       child.on('error', (e) => {
         status.logs.push(`Installation impossible : ${e.message}`);
         status.state = 'error';
@@ -93,7 +99,7 @@ export class DevServer {
         'Aucun script « dev » ou « start » dans le package.json du projet.',
         409,
       );
-    const child = spawn('npm', command.args, {
+    const child = await spawnNpm(command.args, {
       cwd: folder,
       // Groupe de processus à part : l'arrêt coupe aussi ses enfants.
       detached: true,

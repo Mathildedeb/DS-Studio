@@ -10,6 +10,7 @@ import {
   alive,
   delay,
   openBrowser,
+  npmCli,
 } from './runtime.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -327,29 +328,7 @@ async function serve() {
       'Démarrage trop long. Patientez et actualisez le panneau, ou cliquez sur Arrêter.',
     );
   }
-  async function npmCLI() {
-    const bin = path.dirname(process.execPath);
-    const candidates = [
-      path.join(bin, 'node_modules/npm/bin/npm-cli.js'),
-      path.resolve(bin, '../lib/node_modules/npm/bin/npm-cli.js'),
-      '/usr/share/nodejs/npm/bin/npm-cli.js',
-    ];
-    for (const candidate of candidates)
-      if (existsSync(candidate)) return candidate;
-    // Homebrew et certains gestionnaires publient npm comme lien vers un
-    // npm-cli.js situé hors du préfixe du binaire Node réellement exécuté.
-    for (const folder of [bin, ...(env.PATH || '').split(path.delimiter)]) {
-      try {
-        const target = await fs.realpath(path.join(folder, 'npm'));
-        if (path.basename(target) === 'npm-cli.js') return target;
-      } catch {
-        /* Emplacement facultatif. */
-      }
-    }
-    throw new Error(
-      'npm est absent de cette installation Node. Installez la distribution officielle Node.js LTS (avec npm), puis relancez.',
-    );
-  }
+  const npmCLI = () => npmCli(env);
   async function runNpm(args) {
     const cli = await npmCLI();
     await new Promise((resolve, reject) => {

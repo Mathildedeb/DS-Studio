@@ -22,15 +22,15 @@
 </style>
 </head>
 <body>
-  <h1>DS-Studio → Figma</h1>
-  <p>Applique les tokens validés dans DS-Studio aux variables de ce fichier. Rien n’est modifié avant votre clic.</p>
+  <h1>DS-Studio ⇄ Figma</h1>
+  <p><strong>Récupérer</strong> envoie les variables de ce fichier à DS-Studio, qui les montre en diff avant toute écriture. <strong>Synchroniser</strong> applique les tokens validés dans DS-Studio à ces variables.</p>
 
   <label for="code">Code d’appairage (affiché dans DS-Studio, onglet Figma)</label>
   <input id="code" type="password" autocomplete="off" spellcheck="false">
   <label for="server">Adresse de DS-Studio</label>
   <input id="server" type="text" value="http://localhost:4310" spellcheck="false">
-  <div class="row"><button id="sync" class="primary">Voir les changements</button></div>
-  <label><input type="checkbox" id="auto"> Mode automatique : appliquer tout de suite chaque token validé dans DS-Studio, tant que ce plugin est ouvert</label>
+  <div class="row"><button id="collect">Récupérer depuis Figma</button><button id="sync" class="primary">Voir les changements</button></div>
+  <label><input type="checkbox" id="auto"> Synchronisation automatique : appliquer tout de suite chaque token validé dans DS-Studio, tant que ce plugin est ouvert</label>
   <p id="auto-status"></p>
 
   <div id="out"></div>
@@ -75,9 +75,38 @@ $('auto').onchange = () => {
   save();
   setAuto($('auto').checked);
 };
+// Compte rendu renvoyé à DS-Studio, qui l'affiche dans sa checklist : sans
+// lui, DS-Studio ne sait pas si Figma a vraiment reçu la modification.
+const report = async (body) => {
+  const { server, code } = settings();
+  try {
+    await fetch(server + '/api/plugin/report', {
+      method: 'POST',
+      headers: { 'X-DS-Plugin': code, 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+  } catch {
+    /* DS-Studio injoignable : le prochain passage renverra l'état. */
+  }
+};
+const reasons = (failed) => failed.map((f) => f.key + ' (' + f.reason + ')').join(', ');
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
 const swatch = (v) => /^#[0-9A-F]{6}$/i.test(v) ? `<span class="sw" style="background:${v}"></span>` : '';
 parent.postMessage({ pluginMessage: { type: 'load-settings' } }, '*');
+
+$('collect').onclick = async () => {
+  const { server, code } = settings();
+  save();
+  out.innerHTML = '<p>Lecture des variables…</p>';
+  try {
+    const r = await fetch(server + '/api/plugin/sync', { headers: { 'X-DS-Plugin': code } });
+    const body = await r.json();
+    if (!r.ok) throw new Error(body.error || 'DS-Studio a refusé la demande.');
+    parent.postMessage({ pluginMessage: { type: 'collect', fileKey: body.figmaFileKey } }, '*');
+  } catch (e) {
+    out.innerHTML = `<p class="error">${esc(e.message === 'Failed to fetch' ? 'DS-Studio injoignable : est-il lancé sur cet ordinateur ?' : e.message)}</p>`;
+  }
+};
 
 $('sync').onclick = async () => {
   const { server, code } = settings();
@@ -114,10 +143,28 @@ onmessage = (event) => {
       save();
     }
   }
+  if (msg.type === 'collected') {
+    const { server, code } = settings();
+    out.innerHTML = '<p>Envoi à DS-Studio…</p>';
+    fetch(server + '/api/plugin/import', {
+      method: 'POST',
+      headers: { 'X-DS-Plugin': code, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ file: msg.file, fileKey: msg.fileKey, tokens: msg.tokens, skipped: msg.skipped }),
+    })
+      .then(async (r) => {
+        const body = await r.json();
+        if (!r.ok) throw new Error(body.error || 'DS-Studio a refusé l’import.');
+        out.innerHTML = `<div class="box"><p class="ok"><strong>${Object.keys(msg.tokens).length} tokens envoyés à DS-Studio.</strong></p><p>${body.added} ajouté(s) · ${body.changed} modifié(s) · ${body.removed} retiré(s). Vérifiez et validez le diff dans DS-Studio : rien n’y est écrit avant.</p>${msg.skipped.length ? `<details><summary>${msg.skipped.length} variable(s) non reprise(s)</summary><ul>${msg.skipped.map((x) => `<li><code title="${esc(x.name)}">${esc(x.name)}</code> ${esc(x.reason)}</li>`).join('')}</ul></details>` : ''}${msg.warning ? `<p class="error">${esc(msg.warning)}</p>` : ''}</div>`;
+      })
+      .catch((e) => {
+        out.innerHTML = `<p class="error">${esc(e.message === 'Failed to fetch' ? 'DS-Studio injoignable : est-il lancé sur cet ordinateur ?' : e.message)}</p>`;
+      });
+  }
   if (msg.type === 'auto') {
     lastRevision = msg.revision;
+    report({ revision: msg.revision, updated: msg.updated, created: msg.created, same: msg.same, failed: msg.failed, warning: msg.warning || null });
     const time = new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-    $('auto-status').innerHTML = `<span class="ok">À l’écoute · révision ${msg.revision} synchronisée à ${time}${msg.updated ? ` · ${msg.updated} variable(s) mise(s) à jour` : ''}</span>${msg.failed.length ? `<br><span class="error">Non appliqué : ${esc(msg.failed.join(', '))}</span>` : ''}`;
+    $('auto-status').innerHTML = `<span class="ok">À l’écoute · révision ${msg.revision} vérifiée à ${time}${msg.updated ? ` · ${msg.updated} variable(s) mise(s) à jour` : ''}</span>${msg.failed.length ? `<br><span class="error">Non appliqué : ${esc(reasons(msg.failed))}</span>` : ''}${msg.warning ? `<br><span class="error">${esc(msg.warning)}</span>` : ''}`;
   }
   if (msg.type === 'plan') {
     const p = msg.plan;
@@ -125,15 +172,17 @@ onmessage = (event) => {
     out.innerHTML = `
       <div class="box">
         <strong>${esc(current.project || 'Projet')} → ${esc(msg.file)}</strong>
-        <p>${msg.variables} variables lues · ${p.same} déjà à jour · ${p.aliased.length} alias laissés tels quels</p>
-        <p><strong>${p.updates.length} variable(s) à mettre à jour</strong></p>
-        <ul>${p.updates.map((u) => `<li>${swatch(u.after)}<code title="${esc(u.name)}">${esc(u.name)}</code> ${esc(u.before)} → <strong>${esc(u.after)}</strong></li>`).join('')}</ul>
-        ${p.missing.length ? `<details><summary>${p.missing.length} token(s) sans variable reconnue</summary><ul>${p.missing.map((m) => `<li>${swatch(m.value)}<code title="${esc(m.key)}">${esc(m.key)}</code> ${m.near.length ? '≈ ' + esc(m.near.join(', ')) : 'aucune variable proche'}</li>`).join('')}</ul><div class="row"><button id="copy">Copier ce diagnostic</button></div></details>
+        <p>${msg.variables} variables lues · ${p.same} déjà à jour</p>
+        <p><strong>${p.updates.length + p.retargets.length} variable(s) à mettre à jour</strong></p>
+        <ul>${p.updates.map((u) => `<li>${swatch(u.after)}<code title="${esc(u.name)}">${esc(u.name)}</code> ${esc(u.before)} → <strong>${esc(u.after)}</strong></li>`).join('')}${p.retargets.map((u) => `<li>${swatch(u.after)}<code title="${esc(u.name)}">${esc(u.name)}</code> alias → <strong>${esc(u.targetName)}</strong></li>`).join('')}</ul>
+        ${p.blocked.length ? `<details open><summary class="error">${p.blocked.length} bloqué(s)</summary><ul>${p.blocked.map((b) => `<li><code title="${esc(b.name)}">${esc(b.name)}</code> ${esc(b.reason)}</li>`).join('')}</ul></details>` : ''}
+        ${p.missing.length ? `<details><summary>${p.missing.length} token(s) sans variable de ce nom</summary><ul>${p.missing.map((m) => `<li>${swatch(m.value)}<code title="${esc(m.key)}">${esc(m.key)}</code></li>`).join('')}</ul><div class="row"><button id="copy">Copier cette liste</button></div></details>
         <label><input type="checkbox" id="create"> Créer ces ${p.missing.length} token(s) dans une collection « DS-Studio » (seulement s'ils n'existent vraiment pas dans Figma)</label>` : ''}
-        <div class="row"><button id="apply" class="primary" ${p.updates.length || p.missing.length ? '' : 'disabled'}>Appliquer</button></div>
+        ${msg.warning ? `<p class="error">${esc(msg.warning)}</p>` : ''}
+        <div class="row"><button id="apply" class="primary" ${p.updates.length || p.retargets.length || p.missing.length ? '' : 'disabled'}>Appliquer</button></div>
       </div>`;
     if ($('copy')) $('copy').onclick = () => {
-      const text = p.missing.map((m) => `${m.key} [${m.type}] ≈ ${m.near.join(' | ') || '—'}`).join('\n');
+      const text = p.missing.map((m) => `${m.key} [${m.type}]`).join('\n');
       const area = document.createElement('textarea');
       area.value = text;
       document.body.appendChild(area);
@@ -147,12 +196,16 @@ onmessage = (event) => {
       parent.postMessage({ pluginMessage: {
         type: 'apply',
         updates: p.updates,
+        retargets: p.retargets,
+        revision: current.revision,
         create: $('create') && $('create').checked ? p.missing : [],
       } }, '*');
     };
   }
   if (msg.type === 'report') {
-    out.innerHTML = `<div class="box"><p class="ok"><strong>${msg.updated} variable(s) mise(s) à jour${msg.created ? `, ${msg.created} créée(s)` : ''}, valeurs relues.</strong></p>${msg.failed.length ? `<p class="error">Non appliqué : ${esc(msg.failed.join(', '))}</p>` : ''}<p>Les composants qui utilisent ces variables sont à jour.</p></div>`;
+    const failed = msg.failed.concat(current.plan.blocked.map((b) => ({ key: b.key, reason: b.reason })));
+    report({ revision: msg.revision, updated: msg.updated, created: msg.created, same: current.plan.same, failed, warning: null });
+    out.innerHTML = `<div class="box"><p class="ok"><strong>${msg.updated} variable(s) mise(s) à jour${msg.created ? `, ${msg.created} créée(s)` : ''}, valeurs relues.</strong></p>${failed.length ? `<p class="error">Non appliqué : ${esc(reasons(failed))}</p>` : ''}<p>Les composants liés à ces variables suivent ; ceux qui ont des valeurs en dur ne changent pas.</p></div>`;
   }
 };
 </script>

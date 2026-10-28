@@ -1,10 +1,35 @@
 // Bibliothèque standard seulement : utilisable avant npm ci.
-import { promises as fs } from 'node:fs';
+import { promises as fs, existsSync } from 'node:fs';
 import path from 'node:path';
 import net from 'node:net';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
 
+// npm lancé par Node lui-même (npm-cli.js), sans passer par « npm » du PATH :
+// sous Windows, « npm » est un .cmd qu'un spawn sans shell ne trouve pas.
+export async function npmCli(env = process.env) {
+  const bin = path.dirname(process.execPath);
+  const candidates = [
+    path.join(bin, 'node_modules/npm/bin/npm-cli.js'),
+    path.resolve(bin, '../lib/node_modules/npm/bin/npm-cli.js'),
+    '/usr/share/nodejs/npm/bin/npm-cli.js',
+  ];
+  for (const candidate of candidates)
+    if (existsSync(candidate)) return candidate;
+  // Homebrew et certains gestionnaires publient npm comme lien vers un
+  // npm-cli.js situé hors du préfixe du binaire Node réellement exécuté.
+  for (const folder of [bin, ...(env.PATH || '').split(path.delimiter)]) {
+    try {
+      const target = await fs.realpath(path.join(folder, 'npm'));
+      if (path.basename(target) === 'npm-cli.js') return target;
+    } catch {
+      /* Emplacement facultatif. */
+    }
+  }
+  throw new Error(
+    'npm est absent de cette installation Node. Installez la distribution officielle Node.js LTS (avec npm), puis relancez.',
+  );
+}
 export const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 export function alive(pid) {
   if (!Number.isSafeInteger(pid) || pid <= 0) return false;

@@ -653,3 +653,70 @@ test('plugin Figma : « localhost » accepté pour sa route seulement', async (t
   assert.equal(await get('/api/state'), 403);
   assert.equal(await get('/api/plugin/pairing'), 403);
 });
+
+test('plugin Figma : import proposé par le diff, compte rendu gardé, rien écrit sans validation', async (t) => {
+  const { origin, post, store } = await fixture(t);
+  const { token } = await (await fetch(origin + '/api/plugin/pairing')).json();
+  const plugin = (route: string, body: unknown, code = token) =>
+    fetch(origin + '/api/plugin/' + route, {
+      method: 'POST',
+      headers: {
+        Origin: 'null',
+        'Content-Type': 'application/json',
+        'X-DS-Plugin': code,
+      },
+      body: JSON.stringify(body),
+    });
+  const tokens = {
+    ...store.snapshot().tokens,
+    'color.brand': { $type: 'color', $value: '#9900FF' },
+    'spacings.default.spacing1': { $type: 'dimension', $value: 8 },
+  };
+  const skipped = [{ name: 'Master/color/opacity black', reason: 'transparence' }];
+  const body = { file: 'Mon DS', fileKey: null, tokens, skipped };
+  assert.equal((await plugin('import', body, '0'.repeat(32))).status, 403);
+  const preflight = await fetch(origin + '/api/plugin/import', {
+    method: 'OPTIONS',
+    headers: { Origin: 'null' },
+  });
+  assert.match(preflight.headers.get('access-control-allow-headers') ?? '', /Content-Type/);
+  const sent = await plugin('import', body);
+  assert.equal(sent.status, 200);
+  assert.deepEqual(await sent.json(), { added: 1, changed: 1, removed: 0 });
+  // Rien n'est écrit : l'import attend son diff dans l'atelier.
+  assert.equal(store.snapshot().revision, 0);
+  const pending = await (await fetch(origin + '/api/figma-import')).json();
+  assert.equal(pending.file, 'Mon DS');
+  assert.deepEqual(pending.skipped, skipped);
+  assert.equal(pending.proposal.patches.length, 2);
+  assert.equal((await post('commit', { id: pending.proposal.id })).status, 200);
+  assert.equal(store.snapshot().tokens['color.brand'].$value, '#9900FF');
+  assert.equal(await (await fetch(origin + '/api/figma-import')).json(), null);
+
+  // Compte rendu de synchronisation : gardé et relu pour la checklist.
+  const before = await (await fetch(origin + '/api/figma-sync')).json();
+  assert.equal(before.report, null);
+  const report = {
+    revision: 1,
+    updated: 1,
+    created: 0,
+    same: 30,
+    failed: [{ key: 'state.hoverText', reason: 'alias : aucune variable de base ne vaut #123456' }],
+    warning: null,
+  };
+  assert.equal((await plugin('report', report)).status, 200);
+  const after = await (await fetch(origin + '/api/figma-sync')).json();
+  assert.equal(after.pluginOpen, true);
+  assert.equal(after.revision, 1);
+  assert.equal(after.report.updated, 1);
+  assert.deepEqual(after.report.failed, report.failed);
+  // Une route du plugin n'accepte que sa méthode, et jamais d'écriture de token.
+  assert.equal(
+    (
+      await fetch(origin + '/api/plugin/report', {
+        headers: { Origin: 'null', 'X-DS-Plugin': token },
+      })
+    ).status,
+    405,
+  );
+});
