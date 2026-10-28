@@ -106,9 +106,12 @@ interface (`tokens.css`), Figma (plugin), GitHub (publication). Si une étape
 - Unité de travail par défaut : **un écran complet** en une proposition — la
   page, les composants qui lui manquent et son branchement (route ou App), pour
   qu'elle s'affiche tout de suite dans la Preview.
-- Commence par réutiliser les composants existants ; crée ceux qui manquent
-  dans le dossier de composants du projet, rangés comme dans Figma (atoms,
-  molecules, organisms) si le projet n'a pas déjà sa propre convention.
+- **Réutiliser ou coder d'abord.** Un composant Figma qui a un fichier `code`
+  est déjà codé : importe-le, ne le recrée jamais. S'il n'en a pas, code-le
+  d'abord dans `src/components/<atoms|molecules|organisms>/<Nom>/` (un
+  `Nom.tsx` + un `Nom.css`), puis utilise-le dans la page, le tout dans le
+  même diff.
+- Retirer un composant d'une page ne touche que la page : son fichier reste.
 - Un composant = son fichier TSX typé + ses styles ; styles uniquement avec les
   variables de tokens (`var(--…)`).
 - Mise en page responsive dès le départ (mobile 375 px → desktop), en flex ou

@@ -20,6 +20,7 @@ import { atomicWrite, readPrivate } from './files.js';
 import { readProjectTokens, writeProjectTokens } from './projectTokens.js';
 import { BATCH, PublishCounter, gitStatus, publish } from './gitops.js';
 import { runTokensScript, type TokensScript } from './npm.js';
+import { codedFor } from '../shared/components.js';
 import {
   figmaComponents,
   figmaImage,
@@ -506,6 +507,20 @@ export async function createStudioServer(options: {
               revision: store.snapshot().revision,
               pluginOpen: Date.now() - pluginSeenAt < 12_000,
             });
+          // Composants déjà codés dans le projet ouvert (et correspondances
+          // forcées), pour afficher « codé » et les donner à Clodo.
+          if (url.pathname === '/api/project-components') {
+            const scope = await workspace();
+            return send(
+              200,
+              scope.project
+                ? {
+                    components: await scope.code.components(),
+                    map: await scope.code.componentMap(),
+                  }
+                : null,
+            );
+          }
           // Liens d'alias du DS ouvert, pour les conseils avant validation.
           if (url.pathname === '/api/aliases')
             return send(200, await readAliases());
@@ -847,10 +862,21 @@ export async function createStudioServer(options: {
               // Figma lu par le serveur, seulement si un fichier est relié.
               figma.hasToken && (await figmaUrl())
                 ? {
-                    components: await figmaComponents(
-                      figma,
-                      await figmaUrl(),
-                    ).catch(() => []),
+                    // Chaque composant Figma porte le fichier qui le code
+                    // déjà, s'il existe : Clodo le réutilise.
+                    components: await (async () => {
+                      const list = await figmaComponents(
+                        figma,
+                        await figmaUrl(),
+                      ).catch(() => []);
+                      if (!scope.project) return list;
+                      const coded = await scope.code.components();
+                      const map = await scope.code.componentMap();
+                      return list.map((c) => ({
+                        ...c,
+                        code: codedFor(c.name, coded, map)?.file,
+                      }));
+                    })(),
                     node: async (id) => figmaNode(figma, await figmaUrl(), id),
                   }
                 : undefined,

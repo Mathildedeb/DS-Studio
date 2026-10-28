@@ -3,6 +3,7 @@ import { request } from './api.js';
 import type { Proposal } from '../shared/model.js';
 import type { Focus } from '../shared/focus.js';
 import type { Level } from './dsRegistry.js';
+import type { CodeComponent } from '../shared/components.js';
 import type {
   FigmaComponent,
   FigmaNode,
@@ -220,10 +221,13 @@ export function FigmaDetail({
   component,
   onFocus,
   onAsk,
+  coded,
 }: {
   component: FigmaComponent;
   onFocus: (f: Focus) => void;
   onAsk: (message: string) => void;
+  // Composant déjà codé dans le projet : Clodo le modifie, ne le recode pas.
+  coded?: CodeComponent;
 }) {
   const [node, setNode] = useState<FigmaNode>();
   useEffect(() => {
@@ -258,11 +262,13 @@ export function FigmaDetail({
           className="studio-primary"
           onClick={() =>
             onAsk(
-              `Code le composant Figma « ${component.name} » dans mon projet, fidèle à Figma, avec mes tokens.`,
+              coded
+                ? `Compare le composant ${coded.name} (${coded.file}) au composant Figma « ${component.name} » et propose ce qu'il faut ajuster.`
+                : `Code le composant Figma « ${component.name} » dans mon projet, fidèle à Figma, avec mes tokens.`,
             )
           }
         >
-          Demander à Clodo de le coder
+          {coded ? 'Comparer avec Figma' : 'Demander à Clodo de le coder'}
         </button>
       </header>
       <div className="ds-stage figma-render">

@@ -333,3 +333,40 @@ test('Clodo lit les composants Figma qu’il choisit avant de coder', async (t) 
   assert.deepEqual(asked, ['1:2']);
   assert.equal(JSON.parse(inputs[1]).figma_nodes['1:2'].layout.gap, 8);
 });
+
+test('projet ouvert : composants codés repérés, fichiers générés ignorés', async (t) => {
+  const root = await mkdtemp(path.join(tmpdir(), 'ds-projet-'));
+  const data = await mkdtemp(path.join(tmpdir(), 'ds-donnees-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  t.after(() => rm(data, { recursive: true, force: true }));
+  await mkdir(path.join(root, 'src', 'components', 'atoms', 'Avatar'), { recursive: true });
+  await mkdir(path.join(root, 'src', 'components', 'atoms', 'Toggle'), { recursive: true });
+  await mkdir(path.join(root, 'src', 'design-system'), { recursive: true });
+  await mkdir(path.join(root, 'design-system'), { recursive: true });
+  await writeFile(
+    path.join(root, 'src', 'components', 'atoms', 'Avatar', 'Avatar.tsx'),
+    'function Avatar() { return null }\nexport default Avatar\n',
+  );
+  await writeFile(
+    path.join(root, 'src', 'components', 'atoms', 'Toggle', 'index.tsx'),
+    'export const Switch = () => null;\n',
+  );
+  await writeFile(path.join(root, 'src', 'design-system', 'Tokens.tsx'), 'export const Tokens = 1;\n');
+  await writeFile(path.join(root, 'src', 'helpers.tsx'), 'export const lower = 1;\n');
+  await writeFile(
+    path.join(root, 'design-system', 'components.json'),
+    '{ "button/toggle": "src/components/atoms/Toggle/index.tsx" }',
+  );
+  const code = new CodeStore(root, data, true);
+  assert.deepEqual(
+    (await code.components()).map((c) => `${c.name} ${c.file}`).sort(),
+    [
+      'Avatar src/components/atoms/Avatar/Avatar.tsx',
+      'Switch src/components/atoms/Toggle/index.tsx',
+      'Toggle src/components/atoms/Toggle/index.tsx',
+    ],
+  );
+  assert.deepEqual(await code.componentMap(), {
+    'button/toggle': 'src/components/atoms/Toggle/index.tsx',
+  });
+});

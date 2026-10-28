@@ -21,6 +21,7 @@ import type { FigmaComponent } from '../../connectors/figma/library.js';
 import type { ConnectionStatus } from '../shared/connection.js';
 import type { PublishStatus } from '../server/gitops.js';
 import { adviseChange } from '../shared/advice.js';
+import type { CodeComponent } from '../shared/components.js';
 import {
   circuitConclusion,
   circuitImpact,
@@ -192,6 +193,12 @@ export default function App() {
   const [codeBusy, setCodeBusy] = useState(false);
   const [codeError, setCodeError] = useState('');
   const [lastCode, setLastCode] = useState<{ id: string; files: string[] }>();
+  // Composants déjà codés dans le projet ouvert : relus à l'ouverture du
+  // projet et après chaque modification de code (création, annulation).
+  const [projectCode, setProjectCode] = useState<{
+    components: CodeComponent[];
+    map: Record<string, string>;
+  }>();
   const [clodoOpen, setClodoOpen] = useState(false);
   const [connection, setConnection] = useState<ConnectionStatus>();
   const [opening, setOpening] = useState(false);
@@ -249,6 +256,12 @@ export default function App() {
       .catch(() => undefined);
     return () => controller.current?.abort();
   }, []);
+  useEffect(() => {
+    if (!connection?.project) return setProjectCode(undefined);
+    request<typeof projectCode | null>('project-components')
+      .then((c) => setProjectCode(c ?? undefined))
+      .catch(() => undefined);
+  }, [connection?.project, lastCode]);
   // Checklist de la dernière validation : relue toutes les 2 s tant qu'elle
   // est affichée, pour passer d'elle-même de ⏳ ou ⚠️ à ✅ (plugin rouvert…).
   const [watch, setWatch] = useState<number>();
@@ -1139,6 +1152,7 @@ export default function App() {
                 onToken={openToken}
                 onFocus={setComponentFocus}
                 figma={figmaList}
+                code={projectCode}
                 onAsk={askClodo}
               />
               <FigmaPanel

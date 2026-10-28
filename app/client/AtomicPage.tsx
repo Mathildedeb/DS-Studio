@@ -10,6 +10,7 @@ import { DSProvider } from './DesignSystem.js';
 import { FigmaDetail, figmaLevel } from './FigmaPanel.js';
 import type { FigmaComponent } from '../../connectors/figma/library.js';
 import { request } from './api.js';
+import { codedFor, type CodeComponent } from '../shared/components.js';
 import { defaultPreview, type PreviewConfig } from '../shared/dashboard.js';
 import {
   entry,
@@ -170,6 +171,7 @@ export function ComponentWorkspace({
   onToken,
   onFocus,
   figma = [],
+  code,
   onAsk,
 }: {
   tokens: Tokens;
@@ -180,8 +182,12 @@ export function ComponentWorkspace({
   // Composants du Figma du projet : ils apparaissent dans leur niveau
   // atomique tant qu'ils ne sont pas codés.
   figma?: FigmaComponent[];
+  // Composants déjà codés dans le projet ouvert (et correspondances forcées).
+  code?: { components: CodeComponent[]; map: Record<string, string> };
   onAsk: (message: string) => void;
 }) {
+  const codedOf = (c: FigmaComponent) =>
+    code ? codedFor(c.name, code.components, code.map) : undefined;
   const level: Level = tab === 'tokens' || tab === 'figma' ? 'atom' : tab;
   const [query, setQuery] = useState('');
   const first = (l: Level) => registry.find((x) => x.level === l)?.name ?? '';
@@ -320,7 +326,11 @@ export function ComponentWorkspace({
                   }
                 >
                   <strong>{c.name}</strong>
-                  <span className="figma-badge">Figma · à coder</span>
+                  {codedOf(c) ? (
+                    <span className="figma-badge figma-coded">✓ codé</span>
+                  ) : (
+                    <span className="figma-badge">Figma · à coder</span>
+                  )}
                 </button>
               </li>
             ))}
@@ -332,14 +342,21 @@ export function ComponentWorkspace({
 
       {figmaPicked ? (
         <div className="ds-detail">
-          <p className="figma-uncoded">
-            Ce composant existe dans Figma mais pas encore dans le code de votre
-            projet.
-          </p>
+          {codedOf(figmaPicked) ? (
+            <p className="figma-coded-note">
+              ✓ Codé dans <code>{codedOf(figmaPicked)!.file}</code>
+            </p>
+          ) : (
+            <p className="figma-uncoded">
+              Ce composant existe dans Figma mais pas encore dans le code de
+              votre projet.
+            </p>
+          )}
           <FigmaDetail
             component={figmaPicked}
             onFocus={onFocus}
             onAsk={onAsk}
+            coded={codedOf(figmaPicked)}
           />
         </div>
       ) : !e ? (

@@ -2423,6 +2423,16 @@ h2[id] {
   display: flex;
   gap: 6px;
 }
+.figma-badge.figma-coded {
+  color: var(--studio-success-text);
+}
+.figma-coded-note {
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: 10px;
+  color: var(--studio-success-text);
+  background: var(--studio-success-bg);
+}
 .diff-advice {
   display: grid;
   gap: 4px;

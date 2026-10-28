@@ -4,6 +4,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { atomicWrite, readPrivate } from './files.js';
 import { StudioError } from './store.js';
+import type { CodeComponent } from '../shared/components.js';
 
 // Fichiers que Clodo peut proposer de modifier : l'interface et le contexte du PFE.
 // Jamais le serveur, les connecteurs, les tests, les scripts, package.json ni .env.
@@ -139,6 +140,47 @@ export class CodeStore {
       .catch(() => false);
   }
   // Liste montrée à Clodo pour qu'il choisisse ce qu'il doit lire.
+  // Composants React déjà codés dans le projet : nom du fichier (Avatar.tsx,
+  // ou le dossier pour un index.tsx) et noms exportés en majuscule, hors
+  // fichiers générés du design system.
+  async components() {
+    const found = new Map<string, CodeComponent>();
+    for (const { file } of await this.catalogue()) {
+      if (!/\.(tsx|jsx)$/.test(file) || /(^|\/)design-system\//.test(file))
+        continue;
+      const text = await this.read(file).catch(() => '');
+      const names = new Set<string>();
+      for (const m of text.matchAll(
+        /export\s+(?:default\s+)?(?:function|const|class)\s+([A-Z]\w*)/g,
+      ))
+        names.add(m[1]);
+      for (const m of text.matchAll(/export\s+default\s+([A-Z]\w*)/g))
+        names.add(m[1]);
+      const base = path.posix.basename(file).replace(/\.(tsx|jsx)$/, '');
+      const own = base === 'index' ? path.posix.basename(path.posix.dirname(file)) : base;
+      if (names.size && /^[A-Z]/.test(own)) names.add(own);
+      for (const name of names) found.set(`${name}|${file}`, { name, file });
+    }
+    return [...found.values()].slice(0, 300);
+  }
+  // Correspondances forcées, facultatives : design-system/components.json
+  // ({ "nom Figma": "chemin du fichier" }), prioritaires sur la détection.
+  async componentMap(): Promise<Record<string, string>> {
+    try {
+      return z
+        .record(z.string().max(200), z.string().max(300))
+        .parse(
+          JSON.parse(
+            await readPrivate(
+              path.join(this.root, 'design-system', 'components.json'),
+              200_000,
+            ),
+          ),
+        );
+    } catch {
+      return {};
+    }
+  }
   // Fichiers du code qui mentionnent l'un de ces textes (variables CSS ou
   // noms de tokens), hors fichiers générés du design system.
   async usages(needles: string[]) {
