@@ -115,6 +115,59 @@ if (typeof figma !== 'undefined') {
     });
   };
 
+  // Applique les valeurs, crée au besoin, puis relit avant de dire « fait ».
+  const applyChanges = async (updates, create) => {
+    const done = [];
+    const failed = [];
+    for (const u of updates) {
+      const v = await figma.variables.getVariableByIdAsync(u.id);
+      const col =
+        v &&
+        (await figma.variables.getVariableCollectionByIdAsync(
+          v.variableCollectionId,
+        ));
+      if (!v || !col) {
+        failed.push(u.key);
+        continue;
+      }
+      v.setValueForMode(col.defaultModeId, figmaValue(u.type, u.after));
+      done.push(u);
+    }
+    let created = 0;
+    if (create.length) {
+      const collections =
+        await figma.variables.getLocalVariableCollectionsAsync();
+      const col =
+        collections.find((c) => c.name === 'DS-Studio') ||
+        figma.variables.createVariableCollection('DS-Studio');
+      for (const m of create) {
+        const v = figma.variables.createVariable(
+          m.key.split('.').join('/'),
+          col,
+          kinds[m.type],
+        );
+        v.setValueForMode(col.defaultModeId, figmaValue(m.type, m.value));
+        created++;
+      }
+    }
+    // Relecture : chaque valeur écrite est relue avant de dire « fait ».
+    const after = await readVariables();
+    const wrong = done.filter((u) => {
+      const v = after.find((x) => x.id === u.id);
+      return !v || readable(v) !== u.after;
+    });
+    const report = {
+      updated: done.length - wrong.length,
+      created,
+      failed: failed.concat(wrong.map((u) => u.key)),
+    };
+    figma.notify(
+      `DS-Studio : ${done.length - wrong.length} variable(s) mise(s) à jour` +
+        (created ? `, ${created} créée(s)` : ''),
+    );
+    return report;
+  };
+
   figma.ui.onmessage = async (msg) => {
     try {
       if (msg.type === 'load-settings') {
@@ -122,11 +175,13 @@ if (typeof figma !== 'undefined') {
           type: 'settings',
           server: await figma.clientStorage.getAsync('server'),
           code: await figma.clientStorage.getAsync('code'),
+          auto: await figma.clientStorage.getAsync('auto'),
         });
       }
       if (msg.type === 'save-settings') {
         await figma.clientStorage.setAsync('server', msg.server);
         await figma.clientStorage.setAsync('code', msg.code);
+        await figma.clientStorage.setAsync('auto', !!msg.auto);
       }
       if (msg.type === 'plan') {
         // Fichier autorisé : celui du projet ouvert dans DS-Studio, et aucun autre.
@@ -137,63 +192,27 @@ if (typeof figma !== 'undefined') {
               'Ce fichier Figma n’est pas celui du projet ouvert dans DS-Studio. Rien ne sera modifié.',
           });
         const variables = await readVariables();
+        const p = plan(msg.tokens, variables);
+        // Mode automatique : les valeurs validées dans DS-Studio partent tout
+        // de suite ; jamais de création ni de suppression sans clic.
+        if (msg.auto) {
+          const report = p.updates.length
+            ? await applyChanges(p.updates, [])
+            : { updated: 0, created: 0, failed: [] };
+          return figma.ui.postMessage(
+            Object.assign({ type: 'auto', revision: msg.revision }, report),
+          );
+        }
         figma.ui.postMessage({
           type: 'plan',
           file: figma.root.name,
           variables: variables.length,
-          plan: plan(msg.tokens, variables),
+          plan: p,
         });
       }
       if (msg.type === 'apply') {
-        const done = [];
-        const failed = [];
-        for (const u of msg.updates) {
-          const v = await figma.variables.getVariableByIdAsync(u.id);
-          const col =
-            v &&
-            (await figma.variables.getVariableCollectionByIdAsync(
-              v.variableCollectionId,
-            ));
-          if (!v || !col) {
-            failed.push(u.key);
-            continue;
-          }
-          v.setValueForMode(col.defaultModeId, figmaValue(u.type, u.after));
-          done.push(u);
-        }
-        let created = 0;
-        if (msg.create && msg.create.length) {
-          const collections =
-            await figma.variables.getLocalVariableCollectionsAsync();
-          const col =
-            collections.find((c) => c.name === 'DS-Studio') ||
-            figma.variables.createVariableCollection('DS-Studio');
-          for (const m of msg.create) {
-            const v = figma.variables.createVariable(
-              m.key.split('.').join('/'),
-              col,
-              kinds[m.type],
-            );
-            v.setValueForMode(col.defaultModeId, figmaValue(m.type, m.value));
-            created++;
-          }
-        }
-        // Relecture : chaque valeur écrite est relue avant de dire « fait ».
-        const after = await readVariables();
-        const wrong = done.filter((u) => {
-          const v = after.find((x) => x.id === u.id);
-          return !v || readable(v) !== u.after;
-        });
-        figma.ui.postMessage({
-          type: 'report',
-          updated: done.length - wrong.length,
-          created,
-          failed: failed.concat(wrong.map((u) => u.key)),
-        });
-        figma.notify(
-          `DS-Studio : ${done.length - wrong.length} variable(s) mise(s) à jour` +
-            (created ? `, ${created} créée(s)` : ''),
-        );
+        const report = await applyChanges(msg.updates, msg.create || []);
+        figma.ui.postMessage(Object.assign({ type: 'report' }, report));
       }
     } catch (e) {
       figma.ui.postMessage({ type: 'error', message: String(e.message || e) });

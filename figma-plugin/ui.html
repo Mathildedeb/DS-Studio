@@ -30,6 +30,8 @@
   <label for="server">Adresse de DS-Studio</label>
   <input id="server" type="text" value="http://localhost:4310" spellcheck="false">
   <div class="row"><button id="sync" class="primary">Voir les changements</button></div>
+  <label><input type="checkbox" id="auto"> Mode automatique : appliquer tout de suite chaque token validé dans DS-Studio, tant que ce plugin est ouvert</label>
+  <p id="auto-status"></p>
 
   <div id="out"></div>
 
@@ -37,14 +39,49 @@
 const $ = (id) => document.getElementById(id);
 const out = $('out');
 let current;
+let lastRevision = null;
+let timer = null;
+const settings = () => ({
+  server: $('server').value.trim().replace(/\/$/, ''),
+  code: $('code').value.trim(),
+});
+const save = () =>
+  parent.postMessage({ pluginMessage: Object.assign({ type: 'save-settings', auto: $('auto').checked }, settings()) }, '*');
+// Mode automatique : DS-Studio est relu toutes les 4 s ; une nouvelle
+// révision part directement vers les variables du fichier.
+const tick = async () => {
+  const { server, code } = settings();
+  try {
+    const r = await fetch(server + '/api/plugin/sync', { headers: { 'X-DS-Plugin': code } });
+    const body = await r.json();
+    if (!r.ok) throw new Error(body.error || 'DS-Studio a refusé la demande.');
+    if (body.revision !== lastRevision)
+      parent.postMessage({ pluginMessage: { type: 'plan', auto: true, revision: body.revision, tokens: body.tokens, fileKey: body.figmaFileKey } }, '*');
+  } catch (e) {
+    $('auto-status').innerHTML = `<span class="error">${esc(e.message === 'Failed to fetch' ? 'DS-Studio injoignable, nouvel essai dans 4 s…' : e.message)}</span>`;
+  }
+};
+const setAuto = (on) => {
+  clearInterval(timer);
+  timer = null;
+  if (on) {
+    $('auto-status').textContent = 'À l’écoute de DS-Studio…';
+    lastRevision = null;
+    tick();
+    timer = setInterval(tick, 4000);
+  } else $('auto-status').textContent = '';
+};
+$('auto').onchange = () => {
+  save();
+  setAuto($('auto').checked);
+};
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
 const swatch = (v) => /^#[0-9A-F]{6}$/i.test(v) ? `<span class="sw" style="background:${v}"></span>` : '';
 parent.postMessage({ pluginMessage: { type: 'load-settings' } }, '*');
 
 $('sync').onclick = async () => {
-  const server = $('server').value.trim().replace(/\/$/, '');
-  const code = $('code').value.trim();
-  parent.postMessage({ pluginMessage: { type: 'save-settings', server, code } }, '*');
+  const { server, code } = settings();
+  save();
   out.innerHTML = '<p>Lecture de DS-Studio…</p>';
   try {
     const r = await fetch(server + '/api/plugin/sync', { headers: { 'X-DS-Plugin': code } });
@@ -63,8 +100,25 @@ onmessage = (event) => {
   if (msg.type === 'settings') {
     if (msg.server) $('server').value = msg.server;
     if (msg.code) $('code').value = msg.code;
+    if (msg.auto && msg.code) {
+      $('auto').checked = true;
+      setAuto(true);
+    }
   }
-  if (msg.type === 'error') out.innerHTML = `<p class="error">${esc(msg.message)}</p>`;
+  if (msg.type === 'error') {
+    out.innerHTML = `<p class="error">${esc(msg.message)}</p>`;
+    // Mauvais fichier ou refus : le mode automatique s'arrête net.
+    if (timer) {
+      $('auto').checked = false;
+      setAuto(false);
+      save();
+    }
+  }
+  if (msg.type === 'auto') {
+    lastRevision = msg.revision;
+    const time = new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    $('auto-status').innerHTML = `<span class="ok">À l’écoute · révision ${msg.revision} synchronisée à ${time}${msg.updated ? ` · ${msg.updated} variable(s) mise(s) à jour` : ''}</span>${msg.failed.length ? `<br><span class="error">Non appliqué : ${esc(msg.failed.join(', '))}</span>` : ''}`;
+  }
   if (msg.type === 'plan') {
     const p = msg.plan;
     current.plan = p;
