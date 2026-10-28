@@ -11,11 +11,17 @@ const data = await mkdtemp(
   path.join(tmpdir(), 'ds qualification avec espaces '),
 );
 const origin = 'http://127.0.0.1:4321';
+// Le seed du dépôt est vide (DS vide) : la qualification part des tokens de la
+// fixture, comme les tests e2e, pour modifier un token existant.
+const seed = path.join(root, 'tests/fixtures/tokens.json');
 let child;
 async function start() {
   child = spawn(process.execPath, [path.join(root, 'scripts/launch.mjs')], {
     cwd: data,
-    env: { ...process.env, PORT: '4321', DS_STUDIO_DATA_DIR: data },
+    env: { ...process.env, PORT: '4321',
+      DS_STUDIO_DATA_DIR: data,
+      DS_STUDIO_TOKENS_SEED: seed,
+    },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   const live = child;
@@ -98,7 +104,10 @@ try {
     process.execPath,
     [path.join(root, 'scripts/launch.mjs')],
     {
-      env: { ...process.env, PORT: '4322', DS_STUDIO_DATA_DIR: data },
+      env: { ...process.env, PORT: '4322',
+      DS_STUDIO_DATA_DIR: data,
+      DS_STUDIO_TOKENS_SEED: seed,
+    },
       stdio: 'ignore',
     },
   );

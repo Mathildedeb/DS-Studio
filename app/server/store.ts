@@ -2,6 +2,7 @@ import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { atomicWrite, readPrivate } from './files.js';
 import { createHash, randomUUID } from 'node:crypto';
+import { z } from 'zod';
 import {
   applyChanges,
   diff,
@@ -87,10 +88,16 @@ export class Store {
         'Le Design System a changé. Rechargez et refaites la proposition.',
         409,
       );
-    const patches = diff(
-      this.state.tokens,
-      applyChanges(this.state.tokens, changes),
-    );
+    let next: Tokens;
+    try {
+      next = applyChanges(this.state.tokens, changes);
+    } catch (e) {
+      // Token inconnu, type manquant ou contradictoire : demande invalide (400),
+      // pas une erreur du serveur.
+      if (e instanceof z.ZodError) throw e;
+      throw new StudioError((e as Error).message);
+    }
+    const patches = diff(this.state.tokens, next);
     if (!patches.length) throw new StudioError('Aucune modification.');
     if (this.proposals.size >= 100)
       this.proposals.delete(this.proposals.keys().next().value!);

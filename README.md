@@ -235,8 +235,8 @@ conservé. Aucune remise à zéro silencieuse.
 | Synchronisation des composants et organismes vers Figma | **NON DISPONIBLE** | — |
 | Publication GitHub par lots de 10 | **VÉRIFIÉ** | Tests avec un dépôt distant local |
 | Pull Request, fusion, retour sur `main` | **NON DISPONIBLE** | Manuel |
-| Lanceur : démarrage, arrêt, reprise après crash | **PARTIEL** | 8 tests sur 22 passent ; les 12 autres viennent d'un test devenu obsolète avec le DS vide (correction en cours) |
-| Intégration continue GitHub | **ÉCHOUE** | Tests du lanceur (macOS, Ubuntu) et Preview (Windows) |
+| Lanceur : démarrage, arrêt, redémarrage, reprise après crash | **VÉRIFIÉ** | 20 tests sur vrais processus, macOS (2 tests propres à Linux non exécutés) ; qualification `npm run qualify` |
+| Intégration continue GitHub | **ÉCHOUE sous Windows** | La Preview et `npm run tokens` lancent `npm` d'une façon qui échoue sous Windows |
 
 Rapport de la V2 initiale : [DELIVERY_REPORT.md](DELIVERY_REPORT.md).
 

@@ -81,6 +81,13 @@ test('API manuelle complète sans IA ni Figma, export égal au disque', async (t
   const { origin, post, store } = await fixture(t);
   const boot = await (await fetch(origin + '/api/bootstrap')).json();
   assert.equal(boot.figma.connected, false);
+  // Token absent sans type : demande refusée clairement, pas une erreur serveur.
+  const invalid = await post('proposals', {
+    revision: 0,
+    changes: [{ key: 'color.neuf', value: '#112233' }],
+  });
+  assert.equal(invalid.status, 400);
+  assert.match((await invalid.json()).error, /Type requis/);
   const proposed = await post('proposals', {
     revision: 0,
     changes: [{ key: 'color.brand', value: '#112233' }],

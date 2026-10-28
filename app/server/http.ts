@@ -132,6 +132,11 @@ export async function createStudioServer(options: {
   };
   let busy = false;
   const active = new Set<AbortController>();
+  // Arrêt en cours : le port est fermé mais une connexion keep-alive du
+  // navigateur peut encore arriver ici. Sans adresse, le contrôle d'hôte
+  // répondrait « Hôte refusé » et l'onglet resterait collé à l'ancien
+  // processus ; on ferme la connexion pour qu'il rejoigne le nouveau serveur.
+  let closing = false;
   const vite = options.dev
     ? await (
         await import('vite')
@@ -142,6 +147,15 @@ export async function createStudioServer(options: {
       })
     : null;
   const server = http.createServer(async (req, res) => {
+    if (closing) {
+      res.writeHead(503, {
+        'Content-Type': 'application/json; charset=utf-8',
+        Connection: 'close',
+      });
+      return res.end(
+        JSON.stringify({ error: 'DS-Studio redémarre. Réessayez.' }),
+      );
+    }
     const address = server.address();
     const port = typeof address === 'object' && address ? address.port : 0;
     const origin = `http://127.0.0.1:${port}`;
@@ -704,11 +718,17 @@ export async function createStudioServer(options: {
   return {
     server,
     close: async () => {
+      closing = true;
       for (const c of active) c.abort();
       devServer.stop();
-      await new Promise<void>((resolve, reject) =>
+      const closed = new Promise<void>((resolve, reject) =>
         server.close((e) => (e ? reject(e) : resolve())),
       );
+      // Les connexions inactives se ferment tout de suite ; une réponse en
+      // cours a 3 s pour finir avant la fermeture forcée.
+      server.closeIdleConnections();
+      const force = setTimeout(() => server.closeAllConnections(), 3000);
+      await closed.finally(() => clearTimeout(force));
       await vite?.close();
     },
   };

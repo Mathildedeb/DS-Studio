@@ -102,8 +102,10 @@ test(
         recursive: true,
       });
     await fs.mkdir(path.join(root, 'workspace'));
+    // Le seed du dépôt est vide (DS vide) : comme les tests e2e, le cycle part
+    // des tokens de la fixture pour modifier un token existant.
     await fs.copyFile(
-      path.join(source, 'workspace/design-system.tokens.json'),
+      path.join(source, 'tests/fixtures/tokens.json'),
       path.join(root, 'workspace/design-system.tokens.json'),
     );
     const port = await freePort();
@@ -116,12 +118,20 @@ test(
     let unrelated;
     let browser;
     const children = [];
+    // PID réels du contrôleur et du serveur lancés par ce test : arrêtés en fin
+    // de suite, même après un échec, pour ne laisser aucun processus actif.
+    const started = new Set();
+    const remember = (pid) => {
+      if (Number.isSafeInteger(pid) && pid > 0 && pid !== process.pid)
+        started.add(pid);
+    };
     async function launch() {
       const result = await exec(
         process.execPath,
         [path.join(root, 'scripts/launcher.mjs'), '--no-open'],
         { env, timeout: 20000 },
       );
+      remember((await readRecord(data, 'launcher').catch(() => null))?.pid);
       const url = new URL(result.stdout.trim());
       const token = url.hash.slice(1);
       url.hash = '';
@@ -141,7 +151,7 @@ test(
     }
     async function action(name, body = {}) {
       assert.equal((await request(name, body)).code, 202);
-      return until(
+      const state = await until(
         async () => {
           const state = await request('status');
           return !state.busy && state;
@@ -149,6 +159,8 @@ test(
         name + ' terminé',
         120000,
       );
+      remember(state.pid);
+      return state;
     }
     async function serverState() {
       return (await fetch(`http://127.0.0.1:${port}/api/state`)).json();
@@ -352,7 +364,9 @@ test(
           const { chromium } = await import('@playwright/test');
           browser = await chromium.launch();
           const page = await browser.newPage();
-          await page.goto(`http://127.0.0.1:${port}`);
+          await page.goto(`http://127.0.0.1:${port}/#design-system`);
+          // Premier lancement : l'écran « Ouvrir un projet » est passé.
+          await page.getByRole('button', { name: 'Plus tard' }).click();
           await page.getByLabel('Valeur du token').fill('#224477');
           await action('restart');
           await page
@@ -626,6 +640,14 @@ test(
         }
       } finally {
         for (const child of children) if (child.exitCode === null) child.kill();
+        for (const pid of started) if (alive(pid)) process.kill(pid, 'SIGTERM');
+        await until(
+          () => [...started].every((pid) => !alive(pid)),
+          'processus du lanceur arrêtés',
+          10000,
+        ).catch(() => {
+          for (const pid of started) if (alive(pid)) process.kill(pid, 'SIGKILL');
+        });
         await fs.rm(temporary, { recursive: true, force: true });
       }
     }
