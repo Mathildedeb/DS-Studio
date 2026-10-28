@@ -2385,3 +2385,15 @@ h2[id] {
     max-height: 360px;
   }
 }
+.figma-badge {
+  font-size: 10px !important;
+  color: #9a4a12 !important;
+}
+.figma-uncoded {
+  margin: 0 0 12px;
+  padding: 8px 10px;
+  border-radius: var(--studio-radius);
+  background: var(--studio-warning-bg);
+  color: var(--studio-warning-text);
+  font-size: 12px;
+}

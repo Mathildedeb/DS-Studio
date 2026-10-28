@@ -7,6 +7,8 @@ import {
   type ReactNode,
 } from 'react';
 import { DSProvider } from './DesignSystem.js';
+import { FigmaDetail, figmaLevel } from './FigmaPanel.js';
+import type { FigmaComponent } from '../../connectors/figma/library.js';
 import { request } from './api.js';
 import { defaultPreview, type PreviewConfig } from '../shared/dashboard.js';
 import {
@@ -36,7 +38,16 @@ const showValue = (tokens: Tokens, key: TokenKey) =>
   `${tokens[key].$value}${tokens[key].$type === 'dimension' ? 'px' : ''}`;
 
 // Onglets du panneau ; flèches gauche/droite comme un tablist ARIA.
-export function DsTabs({ tab, onTab }: { tab: Tab; onTab: (t: Tab) => void }) {
+export function DsTabs({
+  tab,
+  onTab,
+  extra = {},
+}: {
+  tab: Tab;
+  onTab: (t: Tab) => void;
+  // Composants Figma pas encore codés, comptés dans chaque niveau.
+  extra?: Partial<Record<Level, number>>;
+}) {
   const ids = Object.keys(tabs) as Tab[];
   return (
     <div className="ds-tabs" role="tablist" aria-label="Sections du DS">
@@ -61,7 +72,9 @@ export function DsTabs({ tab, onTab }: { tab: Tab; onTab: (t: Tab) => void }) {
         >
           {tabs[t]}
           {t !== 'tokens' && t !== 'figma' && (
-            <span>{registry.filter((e) => e.level === t).length}</span>
+            <span>
+              {registry.filter((e) => e.level === t).length + (extra[t] ?? 0)}
+            </span>
           )}
         </button>
       ))}
@@ -156,12 +169,18 @@ export function ComponentWorkspace({
   onTab,
   onToken,
   onFocus,
+  figma = [],
+  onAsk,
 }: {
   tokens: Tokens;
   tab: Tab;
   onTab: (t: Tab) => void;
   onToken: (key: TokenKey) => void;
   onFocus: (focus: Focus) => void;
+  // Composants du Figma du projet : ils apparaissent dans leur niveau
+  // atomique tant qu'ils ne sont pas codés.
+  figma?: FigmaComponent[];
+  onAsk: (message: string) => void;
 }) {
   const level: Level = tab === 'tokens' || tab === 'figma' ? 'atom' : tab;
   const [query, setQuery] = useState('');
@@ -172,7 +191,11 @@ export function ComponentWorkspace({
     organism: first('organism'),
     template: first('template'),
   });
-  const name = items[level];
+  const figmaHere = figma.filter((c) => figmaLevel(c.page) === level);
+  const name = items[level] || (figmaHere[0] ? `figma:${figmaHere[0].id}` : '');
+  const figmaPicked = name.startsWith('figma:')
+    ? figma.find((c) => `figma:${c.id}` === name)
+    : undefined;
   // Niveau encore vide : aucun élément à afficher.
   const e = entry(name);
   const [picked, setPicked] = useState<Picked>({ ex: 0, chain: [name] });
@@ -285,11 +308,41 @@ export function ComponentWorkspace({
               </button>
             </li>
           ))}
-          {!list.length && <li className="ds-list-empty">Aucun résultat.</li>}
+          {figmaHere
+            .filter((c) => c.name.toLowerCase().includes(q))
+            .map((c) => (
+              <li key={c.id}>
+                <button
+                  type="button"
+                  aria-current={`figma:${c.id}` === name ? 'true' : undefined}
+                  onClick={() =>
+                    setItems((it) => ({ ...it, [level]: `figma:${c.id}` }))
+                  }
+                >
+                  <strong>{c.name}</strong>
+                  <span className="figma-badge">Figma · à coder</span>
+                </button>
+              </li>
+            ))}
+          {!list.length && !figmaHere.length && (
+            <li className="ds-list-empty">Aucun résultat.</li>
+          )}
         </ul>
       </div>
 
-      {!e ? (
+      {figmaPicked ? (
+        <div className="ds-detail">
+          <p className="figma-uncoded">
+            Ce composant existe dans Figma mais pas encore dans le code de votre
+            projet.
+          </p>
+          <FigmaDetail
+            component={figmaPicked}
+            onFocus={onFocus}
+            onAsk={onAsk}
+          />
+        </div>
+      ) : !e ? (
         <div className="ds-detail">
           <p className="ds-stage-empty">
             Aucun élément dans les {levels[level].toLowerCase()} pour l’instant.

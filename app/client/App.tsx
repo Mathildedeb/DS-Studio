@@ -15,7 +15,9 @@ import type { CodeProposal } from '../server/code.js';
 import Dashboard from './Dashboard.js';
 import PreviewPage from './PreviewPage.js';
 import OpenProject from './OpenProject.js';
-import FigmaPanel from './FigmaPanel.js';
+import FigmaPanel, { figmaLevel } from './FigmaPanel.js';
+import type { Level } from './dsRegistry.js';
+import type { FigmaComponent } from '../../connectors/figma/library.js';
 import type { ConnectionStatus } from '../shared/connection.js';
 import type { FigmaFileStatus } from '../../connectors/figma/reader.js';
 import { useTokenDraft } from './useTokenDraft.js';
@@ -163,6 +165,31 @@ export default function App() {
   const [clodoOpen, setClodoOpen] = useState(false);
   const [connection, setConnection] = useState<ConnectionStatus>();
   const [opening, setOpening] = useState(false);
+  // Composants du Figma du projet, lus une fois pour tous les onglets du DS.
+  const [figmaList, setFigmaList] = useState<FigmaComponent[]>();
+  const [figmaError, setFigmaError] = useState('');
+  const figmaLinked = connection?.saved.figmaUrl;
+  useEffect(() => {
+    setFigmaList(undefined);
+    setFigmaError('');
+    if (figmaLinked)
+      request<FigmaComponent[]>('figma/components')
+        .then(setFigmaList)
+        .catch((e) => setFigmaError(e.message));
+  }, [figmaLinked]);
+  const askClodo = (text: string) => {
+    setMessage(text);
+    setClodoOpen(true);
+  };
+  // Tokens lisibles dans le projet ouvert, importables depuis l'onglet Tokens.
+  const importProjectTokens = () =>
+    void perform(async () =>
+      setProposal(
+        await request<Proposal>('project-tokens/import', {
+          revision: state!.revision,
+        }),
+      ),
+    );
   const view = useView();
   const [thinking, setThinking] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -596,7 +623,18 @@ export default function App() {
           {history}
           <main className="studio-main">
             <section className="panel ds-panel" aria-labelledby="ds-title">
-              <DsTabs tab={tab} onTab={setTab} />
+              <DsTabs
+                tab={tab}
+                onTab={setTab}
+                extra={(figmaList ?? []).reduce<Partial<Record<Level, number>>>(
+                  (n, c) => {
+                    const l = figmaLevel(c.page);
+                    if (l) n[l] = (n[l] ?? 0) + 1;
+                    return n;
+                  },
+                  {},
+                )}
+              />
               <div
                 className="ds-workspace"
                 role="tabpanel"
@@ -702,6 +740,15 @@ export default function App() {
                       Aucun token pour l’instant. Ajoutez-en avec « + Token »,
                       importez un JSON, ou demandez à Clodo.
                     </p>
+                    {connection?.project && (
+                      <button
+                        type="button"
+                        className="studio-primary"
+                        onClick={importProjectTokens}
+                      >
+                        Importer les tokens de {connection.project.name}
+                      </button>
+                    )}
                   </div>
                 ) : (
                   <div className="ds-detail token-editor">
@@ -851,16 +898,17 @@ export default function App() {
                 onTab={setTab}
                 onToken={openToken}
                 onFocus={setComponentFocus}
+                figma={figmaList}
+                onAsk={askClodo}
               />
               <FigmaPanel
                 active={tab === 'figma'}
                 revision={state.revision}
                 onProposal={setProposal}
                 onFocus={setFigmaFocus}
-                onAsk={(text) => {
-                  setMessage(text);
-                  setClodoOpen(true);
-                }}
+                onAsk={askClodo}
+                list={figmaList}
+                error={figmaError}
               />
             </section>
           </main>

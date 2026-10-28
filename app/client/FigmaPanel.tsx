@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { request } from './api.js';
 import type { Proposal } from '../shared/model.js';
 import type { Focus } from '../shared/focus.js';
+import type { Level } from './dsRegistry.js';
 import type {
   FigmaComponent,
   FigmaNode,
@@ -17,51 +18,32 @@ interface ProjectTokens {
 
 export default function FigmaPanel({
   active,
+  list,
+  error,
   revision,
   onProposal,
   onFocus,
   onAsk,
 }: {
   active: boolean;
+  // Composants lus une fois par App, partagés avec les onglets atomiques.
+  list?: FigmaComponent[];
+  error: string;
   revision: number;
   onProposal: (p: Proposal) => void;
   onFocus: (f: Focus) => void;
   onAsk: (message: string) => void;
 }) {
-  const [list, setList] = useState<FigmaComponent[]>();
-  const [error, setError] = useState('');
   const [query, setQuery] = useState('');
   const [selected, setSelected] = useState<FigmaComponent>();
-  const [node, setNode] = useState<FigmaNode>();
   const [project, setProject] = useState<ProjectTokens>();
   const [tokenError, setTokenError] = useState('');
   useEffect(() => {
-    if (!active || list) return;
-    request<FigmaComponent[]>('figma/components')
-      .then(setList)
-      .catch((e) => setError(e.message));
+    if (!active || project) return;
     request<ProjectTokens>('project-tokens')
       .then(setProject)
       .catch((e) => setTokenError(e.message));
   }, [active]);
-  useEffect(() => {
-    if (!selected) return;
-    setNode(undefined);
-    onFocus({
-      page: 'design-system',
-      kind: 'component',
-      name: selected.name.slice(0, 80),
-      path: [selected.page || 'Figma', selected.name].map((x) =>
-        x.slice(0, 80),
-      ),
-      level: selected.page.slice(0, 20) || undefined,
-      source: 'Figma',
-      value: selected.id,
-    });
-    request<FigmaNode>(`figma/node?id=${encodeURIComponent(selected.id)}`)
-      .then(setNode)
-      .catch(() => undefined);
-  }, [selected?.id]);
 
   const q = query.trim().toLowerCase();
   // Ordre atomique d'abord (Atoms → Template), puis les autres pages.
@@ -160,74 +142,118 @@ export default function FigmaPanel({
             et sa structure, puis demandez à Clodo de le coder.
           </p>
         ) : (
-          <>
-            <header className="ds-detail-head">
-              <div>
-                <h2>{selected.name}</h2>
-                <p>
-                  Figma · {selected.page || 'page inconnue'}
-                  {selected.variants > 1 && ` · ${selected.variants} variantes`}
-                </p>
-              </div>
-              <button
-                type="button"
-                className="studio-primary"
-                onClick={() =>
-                  onAsk(
-                    `Code le composant Figma « ${selected.name} » dans mon projet, fidèle à Figma, avec mes tokens.`,
-                  )
-                }
-              >
-                Demander à Clodo de le coder
-              </button>
-            </header>
-            <div className="ds-stage figma-render">
-              <img
-                key={selected.id}
-                src={`/api/figma/image?id=${encodeURIComponent(selected.id)}`}
-                alt={`Rendu Figma de ${selected.name}`}
-              />
-            </div>
-            <p className="ds-stage-foot">
-              Rendu exporté par Figma (×2), affiché à demi-taille.
-            </p>
-            {node && (
-              <section className="ds-props" aria-label="Structure Figma">
-                <div>
-                  <h3>Structure</h3>
-                  <p className="ds-crumbs">
-                    {node.type}
-                    {node.size &&
-                      ` · ${Math.round(node.size.width)} × ${Math.round(node.size.height)}`}
-                    {node.layout &&
-                      ` · auto-layout ${node.layout.mode.toLowerCase()}, gap ${node.layout.gap ?? 0}, padding ${node.layout.padding?.join(' ')}`}
-                  </p>
-                  {node.fills && (
-                    <p className="ds-muted">Fond : {node.fills.join(', ')}</p>
-                  )}
-                  {node.radius !== undefined && (
-                    <p className="ds-muted">Rayon : {String(node.radius)}</p>
-                  )}
-                </div>
-                <div>
-                  <h3>Propriétés Figma</h3>
-                  {node.props ? (
-                    Object.entries(node.props).map(([k, p]) => (
-                      <p key={k} className="ds-muted">
-                        <strong>{k.replace(/#.*$/, '')}</strong> ·{' '}
-                        {p.type.toLowerCase()}
-                        {p.options?.length ? ` : ${p.options.join(' | ')}` : ''}
-                      </p>
-                    ))
-                  ) : (
-                    <p className="ds-muted">Aucune propriété déclarée.</p>
-                  )}
-                </div>
-              </section>
-            )}
-          </>
+          <FigmaDetail component={selected} onFocus={onFocus} onAsk={onAsk} />
         )}
       </div>
     </div>
+  );
+}
+
+// Niveau atomique déduit du nom de la page Figma (Atoms, Molécules, Organism…).
+export function figmaLevel(page: string): Level | undefined {
+  const p = page.toLowerCase();
+  if (p.startsWith('atom')) return 'atom';
+  if (p.startsWith('mol')) return 'molecule';
+  if (p.startsWith('org')) return 'organism';
+  if (p.startsWith('templ')) return 'template';
+  return undefined;
+}
+
+// Détail d'un composant Figma : rendu, structure, propriétés, et la demande
+// à Clodo de le coder. Utilisé par l'onglet Figma et les onglets atomiques.
+export function FigmaDetail({
+  component,
+  onFocus,
+  onAsk,
+}: {
+  component: FigmaComponent;
+  onFocus: (f: Focus) => void;
+  onAsk: (message: string) => void;
+}) {
+  const [node, setNode] = useState<FigmaNode>();
+  useEffect(() => {
+    setNode(undefined);
+    onFocus({
+      page: 'design-system',
+      kind: 'component',
+      name: component.name.slice(0, 80),
+      path: [component.page || 'Figma', component.name].map((x) =>
+        x.slice(0, 80),
+      ),
+      level: component.page.slice(0, 20) || undefined,
+      source: 'Figma',
+      value: component.id,
+    });
+    request<FigmaNode>(`figma/node?id=${encodeURIComponent(component.id)}`)
+      .then(setNode)
+      .catch(() => undefined);
+  }, [component?.id]);
+  return (
+    <>
+      <header className="ds-detail-head">
+        <div>
+          <h2>{component.name}</h2>
+          <p>
+            Figma · {component.page || 'page inconnue'}
+            {component.variants > 1 && ` · ${component.variants} variantes`}
+          </p>
+        </div>
+        <button
+          type="button"
+          className="studio-primary"
+          onClick={() =>
+            onAsk(
+              `Code le composant Figma « ${component.name} » dans mon projet, fidèle à Figma, avec mes tokens.`,
+            )
+          }
+        >
+          Demander à Clodo de le coder
+        </button>
+      </header>
+      <div className="ds-stage figma-render">
+        <img
+          key={component.id}
+          src={`/api/figma/image?id=${encodeURIComponent(component.id)}`}
+          alt={`Rendu Figma de ${component.name}`}
+        />
+      </div>
+      <p className="ds-stage-foot">
+        Rendu exporté par Figma (×2), affiché à demi-taille.
+      </p>
+      {node && (
+        <section className="ds-props" aria-label="Structure Figma">
+          <div>
+            <h3>Structure</h3>
+            <p className="ds-crumbs">
+              {node.type}
+              {node.size &&
+                ` · ${Math.round(node.size.width)} × ${Math.round(node.size.height)}`}
+              {node.layout &&
+                ` · auto-layout ${node.layout.mode.toLowerCase()}, gap ${node.layout.gap ?? 0}, padding ${node.layout.padding?.join(' ')}`}
+            </p>
+            {node.fills && (
+              <p className="ds-muted">Fond : {node.fills.join(', ')}</p>
+            )}
+            {node.radius !== undefined && (
+              <p className="ds-muted">Rayon : {String(node.radius)}</p>
+            )}
+          </div>
+          <div>
+            <h3>Propriétés Figma</h3>
+            {node.props ? (
+              Object.entries(node.props).map(([k, p]) => (
+                <p key={k} className="ds-muted">
+                  <strong>{k.replace(/#.*$/, '')}</strong> ·{' '}
+                  {p.type.toLowerCase()}
+                  {p.options?.length ? ` : ${p.options.join(' | ')}` : ''}
+                </p>
+              ))
+            ) : (
+              <p className="ds-muted">Aucune propriété déclarée.</p>
+            )}
+          </div>
+        </section>
+      )}
+    </>
   );
 }
