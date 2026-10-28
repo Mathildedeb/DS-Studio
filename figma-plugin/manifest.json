@@ -9,7 +9,7 @@
   "enablePrivatePluginApi": true,
   "networkAccess": {
     "allowedDomains": ["none"],
-    "devAllowedDomains": ["http://127.0.0.1:4310"],
+    "devAllowedDomains": ["http://localhost:4310"],
     "reasoning": "Lit les tokens validés dans DS-Studio, qui tourne sur cet ordinateur."
   }
 }

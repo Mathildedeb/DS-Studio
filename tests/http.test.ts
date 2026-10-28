@@ -615,3 +615,34 @@ test('plugin Figma : lecture seule, code d’appairage obligatoire et renouvelab
   assert.equal((await sync(token)).status, 403, 'ancien code coupé');
   assert.equal((await sync(renewed.token)).status, 200);
 });
+
+test('plugin Figma : « localhost » accepté pour sa route seulement', async (t) => {
+  const { origin } = await fixture(t);
+  const port = new URL(origin).port;
+  const { token } = await (await fetch(origin + '/api/plugin/pairing')).json();
+  // Requête vers 127.0.0.1 avec l'en-tête Host « localhost », comme Figma.
+  const get = (route: string) =>
+    new Promise<number>((resolve, reject) =>
+      http
+        .get(
+          {
+            host: '127.0.0.1',
+            port,
+            path: route,
+            headers: {
+              Host: `localhost:${port}`,
+              Origin: 'null',
+              'X-DS-Plugin': token,
+            },
+          },
+          (res) => {
+            res.resume();
+            resolve(res.statusCode ?? 0);
+          },
+        )
+        .on('error', reject),
+    );
+  assert.equal(await get('/api/plugin/sync'), 200);
+  assert.equal(await get('/api/state'), 403);
+  assert.equal(await get('/api/plugin/pairing'), 403);
+});

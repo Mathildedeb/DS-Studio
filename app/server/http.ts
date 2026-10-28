@@ -156,14 +156,15 @@ export async function createStudioServer(options: {
       `default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'${options.dev ? ' ws://127.0.0.1:*' : ''}; frame-src 'self' http://localhost:* http://127.0.0.1:*; frame-ancestors 'self'; base-uri 'none'; form-action 'self'`,
     );
     try {
-      if (req.headers.host !== `127.0.0.1:${port}`)
-        throw new StudioError(
-          'Hôte refusé. Utilisez l’adresse 127.0.0.1 affichée au démarrage.',
-          403,
-        );
       // Plugin Figma : seule entrée acceptée depuis une autre origine (« null »,
       // l'iframe du plugin), en lecture seule, avec le code d'appairage.
-      if (req.url?.split('?')[0] === '/api/plugin/sync') {
+      // Figma n'accepte que « localhost » dans le manifeste du plugin : cette
+      // route seule accepte aussi cet hôte, toujours sur la boucle locale.
+      if (
+        req.url?.split('?')[0] === '/api/plugin/sync' &&
+        (req.headers.host === `127.0.0.1:${port}` ||
+          req.headers.host === `localhost:${port}`)
+      ) {
         res.setHeader('Access-Control-Allow-Origin', 'null');
         res.setHeader('Access-Control-Allow-Headers', 'X-DS-Plugin');
         res.setHeader('Access-Control-Allow-Methods', 'GET');
@@ -185,6 +186,11 @@ export async function createStudioServer(options: {
           tokens: state.tokens,
         });
       }
+      if (req.headers.host !== `127.0.0.1:${port}`)
+        throw new StudioError(
+          'Hôte refusé. Utilisez l’adresse 127.0.0.1 affichée au démarrage.',
+          403,
+        );
       if (req.headers.origin && req.headers.origin !== origin)
         throw new StudioError('Origine non autorisée.', 403);
       if (req.headers['sec-fetch-site'] === 'cross-site')
