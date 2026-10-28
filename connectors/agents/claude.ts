@@ -4,6 +4,7 @@ import { homedir, tmpdir } from 'node:os';
 import path from 'node:path';
 import { agentInstruction, parseAgentJson, runCli } from './codex.js';
 import type { AgentAdapter, AgentContext } from './types.js';
+import { clodoBrain } from './coder.js';
 
 const cli = { name: 'Claude Code', login: 'claude auth status' };
 // Profil volontairement sans outils, comme Codex : aucun outil intégré, aucun MCP,
@@ -68,7 +69,7 @@ export class ClaudeAdapter implements AgentAdapter {
   async reply(message: string, context: AgentContext, signal?: AbortSignal) {
     return parseAgentJson(
       await this.ask(
-        agentInstruction,
+        (await clodoBrain()) + agentInstruction,
         JSON.stringify({ context, message }),
         signal,
       ),

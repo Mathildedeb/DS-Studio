@@ -172,6 +172,25 @@ test('Clodo : choisit des fichiers, ne reçoit que la liste blanche, propose un 
   assert.deepEqual(Object.keys(sent), ['app/client/Card.tsx']);
   assert.match(await card(root), /radius = 8;/, 'rien écrit sans validation');
 });
+test('Clodo : CLODO.md en tête des deux consignes, garde-fous conservés', async (t) => {
+  const { code } = await project(t);
+  const systems: string[] = [];
+  const answers = [
+    JSON.stringify({ files: ['app/client/Card.tsx'] }),
+    JSON.stringify({ message: 'Une question ?', edits: [] }),
+  ];
+  const ask: Ask = async (system) => {
+    systems.push(system);
+    return answers.shift()!;
+  };
+  await proposeCode(ask, code, 'Un écran de connexion', []);
+  assert.equal(systems.length, 2);
+  for (const system of systems) {
+    assert.match(system, /^# Clodo — expertise/);
+    assert.match(system, /WCAG 2\.2 AA/);
+    assert.match(system, /Aucun outil, aucun accès disque/);
+  }
+});
 test('Clodo : réponse illisible ou sans fichier, aucune proposition', async (t) => {
   const { code } = await project(t);
   await assert.rejects(

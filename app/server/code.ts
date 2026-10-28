@@ -38,6 +38,10 @@ export function isProjectFile(file: string) {
   );
 }
 const maxFile = 120_000;
+// Capacité de Clodo par demande : assez pour un écran complet (page,
+// composants, branchement), toujours relu dans un seul diff.
+export const maxFiles = 10;
+export const maxEdits = 40;
 const ttl = 30 * 60_000;
 const sha = (text: string) => createHash('sha256').update(text).digest('hex');
 
@@ -174,7 +178,7 @@ export class CodeStore {
   async contents(files: string[]) {
     const out: Record<string, string> = {};
     const missing: string[] = [];
-    for (const file of files.slice(0, 5))
+    for (const file of files.slice(0, maxFiles))
       if (this.project && !(await this.exists(file))) missing.push(file);
       else out[file] = await this.read(file);
     return { files: out, missing };
@@ -183,8 +187,10 @@ export class CodeStore {
   // remplacement approximatif, pas de réécriture de fichier entier.
   async propose(edits: CodeEdit[]): Promise<CodeProposal> {
     if (!edits.length) throw new StudioError('Aucune modification proposée.');
-    if (edits.length > 20)
-      throw new StudioError('Trop de modifications en une fois (20 maximum).');
+    if (edits.length > maxEdits)
+      throw new StudioError(
+        `Trop de modifications en une fois (${maxEdits} maximum).`,
+      );
     const before = new Map<string, string | null>();
     const after = new Map<string, string>();
     const hunks: CodeHunk[] = [];
