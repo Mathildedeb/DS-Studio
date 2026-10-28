@@ -2397,3 +2397,29 @@ h2[id] {
   color: var(--studio-warning-text);
   font-size: 12px;
 }
+.chat-publish {
+  display: grid;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--studio-border);
+  border-radius: 14px;
+  background: var(--studio-surface-alt);
+  font-size: 12px;
+}
+.chat-publish p {
+  margin: 0;
+}
+.chat-publish ul {
+  margin: 4px 0 0;
+  padding-left: 16px;
+  max-height: 120px;
+  overflow: auto;
+}
+.chat-publish input {
+  font: inherit;
+  width: 100%;
+}
+.chat-publish div {
+  display: flex;
+  gap: 6px;
+}

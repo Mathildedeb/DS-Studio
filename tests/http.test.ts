@@ -552,8 +552,11 @@ test('un DS par projet : le premier reprend l’existant, chacun garde le sien',
     assert.equal((await post('commit', { id: proposal.id })).status, 200);
   };
   await commit('#111111');
+  // Dossiers temporaires : jamais le dépôt de DS-Studio comme projet.
+  const first = await mkdtemp(path.join(tmpdir(), 'ds-premier-'));
+  t.after(() => rm(first, { recursive: true, force: true }));
   // Premier projet ouvert : il reprend le DS déjà construit.
-  assert.equal((await post('connection', { folder: root })).status, 200);
+  assert.equal((await post('connection', { folder: first })).status, 200);
   assert.equal((await state()).tokens['color.brand'].$value, '#111111');
   await commit('#222222');
   const pages = await (await fetch(origin + '/api/preview')).json();
@@ -571,7 +574,7 @@ test('un DS par projet : le premier reprend l’existant, chacun garde le sien',
     2,
   );
   // Retour au premier : on retrouve ses tokens et ses pages.
-  assert.equal((await post('connection', { folder: root })).status, 200);
+  assert.equal((await post('connection', { folder: first })).status, 200);
   assert.equal((await state()).tokens['color.brand'].$value, '#222222');
   assert.equal(
     (await (await fetch(origin + '/api/preview')).json()).pages.at(-1).name,

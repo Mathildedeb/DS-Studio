@@ -1,6 +1,6 @@
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
-import { readPrivate } from './files.js';
+import { atomicWrite, readPrivate } from './files.js';
 import { StudioError } from './store.js';
 import { tokensSchema, type Tokens } from '../shared/model.js';
 
@@ -72,7 +72,18 @@ export function convertDtcg(json: unknown) {
 async function findTokensFile(folder: string) {
   const preferred = path.join(folder, ...projectTokensFile.split('/'));
   if (await fs.stat(preferred).catch(() => undefined)) return projectTokensFile;
-  const skip = new Set(['node_modules', 'dist', 'build', 'out', 'coverage']);
+  const skip = new Set([
+    'node_modules',
+    'dist',
+    'build',
+    'out',
+    'coverage',
+    // Jeux d'essai : jamais pris pour les tokens du projet.
+    'test',
+    'tests',
+    '__tests__',
+    'fixtures',
+  ]);
   const queue: string[] = [''];
   while (queue.length) {
     const dir = queue.shift()!;
@@ -117,4 +128,83 @@ export async function readProjectTokens(folder: string) {
   } catch {
     throw new StudioError(`${file} illisible.`, 422);
   }
+}
+
+// Écrit les tokens validés dans le fichier DTCG du projet, sans changer sa
+// structure : valeur modifiée en place (alias gardé s'il donne déjà la même
+// valeur), token nouveau ajouté sous son chemin, token supprimé retiré.
+export async function writeProjectTokens(folder: string, tokens: Tokens) {
+  const file = (await findTokensFile(folder)) ?? projectTokensFile;
+  const full = path.join(folder, ...file.split('/'));
+  const json: Record<string, unknown> = JSON.parse(
+    await readPrivate(full, 2_000_000).catch(() => '{}'),
+  );
+  const known = convertDtcg(json).tokens;
+  // Fichier présent mais aucun token lisible : ce n'est pas un DTCG, on n'y
+  // écrit rien plutôt que de le déformer.
+  if (Object.keys(json).length && !Object.keys(known).length) return undefined;
+  const seen = new Set<string>();
+  const walk = (node: Record<string, unknown>, trail: string[]) => {
+    for (const [k, v] of Object.entries(node)) {
+      if (k.startsWith('$') || !v || typeof v !== 'object') continue;
+      const leaf = v as Record<string, unknown>;
+      if (!('$value' in leaf)) {
+        walk(leaf, [...trail, k]);
+        continue;
+      }
+      const key = [...trail, k].map(segment).join('.');
+      if (!(key in known)) continue;
+      seen.add(key);
+      const next = tokens[key];
+      if (!next) delete node[k];
+      else if (next.$value !== known[key].$value)
+        leaf.$value =
+          next.$type === 'dimension' && String(leaf.$value).endsWith('px')
+            ? `${next.$value}px`
+            : next.$value;
+    }
+  };
+  walk(json, []);
+  // Un alias qui ne donne plus la valeur affichée dans DS-Studio (sa cible a
+  // changé) est écrit en clair : le projet et DS-Studio montrent la même chose.
+  const after = convertDtcg(json).tokens;
+  const fix = (node: Record<string, unknown>, trail: string[]) => {
+    for (const [k, v] of Object.entries(node)) {
+      if (k.startsWith('$') || !v || typeof v !== 'object') continue;
+      const leaf = v as Record<string, unknown>;
+      if (!('$value' in leaf)) {
+        fix(leaf, [...trail, k]);
+        continue;
+      }
+      const key = [...trail, k].map(segment).join('.');
+      const want = tokens[key];
+      if (
+        want &&
+        typeof leaf.$value === 'string' &&
+        leaf.$value.startsWith('{') &&
+        after[key]?.$value !== want.$value
+      )
+        leaf.$value = want.$value;
+    }
+  };
+  fix(json, []);
+  for (const [key, t] of Object.entries(tokens)) {
+    if (seen.has(key)) continue;
+    let node = json;
+    const parts = key.split('.');
+    for (const p of parts.slice(0, -1))
+      node = (node[p] ??= {}) as Record<string, unknown>;
+    node[parts.at(-1)!] = {
+      $type: t.$type,
+      $value: t.$type === 'dimension' ? `${t.$value}px` : t.$value,
+    };
+  }
+  await fs.mkdir(path.dirname(full), { recursive: true });
+  const mode = await fs
+    .stat(full)
+    .then((s) => s.mode & 0o777)
+    .catch(() => 0o644);
+  await atomicWrite(full, JSON.stringify(json, null, 2) + '\n');
+  await fs.chmod(full, mode);
+  return file;
 }

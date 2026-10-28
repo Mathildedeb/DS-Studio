@@ -16,7 +16,8 @@ import { proposeCode, type Ask } from '../../connectors/agents/coder.js';
 import { CodeStore } from './code.js';
 import { ConnectionStore, inspectFolder, pickFolder } from './connection.js';
 import { DevServer } from './devserver.js';
-import { readProjectTokens } from './projectTokens.js';
+import { readProjectTokens, writeProjectTokens } from './projectTokens.js';
+import { gitStatus, publish } from './gitops.js';
 import {
   figmaComponents,
   figmaImage,
@@ -221,6 +222,12 @@ export async function createStudioServer(options: {
             return send(200, await dashboard.readPreview(store.directory));
           if (url.pathname === '/api/connection')
             return send(200, await connection.status());
+          if (url.pathname === '/api/git/status') {
+            const project = (await connection.status()).project;
+            if (!project)
+              throw new StudioError('Ouvrez d’abord un projet.', 409);
+            return send(200, await gitStatus(project.folder));
+          }
           if (url.pathname === '/api/project-dev') {
             const project = (await connection.status()).project;
             return send(
@@ -311,7 +318,14 @@ export async function createStudioServer(options: {
         }
         if (url.pathname === '/api/commit') {
           const b = z.object({ id: z.string().uuid() }).strict().parse(body);
-          return send(200, await store.commit(b.id));
+          const next = await store.commit(b.id);
+          // Projet ouvert : le token validé part aussi dans son fichier DTCG.
+          const project = (await connection.status()).project;
+          if (project && store !== base)
+            await writeProjectTokens(project.folder, next.tokens).catch((e) =>
+              console.error('Écriture des tokens du projet impossible :', e),
+            );
+          return send(200, next);
         }
         // Code : Clodo propose, l'étudiante valide le diff, le serveur écrit.
         if (url.pathname === '/api/clodo')
@@ -357,6 +371,16 @@ export async function createStudioServer(options: {
               ...tokens,
             }),
           );
+        }
+        // Commit et push du projet ouvert, après l'accord donné dans le chat.
+        if (url.pathname === '/api/git/publish') {
+          const b = z
+            .object({ message: z.string().trim().min(1).max(500) })
+            .strict()
+            .parse(body);
+          const project = (await connection.status()).project;
+          if (!project) throw new StudioError('Ouvrez d’abord un projet.', 409);
+          return send(200, await publish(project.folder, b.message));
         }
         if (url.pathname === '/api/project-dev/stop')
           return send(200, devServer.stop());

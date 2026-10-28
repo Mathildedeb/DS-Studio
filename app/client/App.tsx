@@ -19,6 +19,7 @@ import FigmaPanel, { figmaLevel } from './FigmaPanel.js';
 import type { Level } from './dsRegistry.js';
 import type { FigmaComponent } from '../../connectors/figma/library.js';
 import type { ConnectionStatus } from '../shared/connection.js';
+import type { GitStatus } from '../server/gitops.js';
 import type { FigmaFileStatus } from '../../connectors/figma/reader.js';
 import { useTokenDraft } from './useTokenDraft.js';
 import {
@@ -165,6 +166,12 @@ export default function App() {
   const [clodoOpen, setClodoOpen] = useState(false);
   const [connection, setConnection] = useState<ConnectionStatus>();
   const [opening, setOpening] = useState(false);
+  const [publishCard, setPublishCard] = useState<{
+    git: GitStatus;
+    busy: boolean;
+    done?: string;
+    error?: string;
+  }>();
   // Composants du Figma du projet, lus une fois pour tous les onglets du DS.
   const [figmaList, setFigmaList] = useState<FigmaComponent[]>();
   const [figmaError, setFigmaError] = useState('');
@@ -313,6 +320,9 @@ export default function App() {
       setProposal(undefined);
       announceChange();
       setNotice(`Révision ${next.revision} enregistrée sur disque.`);
+      void offerPublish(
+        'Tokens enregistrés dans ton projet. Je publie sur Git ?',
+      );
     });
     setSaving(false);
   }
@@ -334,9 +344,62 @@ export default function App() {
                 tokens: [key],
               }
             : componentFocus;
+  // Après une modification (ou « push » dans le chat) : Clodo demande l'accord
+  // avant de publier le projet ouvert sur une branche de travail.
+  async function offerPublish(intro: string) {
+    if (!connection?.project) return;
+    try {
+      const git = await request<GitStatus>('git/status');
+      if (!git.files.length && !git.ahead) {
+        setChat((c) => [
+          ...c,
+          {
+            role: 'assistant',
+            text: 'Rien à publier : ton projet est à jour.',
+          },
+        ]);
+        return;
+      }
+      setPublishCard({ git, busy: false });
+      setChat((c) => [...c, { role: 'assistant', text: intro }]);
+      setClodoOpen(true);
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  }
+  async function confirmPublish(commitMessage: string) {
+    setPublishCard((p) => p && { ...p, busy: true, error: undefined });
+    try {
+      const done = await request<{
+        branch: string;
+        commit: string;
+        pushed: boolean;
+      }>('git/publish', { message: commitMessage });
+      const text = done.pushed
+        ? `Publié : commit ${done.commit} poussé sur la branche ${done.branch}.`
+        : `Commit ${done.commit} fait sur ${done.branch} (pas de dépôt distant).`;
+      setPublishCard((p) => p && { ...p, busy: false, done: text });
+      setChat((c) => [...c, { role: 'assistant', text }]);
+      setConnection(await request<ConnectionStatus>('connection'));
+    } catch (e) {
+      setPublishCard(
+        (p) => p && { ...p, busy: false, error: (e as Error).message },
+      );
+    }
+  }
   async function sendMessage() {
     if (!state || !message.trim() || thinking) return;
     const text = message;
+    // « push », « publie » : pas besoin de Clodo, on montre ce qui partira.
+    if (
+      /^\s*(push|pousse|publie|publish)\b/i.test(text) &&
+      connection?.project
+    ) {
+      setMessage('');
+      setChat((c) => [...c, { role: 'user', text }]);
+      await offerPublish('Voici ce qui partira sur Git. Tu confirmes ?');
+      return;
+    }
     setMessage('');
     setThinking(true);
     clearError();
@@ -393,6 +456,9 @@ export default function App() {
         onClose={onClose}
         focus={focus && focusLabel(focus)}
         lastCode={lastCode}
+        publish={publishCard}
+        onPublish={(m) => void confirmPublish(m)}
+        onDismissPublish={() => setPublishCard(undefined)}
         onRevert={() =>
           void perform(async () => {
             if (!lastCode) return;
@@ -963,6 +1029,9 @@ export default function App() {
             setCodeProposal(undefined);
             setLastCode(applied);
             setNotice(`Code modifié : ${applied.files.join(', ')}.`);
+            void offerPublish(
+              'Code modifié dans ton projet. Je publie sur Git ?',
+            );
           } catch (e) {
             setCodeError((e as Error).message);
           } finally {

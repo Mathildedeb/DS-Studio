@@ -1,4 +1,5 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import type { GitStatus } from '../server/gitops.js';
 
 export type ChatMessage = { role: 'user' | 'assistant'; text: string };
 
@@ -23,6 +24,9 @@ export default function Chat({
   focus,
   lastCode,
   onRevert,
+  publish,
+  onPublish,
+  onDismissPublish,
 }: {
   agentName: string;
   detail: string;
@@ -39,7 +43,12 @@ export default function Chat({
   // Dernière modification de code appliquée, annulable depuis la barre.
   lastCode?: { id: string; files: string[] };
   onRevert: () => void;
+  // Carte « Je publie ? » : commit + push du projet, seulement à l'accord.
+  publish?: { git: GitStatus; busy: boolean; done?: string; error?: string };
+  onPublish: (message: string) => void;
+  onDismissPublish: () => void;
 }) {
+  const [commitMessage, setCommitMessage] = useState('');
   const log = useRef<HTMLDivElement>(null);
   useEffect(() => {
     log.current?.scrollTo({ top: log.current.scrollHeight });
@@ -111,6 +120,72 @@ export default function Chat({
           </p>
         )}
       </div>
+      {publish && (
+        <section className="chat-publish" aria-label="Publier sur Git">
+          {publish.done ? (
+            <p role="status">{publish.done}</p>
+          ) : (
+            <>
+              <p>
+                <strong>Je publie sur Git ?</strong> {publish.git.files.length}{' '}
+                fichier(s) modifié(s)
+                {publish.git.ahead > 0 && ' · commits à pousser'} ·{' '}
+                {publish.git.protected
+                  ? `nouvelle branche ds-studio/… (jamais ${publish.git.branch ?? 'main'})`
+                  : `branche ${publish.git.branch}`}
+              </p>
+              {publish.git.files.length > 0 && (
+                <details>
+                  <summary>Fichiers</summary>
+                  <ul>
+                    {publish.git.files.slice(0, 30).map((f) => (
+                      <li key={f.path}>
+                        <code>{f.state}</code> {f.path}
+                      </li>
+                    ))}
+                  </ul>
+                </details>
+              )}
+              <label className="sr-only" htmlFor="commit-message">
+                Message du commit
+              </label>
+              <input
+                id="commit-message"
+                value={commitMessage}
+                onChange={(e) => setCommitMessage(e.target.value)}
+                placeholder="Message du commit (ex. Bouton : variante outline)"
+                maxLength={200}
+              />
+              {publish.error && (
+                <p className="error" role="alert">
+                  {publish.error}
+                </p>
+              )}
+              <div>
+                <button
+                  type="button"
+                  className="studio-primary"
+                  disabled={publish.busy}
+                  onClick={() =>
+                    onPublish(
+                      commitMessage.trim() || 'Mise à jour depuis DS-Studio',
+                    )
+                  }
+                >
+                  {publish.busy ? 'Publication…' : 'Oui, commit et push'}
+                </button>
+                <button
+                  type="button"
+                  onClick={onDismissPublish}
+                  disabled={publish.busy}
+                >
+                  Plus tard
+                </button>
+              </div>
+            </>
+          )}
+        </section>
+      )}
       {focus && (
         <p className="chat-focus" role="status">
           Sélection : <strong>{focus}</strong>
