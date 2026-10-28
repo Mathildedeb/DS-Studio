@@ -15,7 +15,7 @@ Aucune chronologie unique ni obligation de tout construire. Pour chaque piste,
 | Versioning       | Labels de versions, comparer palettes, branches de propositions, export du journal                  | Restaurer un changement sans écraser un token concurrent                |
 | Visualisation    | Carte d’impact token/composant, graphe d’alias, comparaison avant/après                             | Identifier les vrais usages d’un token, sans inventer des liens         |
 | Qualité          | Tests visuels, matrice navigateurs, tests utilisateurs, CI sur trois OS                             | Build et boucle centrale sur une machine fraîche de chaque OS           |
-| Agents           | Claude/Gemini, streaming, permissions bloquantes, erreurs et quotas, mémoire volontaire             | Adaptateur sans outils qualifié avec les mêmes tests de refus           |
+| Agents           | Clodo : streaming, erreurs et quotas, mémoire volontaire                                           | Adaptateur sans outils qualifié avec les mêmes tests de refus           |
 | Skills           | Audit sémantique, cohérence éditoriale, règles sectorielles, aide à la migration                    | Nouvelle demande menée correctement, sans divulgation ni reset          |
 | Distribution     | Packaging desktop, signature Mac, installation Windows, gestion sûre des mises à jour               | Installation et désinstallation sur un vrai OS cible                    |
 | Stockage         | Sauvegardes automatiques bornées, migration de schéma, verrous robustes après crash                 | Récupération d’un état corrompu sans perdre le fichier original         |
@@ -46,6 +46,6 @@ signé seulement si les politiques réelles le nécessitent.
 P1 : tests avec étudiants, lecteurs d’écran, Safari/Firefox, recherche de composants,
 contrastes de tous les états et migration pédagogique pour étendre les tokens.
 
-P2 : Claude/Gemini embarqués, streaming Codex et formats d’échange enrichis restent
-à qualifier ; Figma exige une cible explicite et un connecteur officiel autorisé.
-Aucune de ces intégrations n’est simulée dans la V2.
+Chantier en cours (octobre) : tests du lanceur, plugin Figma validé dans un vrai
+fichier, Pull Requests suivies depuis DS-Studio, Clodo sur un écran complet. Puis
+la Preview. État détaillé : [README](../README.md#état-réel).

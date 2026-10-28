@@ -8,8 +8,8 @@ Lire [START_HERE.md](START_HERE.md). Le contexte appartient à l’étudiant.
 - `app/server/store.ts` : propositions, journal local et annulations sélectives.
 - `app/server/http.ts` : frontière HTTP locale et routes à périmètre fermé.
 - `app/client/DesignSystem.tsx` : composants uniques partagés entre les viewers.
-- `connectors/agents/` : Codex et Claude (« Clodo », macOS) qualifiés, Gemini indisponible.
-- `connectors/figma/` : contrat seulement, aucune connexion réseau.
+- `connectors/agents/` : Claude (« Clodo », macOS), seul agent du chat ; expertise dans `CLODO.md`. Codex conservé, non utilisé par l’interface.
+- `connectors/figma/` : lecture par l’API Figma (clé `FIGMA_TOKEN`) ; `figma-plugin/` écrit les variables validées.
 - `workspace/` : PFE, règles, décisions et DS d’exemple versionnables.
 - `.ds-studio/` : état privé d’exécution, jamais à commiter.
 

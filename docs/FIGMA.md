@@ -1,61 +1,86 @@
-# Figma : source de vérité réelle, pas intégration simulée
+# Figma : lecture par l'API, écriture des variables par le plugin
 
-**Lecture seule : PARTIAL (testée avec un faux Figma, pas avec un vrai jeton).**
-`connectors/figma/reader.ts` lit le nom, la date de modification et les pages
-d’un fichier par l’API REST officielle, avec le jeton personnel de l’étudiant
-(`FIGMA_TOKEN` dans `.env`, portée _File content : Read-only_). Le fichier vient
-du lien Figma du brief privé, sinon de `workspace/roadmap.json`. Le jeton reste côté
-serveur ; les erreurs Figma sont réécrites sans leur corps ; réponse en cache 60 s.
-**Écriture : NOT IMPLEMENTED.** Les variables ne sont pas lues : l’API des variables
-est réservée à l’offre Enterprise. Les outils Figma d’une session de développement
-ne constituent pas une connexion de l’application.
+Figma reste la source de vérité visuelle du Design System. DS-Studio le lit par
+l'API REST officielle et écrit **uniquement des variables** par son plugin.
 
-Écart assumé : le jeton personnel remplace l’OAuth recommandé ci-dessous, plus lourd
-à déclarer. Il est limité à la lecture et révocable dans les paramètres Figma.
+## Lecture — PARTIEL (testée avec un faux Figma)
 
-La [documentation Figma officielle du serveur distant](https://developers.figma.com/docs/figma-mcp-server/remote-server-installation/)
-indique que seuls les clients du catalogue autorisé peuvent se connecter. Un
-nouveau client doit passer par la procédure d’admission. DS-Studio n’est pas déclaré
-client autorisé. Ne jamais usurper un client, extraire un jeton, réutiliser une session
-Codex ou recopier des cookies pour contourner cette restriction.
+`connectors/figma/reader.ts` et `connectors/figma/library.ts` lisent le fichier
+lié au projet ouvert, avec la clé personnelle de l'étudiante (`FIGMA_TOKEN` dans
+`.env`, ou variable d'environnement ; portée _File content : Read-only_) :
 
-## Parcours réaliste aujourd’hui
+- nom, date de modification et pages du fichier ;
+- composants, rangés d'après leur page (Atoms, Molécules, Organism…) ;
+- structure d'un composant, transmise à Clodo pour coder ;
+- aperçus (images) ;
+- variables locales, par l'API des variables réservée aux offres Enterprise ; à
+  défaut, les styles couleur et texte.
 
-1. Garder votre DS réel dans Figma et identifier son périmètre de travail.
-2. Exporter volontairement des données non sensibles par un moyen autorisé dont
-   vous contrôlez les droits. Ne pas confondre un export de composants avec leur
-   comportement responsive dans du code.
-3. Convertir explicitement les tokens vers le [format local](TOKENS.md), puis importer
-   le fichier dans DS-Studio et accepter le diff. V2 ne fournit pas ce convertisseur.
-4. Tester vos décisions localement. Exporter les tokens courants pour documenter un
-   rapprochement manuel avec Figma. L’export ne modifie pas votre fichier Figma.
+La clé reste côté serveur, n'est jamais envoyée au navigateur, et les erreurs
+Figma sont réécrites sans leur corps. Écart assumé : la clé personnelle remplace
+l'OAuth, plus lourd à déclarer ; elle est limitée à la lecture et révocable dans
+les paramètres Figma.
 
-Le JSON local constitue le mode autonome démontré, pas une synchronisation bidirectionnelle.
-Les plans, limites et droits d’édition réels devront être contrôlés pour chaque étudiant.
-Pas de polling automatique Figma prévu et aucune gratuité permanente promise.
+## Écriture — À TESTER dans Figma (plugin `figma-plugin/`)
 
-## Intégration future : contrat, pas code opérationnel
+### Fonctionnement
 
-`connectors/figma/contract.ts` sépare lecture, proposition et application validée.
-Une réalisation doit :
+1. DS-Studio expose `GET /api/plugin/sync`, accepté seulement depuis
+   `localhost:4310` / `127.0.0.1:4310` et avec le **code d'appairage**
+   (`.ds-studio/plugin.json`, renouvelable depuis l'onglet Figma). Réponse : nom
+   du projet, clé du fichier Figma lié, révision et tokens **validés**.
+2. Le plugin (`code.js` + `ui.html`) rapproche chaque token d'une variable locale
+   de même type (couleur ↔ COLOR, dimension ↔ FLOAT, police ↔ STRING) : nom
+   identique, ou suffixe unique (`color.primary.700` ↔ `primary/700`).
+3. Il affiche le plan : à mettre à jour, identiques, alias, absentes (avec les
+   variables au nom proche, pour comprendre l'échec).
+4. **Appliquer** écrit les valeurs dans le **mode par défaut** de chaque
+   collection, crée les variables absentes cochées dans une collection
+   « DS-Studio », puis **relit** chaque valeur avant d'annoncer le résultat.
+5. **Mode automatique** : tant que le plugin est ouvert, il interroge DS-Studio
+   toutes les 4 s et applique toute nouvelle révision aux variables existantes.
+   Créations : toujours sur clic.
 
-- Employer un client officiellement autorisé et l’OAuth officiel propre à l’étudiant.
-  Tester d’abord une lecture minimale d’un **fichier de test explicitement autorisé**.
-- Définir une liste autorisée de fichier et variables, avec une révision de départ.
-  Échouer si la cible, les droits ou la révision diffèrent.
-- Préparer un diff structuré, afficher l’impact et obtenir une validation humaine
-  liée au hash de la proposition, à la cible et à la révision, à usage unique.
-- Recontrôler les droits et la révision juste avant l’écriture, limiter l’opération,
-  relire les valeurs après exécution et garder une trace d’audit sans secret.
-- En cas de timeout, relire avant toute nouvelle tentative pour ne pas doubler une
-  écriture. Prévoir refus, annulation, révocation et restauration sur une copie.
+Le plugin refuse d'appliquer si la clé du fichier ouvert diffère de celle du
+projet. Ce contrôle repose sur `figma.fileKey` : s'il est indisponible, il est
+sauté.
 
-L’agent de discussion ne doit jamais disposer simultanément d’un MCP Figma libre.
-Un simple skill « demande confirmation » ne constitue pas une barrière. Conserver
-les outils distants derrière le contrôleur, ou rester non connecté si le fournisseur
-ne permet pas ce contrôle. Le contrat TypeScript ne met pas en œuvre ces garanties.
+### Limites connues (d'après le code)
 
-Le serveur officiel dispose d’outils d’écriture ; ne pas supposer qu’un accès MCP
-est en lecture seule. Les [outils officiels](https://developers.figma.com/docs/figma-mcp-server/tools-and-prompts/)
-et les [droits et limites](https://developers.figma.com/docs/figma-mcp-server/rate-limits-access/)
-seront à relire lors de la connexion, car ils peuvent évoluer.
+| Cas | Comportement actuel |
+| --- | --- |
+| Suppression d'un token | Aucune suppression de variable |
+| Variable alias (ex. couleurs d'usage) | Ignorée, signalée dans le plan seulement |
+| Autres modes (sombre…) | Non écrits |
+| Composants, organismes, styles | Aucune lecture ni écriture |
+| Résultat de la synchronisation | Non transmis à DS-Studio |
+| Plugin fermé | Rien n'est synchronisé ; il rattrape la dernière révision à la réouverture |
+
+Un composant ne change dans Figma que si ses calques sont **liés** aux variables
+modifiées. Les valeurs en dur, la structure, les propriétés et les variantes ne
+sont pas synchronisées.
+
+Tests existants : `tests/figmaPlugin.test.ts` couvre la correspondance tokens ↔
+variables et le plan, hors Figma. Aucune exécution dans Figma n'est prouvée.
+
+## Règles pour toute écriture Figma
+
+Elles valent pour le plugin et pour toute évolution :
+
+- Cible explicite : refuser si le fichier ouvert n'est pas celui du projet.
+- N'écrire que ce qui a été **validé** dans DS-Studio, par le diff.
+- Relire les valeurs après écriture avant de dire « fait » ; en cas d'échec ou
+  de délai, relire avant toute nouvelle tentative pour ne pas doubler une écriture.
+- Tester d'abord sur un **fichier de test ou une copie**, jamais sur le fichier de
+  référence.
+- Pas de suppression ni de création sans clic.
+- L'assistant de discussion ne dispose jamais d'un accès Figma libre : il ne
+  voit que ce que le serveur lui transmet.
+- Ne jamais réutiliser une session, extraire un jeton ou recopier des cookies.
+
+Le serveur MCP officiel de Figma n'admet que les clients de son catalogue
+([documentation](https://developers.figma.com/docs/figma-mcp-server/remote-server-installation/)) :
+DS-Studio n'en est pas un et ne l'utilise pas. Ses [outils](https://developers.figma.com/docs/figma-mcp-server/tools-and-prompts/)
+incluent des écritures : ne jamais supposer qu'un accès MCP est en lecture seule.
+`connectors/figma/contract.ts` décrit le contrat lecture / proposition / application
+validée ; ce n'est pas le code du plugin.

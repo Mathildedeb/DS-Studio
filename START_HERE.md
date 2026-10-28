@@ -15,13 +15,14 @@ composants du catalogue et de l’iframe, réouverture et annulation sélective.
 
 Séparez intention, code écrit et preuve exécutée. Indiquez IMPLEMENTED, TESTED,
 PARTIAL ou NOT IMPLEMENTED en précisant la plateforme et le périmètre du test.
-Ne prétendez pas que Claude, Gemini ou Figma fonctionnent en vous fondant sur
-une interface TypeScript ou un document. Aucun accès Figma n’est configuré ici.
+Ne prétendez pas que Claude ou Figma fonctionnent en vous fondant sur
+une interface TypeScript ou un document. La lecture Figma dépend de la clé
+`FIGMA_TOKEN` de l’étudiante : ne la lisez ni ne la copiez.
 
-Le chat embarqué Codex ne possède pas d’outils. N’ouvrez pas un MCP Figma ou
-un shell parallèle pour rendre une démonstration plus facile. Une future écriture
-Figma doit vérifier la cible autorisée, la révision et une validation humaine liée
-au diff, puis relire le résultat. Une simple instruction n’est pas un confinement.
+Le chat embarqué, Clodo (Claude Code), ne possède pas d’outils. N’ouvrez pas un
+MCP Figma ou un shell parallèle pour rendre une démonstration plus facile. Toute
+écriture Figma (aujourd’hui le plugin, variables seulement) doit vérifier la
+cible autorisée et une validation humaine liée au diff, puis relire le résultat. Une simple instruction n’est pas un confinement.
 L’agent utilisé dans votre terminal est distinct : vérifiez ses permissions réelles.
 
 Pour travailler : proposez un changement borné, implémentez-le avec l’accord déjà

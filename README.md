@@ -1,55 +1,70 @@
-# DS-Studio V2
+# DS-Studio
 
-Un atelier **web local** pour explorer, modifier et faire évoluer un Design System.
-Ce starter pédagogique est conçu pour devenir **votre outil**, pas pour dicter vos
-choix. Trois panneaux : assistant facultatif, catalogue de composants et viewport
-responsive interactif. Exemple fictif fourni : **Lisière**.
+Un atelier **web local** pour faire évoluer le Design System d'un projet de code,
+avec Figma et GitHub. Il tourne sur votre ordinateur, à l'adresse
+`http://127.0.0.1:4310`. Trois écrans : **Tableau de bord**, **Design System** et
+**Preview**, plus **Clodo**, un assistant branché sur Claude Code.
 
-**Le mode manuel fonctionne sans compte IA, sans Figma et sans Internet après installation.**
-Une IA cloud nécessite un compte, Internet et du quota. Ce n’est pas un modèle local.
+**Principe : rien n'est écrit sans votre validation.** Chaque changement de token
+ou de code est d'abord montré en diff ; il n'est écrit sur le disque qu'après
+**Valider**. Le mode manuel fonctionne sans IA, sans Figma et sans Internet une
+fois installé.
+
+## Le workflow
+
+| Étape | Où | Automatique ? |
+| --- | --- | --- |
+| 1. Ouvrir le projet (dossier Git + lien Figma) | DS-Studio, **Ouvrir un projet** | Une fois, puis mémorisé |
+| 2. Modifier tokens ou code, à la main ou avec Clodo | Design System, Clodo | — |
+| 3. Relire le diff | Fenêtre de diff | — |
+| 4. Valider | Fenêtre de diff | Écrit dans DS-Studio **et** dans le fichier de tokens du projet |
+| 5. Synchroniser les variables Figma | Plugin DS-Studio ouvert dans Figma | Oui, en mode automatique, pour les variables existantes |
+| 6. Vérifier dans Figma | Figma | **Manuel** |
+| 7. Publier sur GitHub | Carte « Je publie ? » de Clodo, à 10 modifications | Branche + commit + push après votre clic |
+| 8. Pull Request | GitHub | **Manuel** |
+| 9. Fusionner dans `main` | GitHub | **Manuel** |
+| 10. Revenir sur `main` à jour | Terminal | **Manuel** (`git switch main && git pull`) |
+
+Règles détaillées de publication : [workspace/PROCESS_GITHUB.md](workspace/PROCESS_GITHUB.md).
+
+## Prérequis
+
+| Outil | Pour quoi | Obligatoire ? |
+| --- | --- | --- |
+| **Node.js 22.12+** avec npm ([site officiel](https://nodejs.org/en/download)) ; 22.23.4 testé, fixé par [.nvmrc](.nvmrc) | Faire tourner DS-Studio | Oui |
+| Un navigateur récent | Utiliser l'atelier | Oui |
+| **Git**, avec un accès à GitHub depuis le terminal (par exemple `gh auth login`) | Ouvrir un projet, publier | Pour le workflow projet |
+| **Claude Code** (CLI), connecté avec votre compte (`claude` puis `/login`) | Clodo | Pour Clodo |
+| **Clé Figma personnelle** `FIGMA_TOKEN`, en lecture seule | Lire le fichier Figma du projet | Pour la lecture Figma |
+| **Figma desktop** | Plugin DS-Studio (écriture des variables) | Pour la synchronisation Figma |
+
+Ni Python, ni Docker, ni Electron.
 
 ## Installer et lancer
 
-Prérequis : **Node.js 22.12+**, npm fourni avec Node et un navigateur moderne.
-Node LTS 22.23.4 est la version testée ; [.nvmrc](.nvmrc) la fixe pour les outils compatibles.
-Téléchargez Node depuis [le site officiel](https://nodejs.org/en/download).
-Git est facultatif si vous téléchargez une archive. Aucun Python, Docker, compte
-Figma ou abonnement IA n’est nécessaire pour démarrer.
+1. Gardez **tout le dossier**, puis double-cliquez sur le lanceur :
 
-1. Clonez ou décompressez **tout le dossier**, puis double-cliquez sur le lanceur :
+   | Système | Fichier |
+   | ------- | ------- |
+   | macOS   | **DS-Studio.app**, à laisser dans le dossier du projet |
+   | Windows | **DS-Studio.vbs** |
+   | Linux   | **DS-Studio.desktop** (autoriser l'exécution si demandé) |
 
-   | Système | Fichier                                                                                             |
-   | ------- | --------------------------------------------------------------------------------------------------- |
-   | Linux   | **DS-Studio.desktop** (icône de développement ; autoriser l’exécution / faire confiance si demandé) |
-   | macOS   | **DS-Studio.app**, à laisser dans le dossier du projet                                              |
-   | Windows | **DS-Studio.vbs**, sans fenêtre de console                                                          |
+2. Si Node manque, un guide local s'ouvre. Le lanceur ne télécharge pas Node et ne
+   lance aucune commande administrateur.
+3. Au premier lancement : **Installer / compiler…**, puis confirmez. Internet est
+   nécessaire pour cette étape seulement.
+4. **Démarrer DS-Studio**, puis **Ouvrir DS-Studio**. Aux lancements suivants, un
+   double-clic ouvre directement l'atelier.
+5. **Arrêter DS-Studio** arrête le serveur ; fermer l'onglet ne l'arrête pas.
+   **Redémarrer** conserve les données.
 
-2. Si Node manque, le guide graphique local s’ouvre. Le lanceur cherche aussi les
-   installations utilisateur hors PATH, sans exécuter vos profils shell.
-   Il ne télécharge pas Node et ne lance aucune commande administrateur.
-3. Au premier lancement, cliquez **Installer / compiler…**, puis confirmez
-   explicitement le téléchargement des dépendances et la compilation. Internet
-   est nécessaire. Le journal et les erreurs restent visibles dans le panneau.
-4. Cliquez **Démarrer DS-Studio**, puis **Ouvrir DS-Studio**. Aux lancements suivants,
-   un double-clic ouvre le panneau et démarre / ouvre automatiquement l’atelier
-   s’il est prêt et arrêté. S’il est déjà actif, il retrouve son panneau sans
-   créer un second serveur.
-5. Cliquez **Arrêter DS-Studio** dans le panneau pour arrêter le vrai serveur.
-   **Redémarrer** conserve les données. **Arrêter et quitter le lanceur** ferme
-   aussi son petit service local. Fermer le navigateur n’arrête pas le serveur :
-   un nouveau double-clic retrouve les commandes.
+Utilisez l'adresse `http://127.0.0.1:4310` : `localhost` est refusé (erreur 403),
+le contrôle d'adresse est strict. [Guide hors ligne](launcher/INSTALLATION.html) ·
+[dépannage](docs/LAUNCHER.md). L'application Mac n'est pas signée ; ne désactivez
+pas les protections de votre poste pour la lancer.
 
-Le panneau utilise votre navigateur, pas Electron. Aucun runtime supplémentaire
-obligatoire. [Guide graphique hors ligne](launcher/INSTALLATION.html) et
-[dépannage détaillé](docs/LAUNCHER.md). Le contrôleur est **testé en CI sur les trois OS**. Les entrées Finder et Windows
-Script Host restent **à tester sur les postes réels** : application Mac non signée,
-Windows Script Host nécessaire au `.vbs`. Les protections de l’établissement
-peuvent bloquer ces fichiers ; ne les désactivez pas. Gardez les lanceurs dans
-le projet ; créez un raccourci système plutôt que de déplacer le fichier seul.
-
-### Le terminal reste disponible
-
-Depuis le dossier du projet :
+### Depuis le terminal
 
 ```sh
 npm ci
@@ -57,167 +72,222 @@ npm run build
 npm start
 ```
 
-Ouvrez **http://127.0.0.1:4310** (pas `localhost`, le contrôle d’hôte est strict).
-Laissez ce terminal ouvert. **Ctrl+C** arrête le serveur ; fermer l’onglet ne l’arrête pas.
-Les scripts historiques `./start.sh`, `./start.command` et `start.cmd` restent
-disponibles après installation et compilation ; ils affichent l’URL sans ouvrir
-le navigateur. `npm run launcher` ouvre le nouveau panneau. Si une archive a
-perdu les permissions exécutables : `sh start.sh` ou `sh start.command`.
+Ouvrez **http://127.0.0.1:4310** (pas `localhost`). **Ctrl+C** arrête le serveur.
+`npm run doctor` vérifie les prérequis sans lire d'identifiants.
 
-`npm run doctor` vérifie les prérequis sans ouvrir d’identifiants. Un dossier
-contenant des espaces est accepté. N’utilisez ni `sudo` ni installation de service.
+## Ouvrir un projet
 
-## Ce qui change en V2
+**Ouvrir un projet** (en-tête) demande :
 
-- **Mon PFE** : brief privé éditable et exportable en Markdown ; aucun compte nécessaire.
-- Recherche de tokens, sélecteur de couleur, valeurs numériques bornées et brouillon
-  récupérable dans le même onglet après recharge. Rien n’est appliqué avant le diff.
-- Conflits multi-onglets signalés dans le diff ; session locale renouvelée après
-  redémarrage. Les erreurs réseau ne relancent jamais une écriture ambiguë.
-- Copie de la révision précédente avant chaque validation ; restauration guidée
-  depuis le lanceur, avec archivage de l’original. Aucun reset silencieux.
-- Serveur indépendant du panneau, contrôles de fichiers renforcés, tests de crash
-  et qualification automatisée sur les trois OS. Les lanceurs natifs restent à
-  qualifier sur les postes réels (voir [rapport](DELIVERY_REPORT.md)).
+- le **dossier Git local** du projet (sélecteur de dossier sur macOS, chemin collé
+  ailleurs) ;
+- le **lien du fichier Figma** (`https://www.figma.com/design/…`).
 
-[Changelog V1/V2](docs/V2_CHANGELOG.md) · [Audit et priorités](docs/V2_AUDIT.md)
+**Vérifier**, puis **Ouvrir le projet**. Chaque projet a son propre Design System,
+son historique et sa Preview. Le premier projet ouvert reprend le DS déjà présent
+dans DS-Studio.
 
-## Votre première boucle, en deux minutes
+## Design System : tokens, diff, historique
 
-1. Dans **Design System**, choisissez `color.brand`, remplacez la valeur par `#8A3B20`.
-2. Cliquez **Proposer**. Le diff montre l’ancienne et la nouvelle valeur, sans écriture.
-3. Cliquez **Valider et enregistrer**. Boutons, réservation et navigation changent dans les deux vues.
-4. Testez la réservation, puis les viewports 320, 375, 430 et 1024 px (défilement horizontal si nécessaire).
-5. Rechargez ou redémarrez : la valeur reste. Dans **Historique**, annulez la révision,
-   examinez son diff et validez. Les changements des autres tokens sont conservés.
+- Les tokens forment une **liste libre, vide au départ**. Types : couleur
+  (`#RRGGBB`), dimension (pixels) et police.
+- **+ Token** → nom (`color.brand`), type, valeur → **Proposer l'ajout** → diff →
+  **Valider et enregistrer**. Modifier ou **Supprimer ce token** suit le même chemin.
+- **Historique** : chaque révision peut être annulée seule, elle aussi par un diff.
+- Projet ouvert : chaque token validé est aussi écrit dans le fichier de tokens du
+  projet (`design-system/tokens.json` au format W3C DTCG, sinon le premier
+  `*tokens*.json` trouvé), en gardant sa structure, ses unités et ses alias. Un
+  fichier qui n'est pas au format DTCG n'est jamais réécrit.
+- Les tokens du projet peuvent être importés dans DS-Studio, toujours par le diff.
+- **Exporter les tokens** / **Importer un JSON** : format local à clés plates
+  ([TOKENS](docs/TOKENS.md)), pas un convertisseur universel.
+- Onglets **Atomes, Molécules, Organismes, Templates** : les composants du code
+  décrits dans le registre (`app/client/dsRegistry.ts`, presque vide aujourd'hui)
+  et les composants du fichier Figma, rangés d'après leur page Figma. Les
+  composants Figma y sont **en lecture seule**.
 
-La propagation inter-vues utilise les valeurs enregistrées sur disque (diffusion
-locale et relecture, au plus environ 1,2 seconde sans diffusion). Aucun rafraîchissement
-simulé. Les propositions périmées et annulations conflictuelles sont refusées.
+## Clodo, l'assistant
+
+Clodo utilise le **Claude Code installé sur votre poste**, avec votre compte et
+votre quota (cherché dans `~/.local/bin`, puis dans le PATH).
+
+- **Un seul chat.** Pour chaque demande, Clodo choisit : des **tokens** (le DS dans
+  son ensemble) ou du **code** (un composant, un élément sélectionné, une page de
+  la Preview, un écran).
+- **Code :** il choisit jusqu'à 10 fichiers du projet, peut lire jusqu'à 6
+  composants Figma (si la clé Figma est configurée), puis propose jusqu'à 40
+  remplacements ou fichiers à créer, en un seul diff. Après validation, la
+  dernière modification de code peut être annulée.
+- **Son expertise** est décrite dans [connectors/agents/CLODO.md](connectors/agents/CLODO.md)
+  (directeur artistique, tokens, fidélité Figma, UX, accessibilité WCAG AA,
+  écrans complets). Ce fichier est relu à chaque demande : modifiez-le librement.
+- **Ses limites, volontaires :** aucun outil, aucun MCP, aucun accès disque ni
+  terminal. Il est lancé dans un dossier temporaire vide : il ne lit donc **aucun
+  CLAUDE.md** de vos projets. Il ne voit que ce que DS-Studio lui envoie et ne
+  peut rien écrire lui-même.
+- Périmètre du code : dans un projet, ses fichiers source seulement (jamais
+  `node_modules`, la configuration, `package.json`, les fichiers cachés ni `.env`).
+  Sans projet ouvert, l'interface de DS-Studio (`app/client/`) et le workspace.
+- Le chat n'est pas conservé après rechargement de la page.
+
+## Preview
+
+La Preview installe les dépendances du projet et lance son serveur de
+développement **au clic**, puis affiche ses pages (routes) dans plusieurs largeurs.
+Sélectionner une page l'envoie à Clodo comme contexte (« ici », « cette page »).
+
+## Figma
+
+### Lecture (API Figma, clé personnelle)
+
+Ajoutez dans un fichier `.env` à la racine de DS-Studio :
+
+```sh
+FIGMA_TOKEN=votre-clé
+```
+
+Créez la clé dans les paramètres de votre compte Figma, avec la seule portée
+**File content : Read-only**. Elle reste côté serveur, n'est jamais envoyée au
+navigateur et n'est pas versionnée. DS-Studio lit alors le fichier du projet :
+pages, composants, structure d'un composant, aperçus, et les variables (API
+réservée aux offres Enterprise ; à défaut, les styles couleur et texte).
+
+### Écriture (plugin DS-Studio)
+
+Le plugin, dans [figma-plugin/](figma-plugin/), applique les **tokens validés
+dans DS-Studio** aux **variables** du fichier Figma.
+
+1. Figma desktop → **Plugins → Développement → Importer un plugin depuis un
+   manifeste…** → `figma-plugin/manifest.json`.
+2. Ouvrez le fichier Figma **lié au projet**, puis lancez le plugin.
+3. Collez le **code d'appairage** affiché dans DS-Studio (Design System → onglet
+   Figma → « Plugin Figma DS-Studio »).
+   **Renouveler** le code coupe l'accès de l'ancien.
+4. Cochez **Mode automatique** : tant que le plugin reste ouvert, il relit
+   DS-Studio toutes les 4 s et applique chaque nouvelle révision validée.
+
+Ce que fait le plugin aujourd'hui, d'après son code :
+
+- **met à jour** les variables existantes dont le nom correspond au token
+  (`color.primary.700` ↔ `primary/700`), dans le **mode par défaut** seulement,
+  puis relit chaque valeur écrite ;
+- **crée** les variables manquantes, dans une collection « DS-Studio », après un
+  clic seulement ;
+- **ne supprime pas** de variable ;
+- **n'écrit pas** une variable qui est un alias d'une autre ;
+- **ne touche pas** aux composants, organismes ou styles. Un composant ne change
+  dans Figma que si ses calques sont liés aux variables modifiées ;
+- **ne renvoie pas** son résultat à DS-Studio : vérifiez le résultat dans Figma.
+
+Le plugin ne communique qu'avec DS-Studio sur cet ordinateur (`localhost:4310`).
+Contrat et règles de sécurité : [docs/FIGMA.md](docs/FIGMA.md).
+
+## GitHub
+
+Avec un projet ouvert, DS-Studio compte les modifications validées (tokens,
+annulations, code). **Rien ne part avant 10.** À la dixième, Clodo affiche
+« Je publie sur Git ? ». Après votre clic :
+
+1. création d'une **nouvelle branche** `design/AAAA-MM-JJ-message`, jamais `main` ;
+2. `npm run tokens` si le projet définit ce script ;
+3. commit de **tous** les fichiers modifiés du projet, puis push vers `origin`.
+
+La publication est refusée si un fichier sensible a changé (`.env`, clés,
+`node_modules/`, `.ds-studio/`). Sans dépôt distant, le commit reste local. Un push
+refusé garde le commit et permet de réessayer. L'authentification est celle de Git
+sur votre poste : DS-Studio ne lit aucun identifiant.
+
+Restent manuels : ouvrir la Pull Request, la fusionner et revenir sur `main`. Voir
+[workspace/PROCESS_GITHUB.md](workspace/PROCESS_GITHUB.md).
 
 ## Où sont mes données ?
 
-| Emplacement                           | Responsabilité                                             |
-| ------------------------------------- | ---------------------------------------------------------- |
-| `workspace/PFE.md`                    | Votre sujet, publics et objectifs                          |
-| `workspace/DESIGN_RULES.md`           | Vos règles de conception et contraintes                    |
-| `workspace/DECISIONS.md`              | Vos arbitrages et preuves                                  |
-| `workspace/design-system.tokens.json` | Seed versionné, utilisé uniquement à la création d’un état |
-| `.ds-studio/project.json`             | Brief PFE privé du panneau, ignoré par Git                 |
-| `.ds-studio/state.previous.json`      | Copie de la révision précédente des tokens et du journal   |
-| `.ds-studio/state.json`               | Tokens courants et historique personnel, ignorés par Git   |
-| `workspace/private/`                  | Vos données privées ignorées, à sauvegarder hors Git       |
+| Emplacement | Contenu |
+| --- | --- |
+| `.ds-studio/state.json` | DS hors projet : tokens et historique |
+| `.ds-studio/projects/<identifiant>/` | DS, historique et Preview de chaque projet ouvert |
+| `.ds-studio/state.previous.json` | Copie de la révision précédente |
+| `.ds-studio/connection.json` | Projet ouvert et lien Figma |
+| `.ds-studio/project.json` | Brief PFE privé |
+| `.ds-studio/plugin.json` | Code d'appairage du plugin Figma |
+| `.ds-studio/publish-counter.json` | Compteur de modifications avant publication |
+| `.env` | Clé Figma (`FIGMA_TOKEN`) |
+| `workspace/PFE.md`, `DESIGN_RULES.md`, `DECISIONS.md` | Votre sujet, vos règles, vos décisions |
 
-Après un incident : arrêtez l’atelier, ouvrez **Journal et réparation** dans le
-lanceur puis **Restaurer la copie précédente…**. Une confirmation indique l’effet ;
-l’original est conservé sous `state-preserved-….json`. Le brief ne change pas.
-Après restauration, rechargez les onglets de l’atelier. Sans copie valide, aucune
-restauration automatique n’est tentée. Sauvegardez aussi `.ds-studio/` hors du projet.
+`.ds-studio/` et `.env` sont ignorés par Git : sauvegardez-les vous-même, serveur
+arrêté. Ne modifiez pas `state.json` à la main. Après un incident : lanceur →
+**Journal et réparation** → **Restaurer la copie précédente…** ; l'original est
+conservé. Aucune remise à zéro silencieuse.
 
-Ne modifiez pas le journal `state.json` à la main. **Exporter les tokens** télécharge
-le JSON courant ; **Importer un JSON** prépare un diff qui demande validation.
-Le format est un sous-ensemble local à clés plates et valeurs explicites, **pas un
-importeur universel DTCG ni un export Figma automatique**. Voir [TOKENS](docs/TOKENS.md).
-Pour sauvegarder tout l’historique, arrêtez le serveur et copiez `.ds-studio/` dans
-un emplacement privé. Exporter les tokens seuls ne sauvegarde pas l’historique.
+## État réel
 
-Pour versionner une palette choisie, exportez-la, vérifiez-la puis remplacez le seed
-versionné. Cela ne remplace jamais un état courant déjà créé. Ne supprimez pas votre
-état pour essayer une autre palette : importez-la ou utilisez un autre dossier de données.
+| Fonction | État | Portée de la preuve |
+| --- | --- | --- |
+| Tokens : ajout, modification, suppression, diff, historique, annulation | **VÉRIFIÉ** | Tests unitaires et navigateur, macOS |
+| Import / export JSON local | **VÉRIFIÉ** | Tests navigateur |
+| Ouvrir un projet, un DS par projet | **VÉRIFIÉ** | Tests navigateur et API |
+| Tokens validés écrits dans le fichier DTCG du projet | **VÉRIFIÉ** | Tests unitaires |
+| Clodo : choix tokens ou code, diff, annulation du code | **VÉRIFIÉ** avec un faux Claude | Tests unitaires ; une vraie question de tokens a déjà été posée au vrai CLI (2.1.311, macOS) |
+| Clodo : écran complet, expertise `CLODO.md` | **À TESTER** | Jamais lancé avec le vrai Claude |
+| Preview : serveur de dev du projet | **PARTIEL** | Tests unitaires macOS et Linux ; échoue en CI Windows |
+| Lecture Figma (clé personnelle) | **PARTIEL** | Testée avec un faux Figma |
+| Plugin Figma : variables | **À TESTER** | Seule la correspondance tokens ↔ variables est testée, hors Figma |
+| Synchronisation des composants et organismes vers Figma | **NON DISPONIBLE** | — |
+| Publication GitHub par lots de 10 | **VÉRIFIÉ** | Tests avec un dépôt distant local |
+| Pull Request, fusion, retour sur `main` | **NON DISPONIBLE** | Manuel |
+| Lanceur : démarrage, arrêt, reprise après crash | **PARTIEL** | 8 tests sur 22 passent ; les 12 autres viennent d'un test devenu obsolète avec le DS vide (correction en cours) |
+| Intégration continue GitHub | **ÉCHOUE** | Tests du lanceur (macOS, Ubuntu) et Preview (Windows) |
 
-## Travailler avec votre agent préféré
+Rapport de la V2 initiale : [DELIVERY_REPORT.md](DELIVERY_REPORT.md).
 
-Dans votre CLI (Codex, Claude Code, Gemini CLI, etc.), depuis le dossier du projet :
+## Travailler avec un agent dans le terminal
+
+Le chat Clodo et un agent lancé dans votre terminal (Claude Code, Codex…) sont
+**deux choses différentes** : l'agent du terminal a ses propres permissions, que
+DS-Studio ne contrôle pas. Depuis le dossier de DS-Studio :
 
 > Lis START_HERE.md et les instructions de ton agent. Examine le dépôt et mon
-> workspace. Aide-moi à définir puis réaliser une amélioration personnelle bornée.
-> Préserve mes données et vérifie le résultat. Distingue ce qui est testé de ce qui est proposé.
+> workspace. Aide-moi à définir puis réaliser une amélioration bornée. Préserve
+> mes données et vérifie le résultat. Distingue ce qui est testé de ce qui est proposé.
 
-`AGENTS.md`, `CLAUDE.md` et `GEMINI.md` partagent le même point d’entrée.
-Le développement via une CLI externe et le chat embarqué sont **deux choses différentes**.
-L’agent externe a ses propres permissions ; DS-Studio ne les contrôle pas.
+`AGENTS.md` et `CLAUDE.md` partagent le même point d'entrée. Les skills sont dans
+`.agents/skills/` (`token-change`, `component-audit`, `safe-recovery`) ; un agent
+peut lire un `SKILL.md` explicitement.
 
-Codex découvre les skills dans `.agents/skills/` : demandez `$token-change` ou
-`$component-audit`. Un autre agent peut lire le `SKILL.md` explicitement. Pour
-créer un skill : ajoutez `.agents/skills/nom-du-skill/SKILL.md`, avec un frontmatter
-`name` et `description`, puis une procédure courte, ses contraintes et ses preuves.
-Inspirez-vous des deux skills fournis, sans copier vos identifiants ou vos conversations.
-
-## État réel de V2
-
-| Fonction                                                            | État et portée                                                                                     |
-| ------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
-| Édition manuelle, diff, commit, persistance et annulation sélective | **TESTED**, Linux, API + navigateur + redémarrage processus                                        |
-| Catalogue et viewport responsive, formulaire et navigation          | **TESTED**, Chromium sous Linux                                                                    |
-| Import/export JSON local                                            | **TESTED**, API + navigateur                                                                       |
-| Chat Codex, JSON proposé avant acceptation                          | **TESTED**, CLI 0.164.0, compte enseignant disponible pendant la qualification ; quota non garanti |
-| Claude Code dans l’application                                      | **TESTED** sous macOS (CLI 2.1.311), sans outils, propositions de tokens seulement                 |
-| Gemini dans l’application                                           | **NOT IMPLEMENTED**, adaptateur indisponible et contrat documenté                                  |
-| Figma MCP et synchronisation                                        | **NOT IMPLEMENTED**, statut non connecté, contrat et procédure future documentés                   |
-| Skills et harness personnalisable                                   | **IMPLEMENTED**, structure et liens vérifiés ; pas une validation des choix d’un étudiant          |
-| Qualification automatisée Windows / macOS                           | **TESTED en CI** pour API, navigateur et contrôleur ; **PARTIAL** pour Finder/WSH natifs           |
-| Application desktop installable                                     | **NOT IMPLEMENTED**, application web locale uniquement                                             |
-
-Preuves précises et réserves : [DELIVERY_REPORT.md](DELIVERY_REPORT.md).
-
-### Codex embarqué (facultatif)
-
-Le mode est restreint à **Codex CLI 0.164.0** : une autre version est refusée jusqu’à
-qualification. Installez cette version depuis les moyens officiels de votre CLI,
-puis authentifiez-vous vous-même avec `codex login` et contrôlez `codex login status`.
-Aucun fichier d’authentification n’est ouvert ou copié par l’application. Un compte
-compatible, une connexion et du quota sont requis. Aucun compte enseignant n’est fourni.
-
-Choisir Codex puis **Envoyer** transmet les tokens, `PFE.md`, `DESIGN_RULES.md`, la demande
-et au plus dix messages précédents. Ne mettez pas de données sensibles dans ce contexte.
-Le brief privé est également transmis. Le chat ne persiste pas après recharge. Codex ne peut pas exécuter vos commandes dans
-ce profil : le contrôleur valide les propositions de tokens, l’utilisateur accepte le diff.
-Les MCP, plugins et outils shell sont désactivés, et le contexte est transmis en JSON
-depuis un dossier temporaire vide. L’authentification reste gérée par le CLI officiel.
-Détails et limites : [SECURITY](docs/SECURITY.md), [AGENTS](docs/AGENT_ADAPTERS.md).
-
-### Figma
-
-Figma reste la source de vérité du DS réel de votre PFE. Lisière est un exemple local,
-pas une copie de votre fichier. Aucun fichier personnel autorisé n’a été fourni ;
-aucun accès Figma n’a été tenté. Les clients tiers MCP doivent être autorisés par Figma.
-Pas de contournement ni réutilisation de session : [contrat d’intégration](docs/FIGMA.md).
+L'adaptateur Codex (`connectors/agents/codex.ts`) existe toujours, mais le chat
+de l'atelier n'utilise que Claude Code. Détails : [docs/AGENT_ADAPTERS.md](docs/AGENT_ADAPTERS.md).
 
 ## Vérifier et développer
 
 ```sh
-npm run doctor
-npm run check
-npm test
+npm run check            # typage
+npm test                 # tests unitaires
 npm run build
 npx playwright install chromium
-npm run test:e2e
+npm run test:e2e         # parcours dans le navigateur
+npm run test:launcher    # lanceur, vrais processus
 npm run qualify
-npm run scan
+npm run scan             # aucun secret dans les fichiers suivis par Git
 ```
 
-`npm run dev` démarre le backend avec Vite sur la même adresse. `npm start` sert
-`dist/` : reconstruisez avec `npm run build` après un changement frontend.
-Les tests utilisent des dossiers temporaires et ne touchent pas vos données.
-`npm run test:live` et `npm run qualify:live` sont **facultatifs et connectés à Codex** ;
-ils peuvent consommer du quota, contrairement aux autres commandes.
+`npm run dev` lance le serveur avec Vite. `npm start` sert `dist/` : reconstruisez
+après un changement du frontend. Les tests utilisent des dossiers temporaires et
+ne touchent pas vos données ; aucun n'appelle Claude ni Figma.
+`npm run test:live` et `npm run qualify:live` appellent Codex et peuvent
+consommer du quota.
 
 ## Créer votre dépôt privé
 
-1. Téléchargez le starter sans reprendre de compte partagé. Personnalisez le workspace.
-2. Créez vous-même un dépôt **privé** sur GitHub (interface web ou GitHub Desktop).
-3. Avec GitHub Desktop, ajoutez ce dossier puis publiez en conservant **Keep this code private**.
-   Avec Git, utilisez `git status`, `git add`, `git diff --cached` et `git commit` avant
-   d’ajouter votre propre remote et de pousser. Ne réutilisez aucun remote enseignant.
-4. Vérifiez les fichiers indexés et lancez `npm run scan` avant le premier envoi.
-   Pour un nouveau dépôt non indexé : `git init`, puis `git add .` avant le scan.
-5. Gardez `.ds-studio/`, `.env`, identifiants et documents sensibles hors Git. Un dépôt
-   privé n’est pas un coffre-fort. `.gitignore` ne retire pas un secret déjà commité.
+1. Créez un dépôt **privé** sur GitHub et ajoutez-le comme `origin`.
+2. Vérifiez les fichiers suivis et lancez `npm run scan` avant le premier envoi.
+3. Gardez `.ds-studio/`, `.env` et tout identifiant hors Git. `.gitignore` ne
+   retire pas un secret déjà commité.
 
-Le starter est sous [licence MIT](LICENSE) pour le code original ; les dépendances
-conservent leurs licences. Aucune copie du code ou des mémoires personnelles de MARC.
+Code original sous [licence MIT](LICENSE) ; les dépendances gardent leurs licences.
 
 ## Pour aller plus loin
 
+[Process GitHub](workspace/PROCESS_GITHUB.md) · [Figma](docs/FIGMA.md) ·
+[Architecture](docs/ARCHITECTURE.md) · [Sécurité](docs/SECURITY.md) ·
 [Guide étudiant](docs/STUDENT_GUIDE.md) · [Guide enseignant](docs/TEACHER_GUIDE.md) ·
-[Architecture](docs/ARCHITECTURE.md) · [Backlog ouvert](docs/ROADMAP.md)
+[Backlog](docs/ROADMAP.md)

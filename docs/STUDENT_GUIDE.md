@@ -32,7 +32,7 @@ choix par une preuve. Créez votre dépôt privé sans y inclure de données sen
 ## Travailler avec son assistant
 
 Ouvrez votre CLI à la racine et demandez-lui de lire START_HERE.md. Qu’il s’agisse
-Claude Code, Codex ou Gemini, l’agent utilisé pour développer n’est pas forcément
+Claude Code ou Codex, l’agent utilisé pour développer n’est pas forcément
 celui du chat embarqué. Vous pouvez développer sans utiliser ce chat.
 
 Demande utile :
