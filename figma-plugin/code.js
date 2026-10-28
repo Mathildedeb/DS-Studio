@@ -87,11 +87,17 @@ function keyed(variables) {
   return { byKey, skipped };
 }
 // Valeur réelle d'une variable, alias suivis (cinq niveaux au plus).
-function resolve(v, byId) {
+// Variable de base au bout d'une chaîne d'alias (cinq niveaux au plus).
+function baseOf(v, byId) {
   let current = v;
   for (let i = 0; i < 5 && current && isAlias(current.value); i++)
     current = byId.get(current.value.id);
-  return current && !isAlias(current.value) ? current.value : undefined;
+  return current && !isAlias(current.value) ? current : undefined;
+}
+// Valeur réelle d'une variable, alias suivis.
+function resolve(v, byId) {
+  const base = baseOf(v, byId);
+  return base && base.value;
 }
 // Valeur Figma → valeur de token, ou raison du refus.
 function tokenValue(type, value) {
@@ -129,37 +135,78 @@ function collect(variables) {
     if (r.token) tokens[key] = r.token;
     else skipped.push({ name: v.collection + '/' + v.name, reason: r.reason });
   }
+  // Liens d'usage : chaque alias vers la clé de sa variable de base, pour que
+  // DS-Studio modifie la base et tout son groupe ensemble.
+  const keyOf = new Map([...byKey].map(([key, v]) => [v.id, key]));
+  const aliases = {};
+  for (const [key, v] of byKey) {
+    if (!isAlias(v.value) || !tokens[key]) continue;
+    const base = baseOf(v, byId);
+    const baseKey = base && keyOf.get(base.id);
+    if (baseKey && tokens[baseKey]) aliases[key] = baseKey;
+  }
   const legacy = variables.filter((v) => v.collection === LEGACY).length;
   if (legacy)
     skipped.push({
       name: 'Collection « ' + LEGACY + ' »',
       reason: legacy + ' variable(s) créée(s) par une ancienne version, ignorées',
     });
-  return { tokens, skipped };
+  return { tokens, skipped, aliases };
 }
 const same = (type, figmaValue, tokenValue) =>
   type === 'color'
     ? toHex(figmaValue) === tokenValue
     : figmaValue === tokenValue;
+// Où créer la variable d'un nouveau token : dans la collection de ses
+// voisines de même groupe, nommée comme elles (« color.primary.purple.850 »
+// à côté de « Master/color/Primary/purple/800 » → « color/Primary/purple/850 »
+// dans Master). Sans voisine, pas de collection évidente : rien n'est créé.
+function placeFor(key, byKey) {
+  const parent = key.slice(0, key.lastIndexOf('.'));
+  const last = key.slice(key.lastIndexOf('.') + 1);
+  for (const [k, v] of byKey) {
+    if (k.slice(0, k.lastIndexOf('.')) !== parent) continue;
+    const parts = v.name.split('/');
+    if (parts.length < 2) continue;
+    const name = parts.slice(0, -1).concat(last).join('/');
+    if (tokenKey(name, v.collection) === key)
+      return { collection: v.collection, name };
+  }
+  return null;
+}
 // Synchroniser : ce qu'il faut changer dans Figma pour suivre les tokens.
-// Un alias est rebranché sur la variable de base qui a la nouvelle valeur ;
-// s'il n'y en a pas exactement une, il est bloqué avec sa raison.
+// Un alias est rebranché sur la variable de base qui a la nouvelle valeur
+// (existante ou créée dans ce même passage) ; s'il n'y en a pas exactement
+// une, il est bloqué avec sa raison.
 function plan(tokens, variables) {
   const byId = new Map(variables.map((v) => [v.id, v]));
   const { byKey } = keyed(variables);
   const result = {
     updates: [],
     retargets: [],
+    creates: [],
     same: 0,
     missing: [],
     blocked: [],
   };
   for (const [key, token] of Object.entries(tokens)) {
+    if (byKey.has(key)) continue;
+    const place = placeFor(key, byKey);
+    if (place)
+      result.creates.push({ key, type: token.$type, value: token.$value, ...place });
+    else result.missing.push({ key, type: token.$type, value: token.$value });
+  }
+  // Valeurs que les variables de base vont recevoir dans ce passage : un
+  // alias vers l'une d'elles suit sans être touché.
+  const incoming = new Map();
+  for (const [key, token] of Object.entries(tokens)) {
     const v = byKey.get(key);
-    if (!v) {
-      result.missing.push({ key, type: token.$type, value: token.$value });
-      continue;
-    }
+    if (v && !isAlias(v.value) && v.resolvedType === kinds[token.$type])
+      incoming.set(v.id, token.$value);
+  }
+  for (const [key, token] of Object.entries(tokens)) {
+    const v = byKey.get(key);
+    if (!v) continue;
     const name = v.collection + '/' + v.name;
     if (v.resolvedType !== kinds[token.$type]) {
       result.blocked.push({ key, name, reason: 'type différent dans Figma' });
@@ -170,7 +217,11 @@ function plan(tokens, variables) {
       result.blocked.push({ key, name, reason: 'alias vers une variable introuvable' });
       continue;
     }
-    if (same(token.$type, current, token.$value)) {
+    const root = baseOf(v, byId);
+    if (
+      same(token.$type, current, token.$value) ||
+      (isAlias(v.value) && root && incoming.get(root.id) === token.$value)
+    ) {
       result.same++;
       continue;
     }
@@ -195,22 +246,20 @@ function plan(tokens, variables) {
       (x) => target && x.collection === target.collection,
     );
     const pick = preferred.length === 1 ? preferred[0] : candidates.length === 1 ? candidates[0] : null;
+    // Sinon, une variable créée dans ce passage avec cette valeur.
+    const created = candidates.length
+      ? []
+      : result.creates.filter((c) => c.type === token.$type && c.value === token.$value);
+    const base = { key, id: v.id, name, type: token.$type, before, after: token.$value };
     if (pick)
-      result.retargets.push({
-        key,
-        id: v.id,
-        name,
-        type: token.$type,
-        before,
-        after: token.$value,
-        targetId: pick.id,
-        targetName: pick.collection + '/' + pick.name,
-      });
+      result.retargets.push({ ...base, targetId: pick.id, targetName: pick.collection + '/' + pick.name });
+    else if (created.length === 1)
+      result.retargets.push({ ...base, createKey: created[0].key, targetName: created[0].collection + '/' + created[0].name });
     else
       result.blocked.push({
         key,
         name,
-        reason: candidates.length
+        reason: candidates.length || created.length
           ? 'alias : plusieurs variables valent ' + token.$value + ', à choisir dans Figma'
           : 'alias : aucune variable de base ne vaut ' + token.$value,
       });
@@ -222,7 +271,7 @@ function figmaValue(type, value) {
 }
 
 if (typeof module !== 'undefined')
-  module.exports = { segment, tokenKey, keyed, collect, plan, toHex, fromHex };
+  module.exports = { segment, tokenKey, keyed, collect, placeFor, plan, toHex, fromHex };
 
 if (typeof figma !== 'undefined') {
   figma.showUI(__html__, { width: 400, height: 600, themeColors: true });
@@ -255,10 +304,26 @@ if (typeof figma !== 'undefined') {
       : null;
   };
 
-  // Applique valeurs et alias, crée au besoin, puis relit avant de dire « fait ».
-  const applyChanges = async (updates, retargets, create) => {
+  // Crée les variables nouvelles (dans la collection de leurs voisines),
+  // applique valeurs et alias, puis relit tout avant de dire « fait ».
+  const applyChanges = async (updates, retargets, creates) => {
     const failed = [];
     const written = [];
+    const made = new Map();
+    if (creates.length) {
+      const collections = await figma.variables.getLocalVariableCollectionsAsync();
+      for (const c of creates) {
+        const col = collections.find((x) => x.name === c.collection);
+        if (!col) {
+          failed.push({ key: c.key, reason: 'collection ' + c.collection + ' introuvable' });
+          continue;
+        }
+        const v = figma.variables.createVariable(c.name, col, kinds[c.type]);
+        v.setValueForMode(col.defaultModeId, figmaValue(c.type, c.value));
+        made.set(c.key, v);
+        written.push({ key: c.key, id: v.id, type: c.type, after: c.value });
+      }
+    }
     for (const u of updates.concat(retargets)) {
       const v = await figma.variables.getVariableByIdAsync(u.id);
       const col =
@@ -268,8 +333,10 @@ if (typeof figma !== 'undefined') {
         ));
       const target = u.targetId
         ? await figma.variables.getVariableByIdAsync(u.targetId)
-        : null;
-      if (!v || !col || (u.targetId && !target)) {
+        : u.createKey
+          ? made.get(u.createKey)
+          : null;
+      if (!v || !col || ((u.targetId || u.createKey) && !target)) {
         failed.push({ key: u.key, reason: 'variable introuvable dans Figma' });
         continue;
       }
@@ -281,34 +348,20 @@ if (typeof figma !== 'undefined') {
       );
       written.push(u);
     }
-    let created = 0;
-    if (create.length) {
-      const collections =
-        await figma.variables.getLocalVariableCollectionsAsync();
-      const col =
-        collections.find((c) => c.name === LEGACY) ||
-        figma.variables.createVariableCollection(LEGACY);
-      for (const m of create) {
-        const v = figma.variables.createVariable(
-          m.key.split('.').join('/'),
-          col,
-          kinds[m.type],
-        );
-        v.setValueForMode(col.defaultModeId, figmaValue(m.type, m.value));
-        created++;
-      }
-    }
     // Relecture : chaque valeur écrite est relue, alias suivis.
     const after = await readVariables();
     const byId = new Map(after.map((x) => [x.id, x]));
+    let wrong = 0;
     for (const u of written) {
       const v = byId.get(u.id);
       const value = v && resolve(v, byId);
-      if (value === undefined || !same(u.type, value, u.after))
+      if (value === undefined || !same(u.type, value, u.after)) {
         failed.push({ key: u.key, reason: 'valeur relue différente' });
+        wrong++;
+      }
     }
-    const ok = written.length - failed.filter((f) => f.reason === 'valeur relue différente').length;
-    return { updated: ok, created, failed };
+    const created = [...made.keys()].length;
+    return { updated: written.length - created - wrong, created, failed };
   };
 
   figma.ui.onmessage = async (msg) => {
@@ -340,16 +393,17 @@ if (typeof figma !== 'undefined') {
         const warning = checkFile(msg.fileKey);
         const variables = await readVariables();
         const p = plan(msg.tokens, variables);
-        // Mode automatique : les valeurs validées dans DS-Studio partent tout
-        // de suite ; jamais de création ni de suppression sans clic.
+        // Mode automatique : les tokens validés dans DS-Studio partent tout
+        // de suite, nouvelles variables comprises (chez leurs voisines) ;
+        // jamais de suppression.
         if (msg.auto) {
           const report =
-            p.updates.length || p.retargets.length
-              ? await applyChanges(p.updates, p.retargets, [])
+            p.updates.length || p.retargets.length || p.creates.length
+              ? await applyChanges(p.updates, p.retargets, p.creates)
               : { updated: 0, created: 0, failed: [] };
           report.failed = report.failed.concat(
             p.blocked.map((b) => ({ key: b.key, reason: b.reason })),
-            p.missing.map((m) => ({ key: m.key, reason: 'aucune variable de ce nom dans Figma' })),
+            p.missing.map((m) => ({ key: m.key, reason: 'aucune variable de ce nom dans Figma, ni de collection évidente pour la créer' })),
           );
           return figma.ui.postMessage(
             Object.assign({ type: 'auto', revision: msg.revision, same: p.same, warning }, report),
@@ -367,7 +421,7 @@ if (typeof figma !== 'undefined') {
         const report = await applyChanges(
           msg.updates,
           msg.retargets || [],
-          msg.create || [],
+          msg.creates || [],
         );
         figma.ui.postMessage(Object.assign({ type: 'report', revision: msg.revision }, report));
       }

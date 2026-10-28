@@ -23,6 +23,7 @@ export interface CircuitData {
 }
 export type StepState = 'ok' | 'pending' | 'warn' | 'todo';
 export interface CircuitStep {
+  id: 'ds' | 'code' | 'interface' | 'figma' | 'github';
   label: string;
   state: StepState;
   detail: string;
@@ -32,7 +33,7 @@ export interface CircuitStep {
 // Solution pour une variable que le plugin n'a pas pu mettre à jour.
 function figmaFix(reason: string) {
   if (reason.startsWith('aucune variable de ce nom'))
-    return 'Dans le plugin, clique « Récupérer depuis Figma » pour aligner les noms, ou crée la variable depuis « Voir les changements ».';
+    return 'Aucune variable voisine ne dit où la créer : crée-la dans Figma (bonne collection, même nom), puis clique « Récupérer depuis Figma » dans le plugin.';
   if (reason.startsWith('alias'))
     return 'Dans Figma, rebranche cet alias sur la bonne variable de base, ou choisis dans DS-Studio une couleur qui existe déjà dans Master.';
   if (reason.startsWith('variable transparente'))
@@ -44,29 +45,31 @@ function figmaFix(reason: string) {
 
 export function circuitSteps(data: CircuitData, revision: number): CircuitStep[] {
   const steps: CircuitStep[] = [
-    { label: 'DS Studio', state: 'ok', detail: `révision ${revision} enregistrée` },
+    { id: 'ds', label: 'Enregistrer la modification', state: 'ok', detail: `révision ${revision}` },
   ];
   const step = data.step?.revision === revision ? data.step : null;
   if (data.git) {
     if (!step)
-      steps.push({ label: 'Code', state: 'pending', detail: 'écriture en cours…' });
+      steps.push({ id: 'code', label: 'Mettre à jour le code du projet', state: 'pending', detail: '' });
     else if (step.code.state === 'ok')
-      steps.push({ label: 'Code', state: 'ok', detail: `${step.code.detail ?? 'tokens.json'} mis à jour` });
+      steps.push({ id: 'code', label: 'Mettre à jour le code du projet', state: 'ok', detail: step.code.detail ?? 'tokens.json' });
     else
       steps.push({
-        label: 'Code',
+        id: 'code',
+        label: 'Mettre à jour le code du projet',
         state: 'warn',
         detail: step.code.detail ?? 'fichier de tokens non écrit',
         fix: 'Vérifie que le fichier de tokens du projet est bien au format DTCG ($type / $value), puis valide à nouveau.',
       });
     if (step?.code.state === 'ok') {
       if (step.interface.state === 'ok')
-        steps.push({ label: 'Interface', state: 'ok', detail: 'npm run tokens : fichiers générés à jour' });
+        steps.push({ id: 'interface', label: 'Régénérer l’interface', state: 'ok', detail: 'npm run tokens' });
       else if (step.interface.state === 'absent')
-        steps.push({ label: 'Interface', state: 'ok', detail: 'pas de script « tokens » dans le projet : rien à régénérer' });
+        steps.push({ id: 'interface', label: 'Régénérer l’interface', state: 'ok', detail: 'rien à régénérer (pas de script « tokens »)' });
       else
         steps.push({
-          label: 'Interface',
+          id: 'interface',
+          label: 'Régénérer l’interface',
           state: 'warn',
           detail: step.interface.detail ?? 'npm run tokens a échoué',
           fix: 'Lance « npm run tokens » dans le dossier du projet pour voir l’erreur complète, ou demande à Clodo.',
@@ -76,12 +79,13 @@ export function circuitSteps(data: CircuitData, revision: number): CircuitStep[]
   const report = data.figma.report;
   let figmaBehind = false;
   if (!data.figmaLinked)
-    steps.push({ label: 'Figma', state: 'todo', detail: 'projet sans fichier Figma relié' });
+    steps.push({ id: 'figma', label: 'Mettre à jour Figma', state: 'todo', detail: 'projet sans fichier Figma relié' });
   else if (report && report.revision >= revision) {
     const warning = report.warning ? ` · ${report.warning}` : '';
     if (report.failed.length)
       steps.push({
-        label: 'Figma',
+        id: 'figma',
+        label: 'Mettre à jour Figma',
         state: 'warn',
         detail: `${report.updated} variable(s) mise(s) à jour, ${report.failed.length} non appliquée(s) : ${report.failed
           .slice(0, 3)
@@ -91,17 +95,19 @@ export function circuitSteps(data: CircuitData, revision: number): CircuitStep[]
       });
     else
       steps.push({
-        label: 'Figma',
+        id: 'figma',
+        label: 'Mettre à jour Figma',
         state: 'ok',
-        detail: `à jour : ${report.updated} variable(s) mise(s) à jour et relue(s)${warning}`,
+        detail: `${report.updated} variable(s) mise(s) à jour et relue(s)${warning}`,
       });
   } else {
     figmaBehind = true;
     steps.push(
       data.figma.pluginOpen
-        ? { label: 'Figma', state: 'pending', detail: 'envoi au plugin…' }
+        ? { id: 'figma', label: 'Mettre à jour Figma', state: 'pending', detail: 'le plugin applique…' }
         : {
-            label: 'Figma',
+            id: 'figma',
+            label: 'Mettre à jour Figma',
             state: 'warn',
             detail: 'pas à jour : le plugin DS-Studio n’est pas ouvert dans Figma',
             fix: `Ouvre le plugin DS-Studio dans ton fichier Figma, synchronisation automatique cochée : il rattrapera la révision ${revision}.`,
@@ -110,7 +116,8 @@ export function circuitSteps(data: CircuitData, revision: number): CircuitStep[]
   }
   if (data.git)
     steps.push({
-      label: 'GitHub',
+      id: 'github',
+      label: 'Publier sur GitHub',
       state: 'todo',
       detail:
         data.git.pending >= data.git.batch

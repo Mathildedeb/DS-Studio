@@ -39,7 +39,6 @@
 const $ = (id) => document.getElementById(id);
 const out = $('out');
 let current;
-let lastRevision = null;
 let timer = null;
 const settings = () => ({
   server: $('server').value.trim().replace(/\/$/, ''),
@@ -47,16 +46,17 @@ const settings = () => ({
 });
 const save = () =>
   parent.postMessage({ pluginMessage: Object.assign({ type: 'save-settings', auto: $('auto').checked }, settings()) }, '*');
-// Mode automatique : DS-Studio est relu toutes les 4 s ; une nouvelle
-// révision part directement vers les variables du fichier.
+// Mode automatique : DS-Studio est relu toutes les 4 s ; les tokens validés
+// partent vers les variables du fichier, et le résultat revient à DS-Studio.
 const tick = async () => {
   const { server, code } = settings();
   try {
     const r = await fetch(server + '/api/plugin/sync', { headers: { 'X-DS-Plugin': code } });
     const body = await r.json();
     if (!r.ok) throw new Error(body.error || 'DS-Studio a refusé la demande.');
-    if (body.revision !== lastRevision)
-      parent.postMessage({ pluginMessage: { type: 'plan', auto: true, revision: body.revision, tokens: body.tokens, fileKey: body.figmaFileKey } }, '*');
+    // Revérifié à chaque passage, même sans nouvelle révision : une
+    // correction faite à la main dans Figma remonte aussi dans DS-Studio.
+    parent.postMessage({ pluginMessage: { type: 'plan', auto: true, revision: body.revision, tokens: body.tokens, fileKey: body.figmaFileKey } }, '*');
   } catch (e) {
     $('auto-status').innerHTML = `<span class="error">${esc(e.message === 'Failed to fetch' ? 'DS-Studio injoignable, nouvel essai dans 4 s…' : e.message)}</span>`;
   }
@@ -66,7 +66,6 @@ const setAuto = (on) => {
   timer = null;
   if (on) {
     $('auto-status').textContent = 'À l’écoute de DS-Studio…';
-    lastRevision = null;
     tick();
     timer = setInterval(tick, 4000);
   } else $('auto-status').textContent = '';
@@ -149,19 +148,18 @@ onmessage = (event) => {
     fetch(server + '/api/plugin/import', {
       method: 'POST',
       headers: { 'X-DS-Plugin': code, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ file: msg.file, fileKey: msg.fileKey, tokens: msg.tokens, skipped: msg.skipped }),
+      body: JSON.stringify({ file: msg.file, fileKey: msg.fileKey, tokens: msg.tokens, skipped: msg.skipped, aliases: msg.aliases }),
     })
       .then(async (r) => {
         const body = await r.json();
         if (!r.ok) throw new Error(body.error || 'DS-Studio a refusé l’import.');
-        out.innerHTML = `<div class="box"><p class="ok"><strong>${Object.keys(msg.tokens).length} tokens envoyés à DS-Studio.</strong></p><p>${body.added} ajouté(s) · ${body.changed} modifié(s) · ${body.removed} retiré(s). Vérifiez et validez le diff dans DS-Studio : rien n’y est écrit avant.</p>${msg.skipped.length ? `<details><summary>${msg.skipped.length} variable(s) non reprise(s)</summary><ul>${msg.skipped.map((x) => `<li><code title="${esc(x.name)}">${esc(x.name)}</code> ${esc(x.reason)}</li>`).join('')}</ul></details>` : ''}${msg.warning ? `<p class="error">${esc(msg.warning)}</p>` : ''}</div>`;
+        out.innerHTML = `<div class="box"><p class="ok"><strong>${Object.keys(msg.tokens).length} tokens envoyés à DS-Studio.</strong></p><p>${body.added + body.changed + body.removed ? `${body.added} ajouté(s) · ${body.changed} modifié(s) · ${body.removed} retiré(s). Vérifiez et validez le diff dans DS-Studio : rien n’y est écrit avant.` : 'Tokens déjà identiques à Figma.'} ${body.aliases} lien(s) d’alias transmis.</p>${msg.skipped.length ? `<details><summary>${msg.skipped.length} variable(s) non reprise(s)</summary><ul>${msg.skipped.map((x) => `<li><code title="${esc(x.name)}">${esc(x.name)}</code> ${esc(x.reason)}</li>`).join('')}</ul></details>` : ''}${msg.warning ? `<p class="error">${esc(msg.warning)}</p>` : ''}</div>`;
       })
       .catch((e) => {
         out.innerHTML = `<p class="error">${esc(e.message === 'Failed to fetch' ? 'DS-Studio injoignable : est-il lancé sur cet ordinateur ?' : e.message)}</p>`;
       });
   }
   if (msg.type === 'auto') {
-    lastRevision = msg.revision;
     report({ revision: msg.revision, updated: msg.updated, created: msg.created, same: msg.same, failed: msg.failed, warning: msg.warning || null });
     const time = new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
     $('auto-status').innerHTML = `<span class="ok">À l’écoute · révision ${msg.revision} vérifiée à ${time}${msg.updated ? ` · ${msg.updated} variable(s) mise(s) à jour` : ''}</span>${msg.failed.length ? `<br><span class="error">Non appliqué : ${esc(reasons(msg.failed))}</span>` : ''}${msg.warning ? `<br><span class="error">${esc(msg.warning)}</span>` : ''}`;
@@ -173,13 +171,12 @@ onmessage = (event) => {
       <div class="box">
         <strong>${esc(current.project || 'Projet')} → ${esc(msg.file)}</strong>
         <p>${msg.variables} variables lues · ${p.same} déjà à jour</p>
-        <p><strong>${p.updates.length + p.retargets.length} variable(s) à mettre à jour</strong></p>
-        <ul>${p.updates.map((u) => `<li>${swatch(u.after)}<code title="${esc(u.name)}">${esc(u.name)}</code> ${esc(u.before)} → <strong>${esc(u.after)}</strong></li>`).join('')}${p.retargets.map((u) => `<li>${swatch(u.after)}<code title="${esc(u.name)}">${esc(u.name)}</code> alias → <strong>${esc(u.targetName)}</strong></li>`).join('')}</ul>
+        <p><strong>${p.updates.length + p.retargets.length} variable(s) à mettre à jour${p.creates.length ? `, ${p.creates.length} à créer` : ''}</strong></p>
+        <ul>${p.updates.map((u) => `<li>${swatch(u.after)}<code title="${esc(u.name)}">${esc(u.name)}</code> ${esc(u.before)} → <strong>${esc(u.after)}</strong></li>`).join('')}${p.retargets.map((u) => `<li>${swatch(u.after)}<code title="${esc(u.name)}">${esc(u.name)}</code> alias → <strong>${esc(u.targetName)}</strong></li>`).join('')}${p.creates.map((c) => `<li>${swatch(c.value)}<code title="${esc(c.collection + '/' + c.name)}">+ ${esc(c.collection + '/' + c.name)}</code> <strong>${esc(c.value)}</strong></li>`).join('')}</ul>
         ${p.blocked.length ? `<details open><summary class="error">${p.blocked.length} bloqué(s)</summary><ul>${p.blocked.map((b) => `<li><code title="${esc(b.name)}">${esc(b.name)}</code> ${esc(b.reason)}</li>`).join('')}</ul></details>` : ''}
-        ${p.missing.length ? `<details><summary>${p.missing.length} token(s) sans variable de ce nom</summary><ul>${p.missing.map((m) => `<li>${swatch(m.value)}<code title="${esc(m.key)}">${esc(m.key)}</code></li>`).join('')}</ul><div class="row"><button id="copy">Copier cette liste</button></div></details>
-        <label><input type="checkbox" id="create"> Créer ces ${p.missing.length} token(s) dans une collection « DS-Studio » (seulement s'ils n'existent vraiment pas dans Figma)</label>` : ''}
+        ${p.missing.length ? `<details><summary>${p.missing.length} token(s) sans variable ni collection évidente : à créer dans Figma, puis « Récupérer »</summary><ul>${p.missing.map((m) => `<li>${swatch(m.value)}<code title="${esc(m.key)}">${esc(m.key)}</code></li>`).join('')}</ul><div class="row"><button id="copy">Copier cette liste</button></div></details>` : ''}
         ${msg.warning ? `<p class="error">${esc(msg.warning)}</p>` : ''}
-        <div class="row"><button id="apply" class="primary" ${p.updates.length || p.retargets.length || p.missing.length ? '' : 'disabled'}>Appliquer</button></div>
+        <div class="row"><button id="apply" class="primary" ${p.updates.length || p.retargets.length || p.creates.length ? '' : 'disabled'}>Appliquer</button></div>
       </div>`;
     if ($('copy')) $('copy').onclick = () => {
       const text = p.missing.map((m) => `${m.key} [${m.type}]`).join('\n');
@@ -198,12 +195,15 @@ onmessage = (event) => {
         updates: p.updates,
         retargets: p.retargets,
         revision: current.revision,
-        create: $('create') && $('create').checked ? p.missing : [],
+        creates: p.creates,
       } }, '*');
     };
   }
   if (msg.type === 'report') {
-    const failed = msg.failed.concat(current.plan.blocked.map((b) => ({ key: b.key, reason: b.reason })));
+    const failed = msg.failed.concat(
+      current.plan.blocked.map((b) => ({ key: b.key, reason: b.reason })),
+      current.plan.missing.map((m) => ({ key: m.key, reason: 'aucune variable de ce nom dans Figma, ni de collection évidente pour la créer' })),
+    );
     report({ revision: msg.revision, updated: msg.updated, created: msg.created, same: current.plan.same, failed, warning: null });
     out.innerHTML = `<div class="box"><p class="ok"><strong>${msg.updated} variable(s) mise(s) à jour${msg.created ? `, ${msg.created} créée(s)` : ''}, valeurs relues.</strong></p>${failed.length ? `<p class="error">Non appliqué : ${esc(reasons(failed))}</p>` : ''}<p>Les composants liés à ces variables suivent ; ceux qui ont des valeurs en dur ne changent pas.</p></div>`;
   }

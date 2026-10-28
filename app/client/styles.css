@@ -2423,37 +2423,78 @@ h2[id] {
   display: flex;
   gap: 6px;
 }
-.chat-circuit {
-  display: grid;
-  gap: 6px;
-  padding: 10px 12px;
-  border: 1px solid var(--studio-border);
-  border-radius: 14px;
-  background: var(--studio-surface-alt);
-  font-size: 12px;
-}
-.chat-circuit p {
-  margin: 0;
-}
 .chat-circuit ul {
   display: grid;
-  gap: 4px;
-  margin: 0;
+  gap: 6px;
+  margin: 6px 0 0;
   padding: 0;
   list-style: none;
 }
 .chat-circuit li {
   display: flex;
-  gap: 6px;
-  align-items: baseline;
+  gap: 8px;
+  align-items: flex-start;
 }
-.chat-circuit li.circuit-todo,
-.chat-circuit em {
+.chat-circuit li small {
+  display: block;
   color: var(--studio-muted);
 }
-.chat-circuit div {
-  display: flex;
-  gap: 6px;
+.chat-circuit .circuit-fix {
+  color: var(--studio-warning-text);
+}
+.chat-circuit button {
+  margin-top: 6px;
+}
+.circuit-done {
+  color: var(--studio-muted);
+}
+/* Icônes d'étape : cercle pointillé (en attente), roue (en cours),
+   coche (fait), point d'exclamation (à corriger). */
+.circuit-icon {
+  flex: none;
+  box-sizing: border-box;
+  width: 14px;
+  height: 14px;
+  margin-top: 2px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1;
+}
+.circuit-todo .circuit-icon {
+  border: 1.5px dashed var(--studio-muted);
+}
+.circuit-pending .circuit-icon {
+  border: 1.5px solid var(--studio-border);
+  border-top-color: var(--studio-muted);
+  animation: circuit-spin 0.9s linear infinite;
+}
+.circuit-ok .circuit-icon {
+  background: var(--studio-success-text);
+  color: #fff;
+}
+.circuit-ok .circuit-icon::after {
+  content: '✓';
+}
+.circuit-warn .circuit-icon {
+  background: var(--studio-warning-text);
+  color: #fff;
+}
+.circuit-warn .circuit-icon::after {
+  content: '!';
+}
+@keyframes circuit-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .circuit-pending .circuit-icon {
+    animation: none;
+    border-style: dotted;
+  }
 }
 .figma-plugin summary {
   cursor: pointer;

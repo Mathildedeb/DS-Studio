@@ -94,3 +94,49 @@ test('plugin Figma : synchroniser, alias rebranché ou bloqué avec sa raison', 
   );
   assert.deepEqual(result.missing.map((m: { key: string }) => m.key), ['color.accent']);
 });
+
+test('plugin Figma : nouveau token créé chez ses voisines, alias rebranché dessus', async () => {
+  const { plan } = await load();
+  const result = plain(
+    plan(
+      {
+        'color.primary.purple.850': { $type: 'color', $value: '#302636' },
+        'text.secondaire': { $type: 'color', $value: '#302636' },
+        'color.accent': { $type: 'color', $value: '#123456' },
+      },
+      variables,
+    ),
+  );
+  // Même collection et même forme de nom que color/Primary/purple/700.
+  assert.deepEqual(
+    result.creates.map((c: { key: string; collection: string; name: string }) => [c.key, c.collection, c.name]),
+    [['color.primary.purple.850', 'Master', 'color/Primary/purple/850']],
+  );
+  // L'alias suit la variable créée dans le même passage.
+  assert.deepEqual(
+    result.retargets.map((r: { id: string; createKey: string; targetName: string }) => [r.id, r.createKey, r.targetName]),
+    [['u1', 'color.primary.purple.850', 'Master/color/Primary/purple/850']],
+  );
+  // Sans voisine, aucune collection évidente : rien n'est créé.
+  assert.deepEqual(result.missing.map((m: { key: string }) => m.key), ['color.accent']);
+  assert.deepEqual(result.blocked, []);
+});
+
+test('plugin Figma : liens d’alias récupérés, un alias suit sa base mise à jour', async () => {
+  const { collect, plan } = await load();
+  assert.deepEqual(plain(collect(variables)).aliases, { 'text.secondaire': 'color.neutral.900' });
+  // La base change, l'alias qui la suit est « à jour » sans être rebranché.
+  const result = plain(
+    plan(
+      {
+        'color.neutral.900': { $type: 'color', $value: '#302636' },
+        'text.secondaire': { $type: 'color', $value: '#302636' },
+      },
+      variables,
+    ),
+  );
+  assert.deepEqual(result.updates.map((u: { id: string }) => u.id), ['m2']);
+  assert.deepEqual(result.retargets, []);
+  assert.deepEqual(result.blocked, []);
+  assert.equal(result.same, 1);
+});

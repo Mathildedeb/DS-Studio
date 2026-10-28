@@ -2,7 +2,19 @@ import { useEffect, useRef, useState } from 'react';
 import type { PublishStatus } from '../server/gitops.js';
 import type { CircuitStep } from '../shared/circuit.js';
 
-export type ChatMessage = { role: 'user' | 'assistant'; text: string };
+// circuit : réponse de Clodo qui suit une validation (checklist de la
+// révision indiquée) ; elle reste dans l'atelier, jamais envoyée au CLI.
+export type ChatMessage = {
+  role: 'user' | 'assistant';
+  text: string;
+  circuit?: number;
+};
+const stateText = {
+  ok: 'fait',
+  pending: 'en cours',
+  warn: 'à corriger',
+  todo: 'en attente',
+};
 
 const suggestions = [
   'Propose une couleur de marque plus chaleureuse.',
@@ -30,7 +42,6 @@ export default function Chat({
   onDismissPublish,
   circuit,
   onAskFix,
-  onDismissCircuit,
 }: {
   agentName: string;
   detail: string;
@@ -54,13 +65,12 @@ export default function Chat({
   // Checklist de la dernière validation : DS, code, interface, Figma, GitHub.
   circuit?: { revision: number; steps: CircuitStep[] };
   onAskFix: (text: string) => void;
-  onDismissCircuit: () => void;
 }) {
   const [commitMessage, setCommitMessage] = useState('');
   const log = useRef<HTMLDivElement>(null);
   useEffect(() => {
     log.current?.scrollTo({ top: log.current.scrollHeight });
-  }, [chat.length, thinking]);
+  }, [chat.length, thinking, circuit?.steps.length]);
   return (
     <div className="chat">
       <header className="chat-head">
@@ -111,14 +121,55 @@ export default function Chat({
             </div>
           </div>
         )}
-        {chat.map((c, i) => (
-          <article className={`chat-bubble ${c.role}`} key={i}>
-            <span className="sr-only">
-              {c.role === 'user' ? 'Vous' : agentName} :
-            </span>
-            <p>{c.text}</p>
-          </article>
-        ))}
+        {chat.map((c, i) =>
+          c.circuit !== undefined ? (
+            <article className="chat-bubble assistant chat-circuit" key={i}>
+              <span className="sr-only">{agentName} :</span>
+              <p>{c.text}</p>
+              {circuit?.revision === c.circuit ? (
+                <>
+                  <ul aria-label={`Suivi de la révision ${c.circuit}`}>
+                    {circuit.steps.map((s) => (
+                      <li key={s.id} className={`circuit-${s.state}`}>
+                        <span className="circuit-icon" aria-hidden="true" />
+                        <span>
+                          {s.label}
+                          <span className="sr-only"> ({stateText[s.state]})</span>
+                          {s.detail && <small>{s.detail}</small>}
+                          {s.fix && <small className="circuit-fix">{s.fix}</small>}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                  {circuit.steps.some((s) => s.state === 'warn') && (
+                    <button
+                      type="button"
+                      onClick={() =>
+                        onAskFix(
+                          `Après la révision ${circuit.revision}, une étape n’est pas à jour : ${circuit.steps
+                            .filter((s) => s.state === 'warn')
+                            .map((s) => `${s.label} : ${s.detail}`)
+                            .join(' ; ')}. Explique-moi et propose une solution.`,
+                        )
+                      }
+                    >
+                      Demander une solution à {agentName}
+                    </button>
+                  )}
+                </>
+              ) : (
+                <p className="circuit-done">Suivi passé à la modification suivante.</p>
+              )}
+            </article>
+          ) : (
+            <article className={`chat-bubble ${c.role}`} key={i}>
+              <span className="sr-only">
+                {c.role === 'user' ? 'Vous' : agentName} :
+              </span>
+              <p>{c.text}</p>
+            </article>
+          ),
+        )}
         {thinking && (
           <p className="chat-thinking" role="status">
             <span aria-hidden="true" />
@@ -128,55 +179,6 @@ export default function Chat({
           </p>
         )}
       </div>
-      {circuit && (
-        <section
-          className="chat-circuit"
-          aria-label={`Suivi de la révision ${circuit.revision}`}
-          aria-live="polite"
-        >
-          <p>
-            <strong>Révision {circuit.revision} : où en est la modification</strong>
-          </p>
-          <ul>
-            {circuit.steps.map((s) => (
-              <li key={s.label} className={`circuit-${s.state}`}>
-                <span aria-hidden="true">
-                  {{ ok: '✅', pending: '⏳', warn: '⚠️', todo: '⬜' }[s.state]}
-                </span>
-                <span>
-                  <strong>{s.label}</strong>
-                  <span className="sr-only">
-                    {' '}
-                    ({{ ok: 'fait', pending: 'en cours', warn: 'à corriger', todo: 'en attente' }[s.state]})
-                  </span>{' '}
-                  {s.detail}
-                  {s.fix && <em> → {s.fix}</em>}
-                </span>
-              </li>
-            ))}
-          </ul>
-          <div>
-            {circuit.steps.some((s) => s.state === 'warn') && (
-              <button
-                type="button"
-                onClick={() =>
-                  onAskFix(
-                    `Après la révision ${circuit.revision}, une étape n’est pas à jour : ${circuit.steps
-                      .filter((s) => s.state === 'warn')
-                      .map((s) => `${s.label} : ${s.detail}`)
-                      .join(' ; ')}. Explique-moi et propose une solution.`,
-                  )
-                }
-              >
-                Demander une solution à {agentName}
-              </button>
-            )}
-            <button type="button" onClick={onDismissCircuit}>
-              Masquer
-            </button>
-          </div>
-        </section>
-      )}
       {publish && (
         <section className="chat-publish" aria-label="Publier sur Git">
           {publish.done ? (

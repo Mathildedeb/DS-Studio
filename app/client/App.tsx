@@ -115,6 +115,28 @@ export function Preview() {
     <p role="alert">{error || 'Chargement de la page…'}</p>
   );
 }
+// Ce que l'étudiante vient de valider, écrit comme une demande au chat.
+// Une proposition de Clodo a déjà sa demande dans la conversation.
+function describeChange(p: Proposal) {
+  if (p.source === 'claude' || p.source === 'codex') return null;
+  if (p.source === 'import')
+    return `Importe ${p.patches.length} changement(s) de tokens.`;
+  if (p.source === 'undo')
+    return `Annule une révision (${p.patches.length} token(s)).`;
+  const [first, ...rest] = p.patches;
+  const what =
+    first.after === null
+      ? `Supprime ${first.key}`
+      : first.before === null
+        ? `Crée ${first.key} = ${first.after}`
+        : `Change ${first.key} : ${first.before} → ${first.after}`;
+  return rest.length
+    ? `${what} (+ ${rest.length} token(s) lié(s) : ${rest
+        .slice(0, 4)
+        .map((r) => r.key)
+        .join(', ')}${rest.length > 4 ? '…' : ''}).`
+    : `${what}.`;
+}
 export default function App() {
   const { state, setState, error: stateError } = useDesignState();
   const [boot, setBoot] = useState<Bootstrap>();
@@ -371,8 +393,19 @@ export default function App() {
       announceChange();
       setNotice(`Révision ${next.revision} enregistrée sur disque.`);
       setWatch(next.revision);
-      // Projet ouvert : la checklist s'affiche dans le chat de Clodo.
-      if (connection?.project) setClodoOpen(true);
+      // La validation se lit comme une conversation : ce qui a été demandé,
+      // puis Clodo qui suit chaque étape (checklist en direct).
+      const asked = describeChange(proposal);
+      setChat((c) => [
+        ...c,
+        ...(asked ? [{ role: 'user' as const, text: asked }] : []),
+        {
+          role: 'assistant' as const,
+          text: 'C’est validé. Je mets tout à jour :',
+          circuit: next.revision,
+        },
+      ]);
+      setClodoOpen(true);
       void offerPublish();
     });
     setSaving(false);
@@ -474,7 +507,11 @@ export default function App() {
     setMessage('');
     setThinking(true);
     clearError();
-    const previous = chat.slice(-10);
+    // Les checklists restent dans l'atelier : seule la conversation part.
+    const previous = chat
+      .filter((m) => m.circuit === undefined)
+      .slice(-10)
+      .map(({ role, text }) => ({ role, text }));
     setChat([...chat, { role: 'user', text }]);
     const abort = new AbortController();
     controller.current = abort;
@@ -536,7 +573,6 @@ export default function App() {
             : undefined
         }
         onAskFix={askClodo}
-        onDismissCircuit={() => setWatch(undefined)}
         onRevert={() =>
           void perform(async () => {
             if (!lastCode) return;

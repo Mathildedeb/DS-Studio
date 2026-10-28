@@ -3,7 +3,7 @@ import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { z } from 'zod';
-import { proposeSchema, type Proposal } from '../shared/model.js';
+import { proposeSchema, type Change, type Proposal } from '../shared/model.js';
 import { focusSchema } from '../shared/focus.js';
 import { Store, StudioError } from './store.js';
 import { ProjectStore } from './project.js';
@@ -153,6 +153,7 @@ export async function createStudioServer(options: {
     | {
         store: Store;
         proposal: Proposal;
+        aliases: Record<string, string>;
         file?: string;
         skipped: { name: string; reason: string }[];
       }
@@ -167,6 +168,35 @@ export async function createStudioServer(options: {
     } catch {
       return null;
     }
+  };
+  // Liens d'alias de Figma (usage → base), gardés avec le DS du projet :
+  // modifier un usage ou sa base change tout le groupe, dans un seul diff,
+  // pour que DS-Studio et Figma disent toujours la même chose.
+  const aliasFile = () => path.join(store.directory, 'aliases.json');
+  const readAliases = async (): Promise<Record<string, string>> => {
+    try {
+      return z
+        .record(z.string(), z.string())
+        .parse(JSON.parse(await readPrivate(aliasFile(), 200_000)));
+    } catch {
+      return {};
+    }
+  };
+  const withGroups = (changes: Change[], aliases: Record<string, string>) => {
+    const tokens = store.snapshot().tokens;
+    const out = new Map<string, Change>();
+    for (const c of changes) {
+      const base = aliases[c.key] ?? c.key;
+      const group = [base, ...Object.keys(aliases).filter((k) => aliases[k] === base)];
+      if (c.value === null || group.length < 2 || !tokens[base]) {
+        out.set(c.key, c);
+        continue;
+      }
+      for (const key of group)
+        if (tokens[key] || key === c.key)
+          out.set(key, key === c.key ? c : { key, value: c.value });
+    }
+    return [...out.values()];
   };
   const pluginBody = async (req: http.IncomingMessage) => {
     const chunks: Buffer[] = [];
@@ -285,6 +315,13 @@ export async function createStudioServer(options: {
                     .strict(),
                 )
                 .max(1000),
+              aliases: z
+                .record(
+                  z.string().max(60),
+                  z.string().max(60),
+                )
+                .refine((a) => Object.keys(a).length <= 300)
+                .default({}),
             })
             .strict()
             .parse(body);
@@ -294,9 +331,31 @@ export async function createStudioServer(options: {
               409,
             );
           // Même chemin qu'un import JSON : un diff complet, validé à la main.
-          const proposal = store.proposeImport(store.snapshot().revision, b.tokens);
-          figmaImport = { store, proposal, file: b.file, skipped: b.skipped };
+          // Tokens déjà identiques : seuls les liens d'alias sont mis à jour
+          // (ils ne changent aucune valeur).
+          let proposal: Proposal;
+          try {
+            proposal = store.proposeImport(store.snapshot().revision, b.tokens);
+          } catch (e) {
+            if (!(e instanceof StudioError) || e.message !== 'Aucune modification.')
+              throw e;
+            await atomicWrite(aliasFile(), JSON.stringify(b.aliases) + '\n');
+            return send(200, {
+              added: 0,
+              changed: 0,
+              removed: 0,
+              aliases: Object.keys(b.aliases).length,
+            });
+          }
+          figmaImport = {
+            store,
+            proposal,
+            aliases: b.aliases,
+            file: b.file,
+            skipped: b.skipped,
+          };
           return send(200, {
+            aliases: Object.keys(b.aliases).length,
             added: proposal.patches.filter((p) => p.before === null).length,
             changed: proposal.patches.filter(
               (p) => p.before !== null && p.after !== null,
@@ -539,7 +598,10 @@ export async function createStudioServer(options: {
           );
         if (url.pathname === '/api/proposals') {
           const b = proposeSchema.parse(body);
-          return send(200, store.propose(b.revision, b.changes));
+          return send(
+            200,
+            store.propose(b.revision, withGroups(b.changes, await readAliases())),
+          );
         }
         if (url.pathname === '/api/import') {
           const b = z
@@ -564,7 +626,13 @@ export async function createStudioServer(options: {
         if (url.pathname === '/api/commit') {
           const b = z.object({ id: z.string().uuid() }).strict().parse(body);
           const next = await store.commit(b.id);
-          if (figmaImport?.proposal.id === b.id) figmaImport = undefined;
+          if (figmaImport?.proposal.id === b.id) {
+            await atomicWrite(
+              aliasFile(),
+              JSON.stringify(figmaImport.aliases) + '\n',
+            );
+            figmaImport = undefined;
+          }
           // Projet ouvert : le token validé part aussi dans son fichier DTCG,
           // puis les fichiers que son interface charge sont régénérés. Chaque
           // étape est notée telle qu'elle s'est passée, pour la checklist.
@@ -758,7 +826,11 @@ export async function createStudioServer(options: {
             );
             // Clodo a choisi des tokens : même diff et même validation qu'à la main.
             const tokenProposal = changes?.length
-              ? store.propose(store.snapshot().revision, changes, 'claude')
+              ? store.propose(
+                  store.snapshot().revision,
+                  withGroups(changes, await readAliases()),
+                  'claude',
+                )
               : null;
             return send(200, { ...reply, tokenProposal });
           } finally {

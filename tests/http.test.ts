@@ -682,7 +682,7 @@ test('plugin Figma : import proposé par le diff, compte rendu gardé, rien écr
   assert.match(preflight.headers.get('access-control-allow-headers') ?? '', /Content-Type/);
   const sent = await plugin('import', body);
   assert.equal(sent.status, 200);
-  assert.deepEqual(await sent.json(), { added: 1, changed: 1, removed: 0 });
+  assert.deepEqual(await sent.json(), { aliases: 0, added: 1, changed: 1, removed: 0 });
   // Rien n'est écrit : l'import attend son diff dans l'atelier.
   assert.equal(store.snapshot().revision, 0);
   const pending = await (await fetch(origin + '/api/figma-import')).json();
@@ -719,4 +719,41 @@ test('plugin Figma : import proposé par le diff, compte rendu gardé, rien écr
     ).status,
     405,
   );
+});
+
+test('alias Figma : modifier un usage change sa base et tout son groupe, dans un seul diff', async (t) => {
+  const { origin, post, store } = await fixture(t);
+  const { token } = await (await fetch(origin + '/api/plugin/pairing')).json();
+  const tokens = store.snapshot().tokens;
+  // Tokens déjà identiques : seuls les liens arrivent, aucune valeur ne change.
+  const sent = await fetch(origin + '/api/plugin/import', {
+    method: 'POST',
+    headers: { Origin: 'null', 'Content-Type': 'application/json', 'X-DS-Plugin': token },
+    body: JSON.stringify({
+      file: 'DS',
+      fileKey: null,
+      tokens,
+      skipped: [],
+      aliases: { 'color.text': 'color.brand', 'color.brandHover': 'color.brand' },
+    }),
+  });
+  assert.deepEqual(await sent.json(), { added: 0, changed: 0, removed: 0, aliases: 2 });
+  assert.equal(store.snapshot().revision, 0);
+  // Un usage modifié : sa base et l'autre usage suivent.
+  const p = await (
+    await post('proposals', { revision: 0, changes: [{ key: 'color.text', value: '#302636' }] })
+  ).json();
+  assert.deepEqual(
+    p.patches.map((x: { key: string; after: string }) => [x.key, x.after]),
+    [
+      ['color.brand', '#302636'],
+      ['color.brandHover', '#302636'],
+      ['color.text', '#302636'],
+    ],
+  );
+  // Un token hors groupe ne bouge que lui-même.
+  const alone = await (
+    await post('proposals', { revision: 0, changes: [{ key: 'color.canvas', value: '#FFFFFF' }] })
+  ).json();
+  assert.deepEqual(alone.patches.map((x: { key: string }) => x.key), ['color.canvas']);
 });
