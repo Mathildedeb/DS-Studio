@@ -74,7 +74,7 @@ test('entrées, imports et types invalides sont rejetés sans effet disque', asy
   const raw = await readFile(store.file, 'utf8');
   for (const value of ['red', 'url(https://invalid.test)', 12, '#FFF'])
     assert.throws(() => store.propose(0, [{ key: 'color.brand', value }]));
-  for (const value of [-1, 129, Infinity, '18'])
+  for (const value of [-1, 2001, Infinity, '18'])
     assert.throws(() => store.propose(0, [{ key: 'space.md', value }]));
   assert.throws(
     () =>

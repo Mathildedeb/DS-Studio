@@ -79,3 +79,112 @@ test('Figma : refus, fichier absent et réseau coupé sans fuite de détails', a
   assert.equal(down.connected, false);
   assert.match(down.label, /mode local continue/);
 });
+
+test('Figma : composants non publiés, nœud simplifié, variables et repli sur les styles', async () => {
+  const { figmaComponents, figmaNode, figmaVariables, variablesToTokens } =
+    await import('../connectors/figma/library.js');
+  const routes: string[] = [];
+  const answer = (route: string): unknown => {
+    if (route.includes('/variables/local')) return null;
+    if (route.includes('/nodes?ids=1%3A2'))
+      return {
+        nodes: {
+          '1:2': {
+            document: {
+              id: '1:2',
+              name: 'Button',
+              type: 'COMPONENT_SET',
+              layoutMode: 'HORIZONTAL',
+              itemSpacing: 8,
+              paddingTop: 10,
+              fills: [{ type: 'SOLID', color: { r: 1, g: 0, b: 0, a: 1 } }],
+              componentPropertyDefinitions: {
+                variant: {
+                  type: 'VARIANT',
+                  defaultValue: 'primary',
+                  variantOptions: ['primary', 'ghost'],
+                },
+              },
+              children: [
+                {
+                  id: '1:3',
+                  name: 'Label',
+                  type: 'TEXT',
+                  characters: 'OK',
+                  style: { fontFamily: 'Inter', fontSize: 14 },
+                },
+              ],
+            },
+          },
+        },
+      };
+    if (route.includes('/nodes?ids=9%3A1'))
+      return {
+        nodes: {
+          '9:1': {
+            document: {
+              fills: [{ type: 'SOLID', color: { r: 0, g: 0, b: 1 } }],
+            },
+          },
+        },
+      };
+    if (route.includes('depth=1'))
+      return {
+        styles: { '9:1': { name: 'Brand/Primary', styleType: 'FILL' } },
+      };
+    return {
+      document: {
+        children: [
+          {
+            name: 'Composants',
+            children: [
+              {
+                id: '1:2',
+                name: 'Button',
+                type: 'COMPONENT_SET',
+                children: [
+                  { id: '1:4', type: 'COMPONENT' },
+                  { id: '1:5', type: 'COMPONENT' },
+                ],
+              },
+              { id: '2:1', name: 'Badge', type: 'COMPONENT' },
+            ],
+          },
+        ],
+      },
+    };
+  };
+  const fetcher = (async (url: string) => {
+    const route = url.replace('https://api.figma.com', '');
+    routes.push(route);
+    const body = answer(route);
+    return body === null
+      ? new Response('{}', { status: 403 })
+      : new Response(JSON.stringify(body));
+  }) as unknown as typeof fetch;
+  const reader = new FigmaReader(token, fetcher);
+  const list = await figmaComponents(reader, url);
+  assert.deepEqual(
+    list.map((c) => [c.name, c.variants, c.page]),
+    [
+      ['Badge', 1, 'Composants'],
+      ['Button', 2, 'Composants'],
+    ],
+  );
+  const node = await figmaNode(reader, url, '1-2');
+  assert.equal(node.layout?.gap, 8);
+  assert.deepEqual(node.fills, ['#FF0000']);
+  assert.deepEqual(node.props?.variant.options, ['primary', 'ghost']);
+  assert.equal(node.children?.[0].text, 'OK');
+  await assert.rejects(figmaNode(reader, url, '../evil'), /invalide/);
+  // Sans offre Enterprise, les variables se replient sur les styles.
+  const vars = await figmaVariables(reader, url);
+  assert.equal(vars.source, 'styles');
+  assert.deepEqual(vars.items, [
+    { name: 'Brand/Primary', type: 'COLOR', value: '#0000FF' },
+  ]);
+  assert.deepEqual(variablesToTokens(vars.items).tokens, {
+    'color.brand.primary': { $type: 'color', $value: '#0000FF' },
+  });
+  assert(routes.every((r) => r.startsWith('/v1/')));
+});

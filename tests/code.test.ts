@@ -277,3 +277,40 @@ test('projet ouvert : un fichier choisi mais absent est proposé à la création
     'src/Accueil.tsx',
   ]);
 });
+
+test('Clodo lit les composants Figma qu’il choisit avant de coder', async (t) => {
+  const root = await mkdtemp(path.join(tmpdir(), 'ds-projet-'));
+  const data = await mkdtemp(path.join(tmpdir(), 'ds-donnees-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  t.after(() => rm(data, { recursive: true, force: true }));
+  const inputs: string[] = [];
+  const answers = [
+    JSON.stringify({ files: ['src/Button.tsx'], figma: ['1:2'] }),
+    JSON.stringify({ message: 'Rien.', edits: [] }),
+  ];
+  const ask: Ask = async (_system, input) => {
+    inputs.push(input);
+    return answers.shift()!;
+  };
+  const asked: string[] = [];
+  await proposeCode(
+    ask,
+    new CodeStore(root, data, true),
+    'récupère le bouton de Figma',
+    [],
+    undefined,
+    undefined,
+    {},
+    'mon-proto',
+    {
+      components: [{ id: '1:2', name: 'button', page: 'Atoms', variants: 20 }],
+      node: async (id) => {
+        asked.push(id);
+        return { id, name: 'button', layout: { mode: 'HORIZONTAL', gap: 8 } };
+      },
+    },
+  );
+  assert.equal(JSON.parse(inputs[0]).figma_components[0].name, 'button');
+  assert.deepEqual(asked, ['1:2']);
+  assert.equal(JSON.parse(inputs[1]).figma_nodes['1:2'].layout.gap, 8);
+});

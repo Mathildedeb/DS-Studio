@@ -15,6 +15,7 @@ import type { CodeProposal } from '../server/code.js';
 import Dashboard from './Dashboard.js';
 import PreviewPage from './PreviewPage.js';
 import OpenProject from './OpenProject.js';
+import FigmaPanel from './FigmaPanel.js';
 import type { ConnectionStatus } from '../shared/connection.js';
 import type { FigmaFileStatus } from '../../connectors/figma/reader.js';
 import { useTokenDraft } from './useTokenDraft.js';
@@ -144,6 +145,7 @@ export default function App() {
   const [tab, setTab] = useState<Tab>('tokens');
   const [componentFocus, setComponentFocus] = useState<Focus>();
   const [previewFocus, setPreviewFocus] = useState<Focus>();
+  const [figmaFocus, setFigmaFocus] = useState<Focus>();
   const openToken = (k: TokenKey) => {
     setKey(k);
     setTab('tokens');
@@ -291,18 +293,20 @@ export default function App() {
   const focus: Focus | undefined =
     view === 'preview'
       ? previewFocus
-      : view !== 'ds' || !state
-        ? undefined
-        : tab === 'tokens'
-          ? state.tokens[key] && {
-              page: 'design-system',
-              kind: 'token',
-              name: key,
-              path: [key],
-              value: state.tokens[key].$value,
-              tokens: [key],
-            }
-          : componentFocus;
+      : view === 'ds' && tab === 'figma'
+        ? figmaFocus
+        : view !== 'ds' || !state
+          ? undefined
+          : tab === 'tokens'
+            ? state.tokens[key] && {
+                page: 'design-system',
+                kind: 'token',
+                name: key,
+                path: [key],
+                value: state.tokens[key].$value,
+                tokens: [key],
+              }
+            : componentFocus;
   async function sendMessage() {
     if (!state || !message.trim() || thinking) return;
     const text = message;
@@ -767,7 +771,9 @@ export default function App() {
                             selected.$type === 'dimension' ? 'number' : 'text'
                           }
                           min={selected.$type === 'dimension' ? 0 : undefined}
-                          max={selected.$type === 'dimension' ? 128 : undefined}
+                          max={
+                            selected.$type === 'dimension' ? 2000 : undefined
+                          }
                           step={
                             selected.$type === 'dimension' ? 'any' : undefined
                           }
@@ -811,7 +817,7 @@ export default function App() {
                       {selected.$type === 'color'
                         ? '#RRGGBB · '
                         : selected.$type === 'dimension'
-                          ? 'Pixels, de 0 à 128 · '
+                          ? 'Pixels, de 0 à 2000 · '
                           : 'Nom de police · '}
                       Rien n’est écrit avant validation.
                     </p>
@@ -845,6 +851,16 @@ export default function App() {
                 onTab={setTab}
                 onToken={openToken}
                 onFocus={setComponentFocus}
+              />
+              <FigmaPanel
+                active={tab === 'figma'}
+                revision={state.revision}
+                onProposal={setProposal}
+                onFocus={setFigmaFocus}
+                onAsk={(text) => {
+                  setMessage(text);
+                  setClodoOpen(true);
+                }}
               />
             </section>
           </main>

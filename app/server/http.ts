@@ -16,6 +16,14 @@ import { proposeCode, type Ask } from '../../connectors/agents/coder.js';
 import { CodeStore } from './code.js';
 import { ConnectionStore, inspectFolder, pickFolder } from './connection.js';
 import { DevServer } from './devserver.js';
+import { readProjectTokens } from './projectTokens.js';
+import {
+  figmaComponents,
+  figmaImage,
+  figmaNode,
+  figmaVariables,
+  variablesToTokens,
+} from '../../connectors/figma/library.js';
 import { unvalidatedAdapter } from '../../connectors/agents/unvalidated.js';
 import type { AgentAdapter } from '../../connectors/agents/types.js';
 import { figmaStatus } from '../../connectors/figma/contract.js';
@@ -46,6 +54,13 @@ export async function createStudioServer(options: {
   // garde son périmètre historique sur l'interface de DS-Studio.
   const projectCode = new Map<string, CodeStore>();
   const devServer = new DevServer();
+  // Fichier Figma : celui du projet ouvert, sinon le brief, sinon la roadmap.
+  const figmaUrl = async () =>
+    (await connection.read()).figmaUrl ||
+    (await project.read()).project.figmaUrl ||
+    (await readRoadmap(root)
+      .then((r) => r.links.find((l) => l.url.includes('figma.com'))?.url)
+      .catch(() => undefined));
   const workspace = async () => {
     const project = (await connection.status()).project;
     if (!project) return { code, project: undefined };
@@ -139,16 +154,38 @@ export async function createStudioServer(options: {
             );
           if (url.pathname === '/api/project')
             return send(200, await project.read());
-          if (url.pathname === '/api/figma') {
-            // Fichier : celui du projet ouvert, sinon le brief, sinon la roadmap.
-            const linked = (await connection.read()).figmaUrl;
-            const brief = linked || (await project.read()).project.figmaUrl;
-            const fromRoadmap = await readRoadmap(root)
-              .then(
-                (r) => r.links.find((l) => l.url.includes('figma.com'))?.url,
-              )
-              .catch(() => undefined);
-            return send(200, await figma.status(brief || fromRoadmap));
+          if (url.pathname === '/api/figma')
+            return send(200, await figma.status(await figmaUrl()));
+          // Lecture Figma du projet ouvert : composants, nœud, rendu, variables.
+          if (url.pathname === '/api/project-tokens') {
+            const project = (await connection.status()).project;
+            if (!project)
+              throw new StudioError('Ouvrez d’abord un projet.', 409);
+            return send(200, await readProjectTokens(project.folder));
+          }
+          if (url.pathname === '/api/figma/components')
+            return send(200, await figmaComponents(figma, await figmaUrl()));
+          if (url.pathname === '/api/figma/node')
+            return send(
+              200,
+              await figmaNode(
+                figma,
+                await figmaUrl(),
+                url.searchParams.get('id') ?? '',
+              ),
+            );
+          if (url.pathname === '/api/figma/variables') {
+            const read = await figmaVariables(figma, await figmaUrl());
+            return send(200, { ...read, ...variablesToTokens(read.items) });
+          }
+          if (url.pathname === '/api/figma/image') {
+            const png = await figmaImage(
+              figma,
+              await figmaUrl(),
+              url.searchParams.get('id') ?? '',
+            );
+            res.writeHead(200, { 'Content-Type': 'image/png' });
+            return res.end(png);
           }
           if (url.pathname === '/api/clodo')
             return send(200, await dashboard.readClodo());
@@ -267,6 +304,24 @@ export async function createStudioServer(options: {
           if (!project) throw new StudioError('Ouvrez d’abord un projet.', 409);
           return send(200, await devServer.install(project.folder));
         }
+        // Tokens du projet ajoutés ou mis à jour par le diff habituel ; les
+        // tokens déjà présents dans DS-Studio ne sont jamais supprimés ici.
+        if (url.pathname === '/api/project-tokens/import') {
+          const b = z
+            .object({ revision: z.number().int().nonnegative() })
+            .strict()
+            .parse(body);
+          const project = (await connection.status()).project;
+          if (!project) throw new StudioError('Ouvrez d’abord un projet.', 409);
+          const { tokens } = await readProjectTokens(project.folder);
+          return send(
+            200,
+            store.proposeImport(b.revision, {
+              ...store.snapshot().tokens,
+              ...tokens,
+            }),
+          );
+        }
         if (url.pathname === '/api/project-dev/stop')
           return send(200, devServer.stop());
         if (url.pathname === '/api/connection/pick')
@@ -330,6 +385,16 @@ export async function createStudioServer(options: {
               b.focus,
               store.snapshot().tokens,
               scope.project,
+              // Figma lu par le serveur, seulement si un fichier est relié.
+              figma.hasToken && (await figmaUrl())
+                ? {
+                    components: await figmaComponents(
+                      figma,
+                      await figmaUrl(),
+                    ).catch(() => []),
+                    node: async (id) => figmaNode(figma, await figmaUrl(), id),
+                  }
+                : undefined,
             );
             // Clodo a choisi des tokens : même diff et même validation qu'à la main.
             const tokenProposal = changes?.length

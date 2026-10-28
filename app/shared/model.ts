@@ -10,7 +10,7 @@ const color = z
 const dimension = z
   .object({
     $type: z.literal('dimension'),
-    $value: z.number().finite().min(0).max(128),
+    $value: z.number().finite().min(0).max(2000),
   })
   .strict();
 const font = z

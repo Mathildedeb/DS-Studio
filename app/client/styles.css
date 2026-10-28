@@ -2336,3 +2336,52 @@ h2[id] {
   text-align: center;
   color: var(--studio-muted);
 }
+.figma-tokens {
+  display: grid;
+  gap: 6px;
+  padding: 10px;
+  margin-bottom: 12px;
+  border: 1px solid var(--studio-border);
+  border-radius: var(--studio-radius);
+  background: var(--studio-surface-alt);
+  font-size: 12px;
+}
+.figma-tokens p {
+  margin: 0;
+  color: var(--studio-muted);
+}
+.figma-render {
+  padding: 24px;
+}
+.figma-render img {
+  display: block;
+  max-width: 100%;
+  zoom: 0.5;
+}
+/* Listes longues (tokens, composants Figma) : elles défilent seules, le
+   détail reste visible à côté. */
+.ds-workspace {
+  align-items: start;
+}
+.ds-workspace > .ds-list {
+  position: sticky;
+  top: 12px;
+  max-height: calc(100vh - 140px);
+  overflow: auto;
+}
+.ds-list .toc-label {
+  display: flex;
+  justify-content: space-between;
+  padding: 14px 10px 4px;
+  font-size: 10px;
+  font-weight: 650;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: var(--studio-muted);
+}
+@media (max-width: 860px) {
+  .ds-workspace > .ds-list {
+    position: static;
+    max-height: 360px;
+  }
+}
