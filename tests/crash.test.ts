@@ -13,7 +13,7 @@ test(
     const directory = await mkdtemp(path.join(os.tmpdir(), 'ds-crash-'));
     const moduleUrl = new URL('../app/server/store.ts', import.meta.url).href;
     const seedUrl = new URL(
-      '../workspace/design-system.tokens.json',
+      './fixtures/tokens.json',
       import.meta.url,
     ).href;
     const child = spawn(

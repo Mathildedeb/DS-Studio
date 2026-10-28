@@ -1,9 +1,10 @@
 import http from 'node:http';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { z } from 'zod';
 import { proposeSchema } from '../shared/model.js';
+import { focusSchema } from '../shared/focus.js';
 import { Store, StudioError } from './store.js';
 import { ProjectStore } from './project.js';
 import { projectSchema } from '../shared/project.js';
@@ -13,10 +14,22 @@ import { CodexAdapter } from '../../connectors/agents/codex.js';
 import { ClaudeAdapter } from '../../connectors/agents/claude.js';
 import { proposeCode, type Ask } from '../../connectors/agents/coder.js';
 import { CodeStore } from './code.js';
+import { ConnectionStore, inspectFolder, pickFolder } from './connection.js';
+import { DevServer } from './devserver.js';
+import { atomicWrite, readPrivate } from './files.js';
+import { readProjectTokens, writeProjectTokens } from './projectTokens.js';
+import { BATCH, PublishCounter, gitStatus, publish } from './gitops.js';
+import {
+  figmaComponents,
+  figmaImage,
+  figmaNode,
+  figmaVariables,
+  variablesToTokens,
+} from '../../connectors/figma/library.js';
 import { unvalidatedAdapter } from '../../connectors/agents/unvalidated.js';
 import type { AgentAdapter } from '../../connectors/agents/types.js';
 import { figmaStatus } from '../../connectors/figma/contract.js';
-import { FigmaReader } from '../../connectors/figma/reader.js';
+import { FigmaReader, figmaFileKey } from '../../connectors/figma/reader.js';
 import type { RecordInfo } from '../../scripts/runtime.mjs';
 
 export async function createStudioServer(options: {
@@ -29,7 +42,11 @@ export async function createStudioServer(options: {
   dev?: boolean;
   control?: { record: RecordInfo; stop: () => void };
 }) {
-  const { root, store } = options;
+  const { root } = options;
+  // Données communes (connexion, brief, tableau de bord) dans base ; tokens,
+  // historique et Preview dans un dossier par projet ouvert.
+  const base = options.store;
+  let store = base;
   const adapters: Record<string, AgentAdapter> = {
     codex: options.agent ?? new CodexAdapter(),
     claude: options.claude ?? new ClaudeAdapter(),
@@ -38,10 +55,81 @@ export async function createStudioServer(options: {
   const project = new ProjectStore(store.directory);
   const dashboard = new DashboardStore(store.directory, root);
   const code = new CodeStore(root, store.directory);
+  const connection = new ConnectionStore(store.directory);
+  const publishCounter = new PublishCounter(store.directory);
+  // Une modification validée de plus dans le projet ouvert.
+  const countChange = async () => {
+    const project = (await connection.status()).project;
+    if (project) await publishCounter.add(project.folder);
+  };
+  // Clodo écrit dans le projet ouvert, et seulement dedans ; sans projet, il
+  // garde son périmètre historique sur l'interface de DS-Studio.
+  const projectCode = new Map<string, CodeStore>();
+  const devServer = new DevServer();
+  const projectStores = new Map<string, Store>();
+  const useProject = async (folder: string | undefined) => {
+    if (!folder) return void (store = base);
+    const cached = projectStores.get(folder);
+    if (cached) return void (store = cached);
+    const projects = path.join(base.directory, 'projects');
+    const firstEver = !(await fs.stat(projects).catch(() => undefined));
+    const dir = path.join(
+      projects,
+      createHash('sha256').update(folder).digest('hex').slice(0, 16),
+    );
+    await fs.mkdir(dir, { recursive: true, mode: 0o700 });
+    // Premier projet ouvert : il reprend le DS déjà construit, rien n'est perdu.
+    if (firstEver)
+      for (const name of ['state.json', 'state.previous.json', 'preview.json'])
+        await fs
+          .copyFile(path.join(base.directory, name), path.join(dir, name))
+          .catch(() => undefined);
+    const next = base.sibling(dir);
+    await next.init();
+    projectStores.set(folder, next);
+    store = next;
+  };
+  await useProject((await connection.status()).project?.folder);
+  // Fichier Figma : celui du projet ouvert, sinon le brief, sinon la roadmap.
+  const figmaUrl = async () =>
+    (await connection.read()).figmaUrl ||
+    (await project.read()).project.figmaUrl ||
+    (await readRoadmap(root)
+      .then((r) => r.links.find((l) => l.url.includes('figma.com'))?.url)
+      .catch(() => undefined));
+  const workspace = async () => {
+    const project = (await connection.status()).project;
+    if (!project) return { code, project: undefined };
+    let scoped = projectCode.get(project.folder);
+    if (!scoped) {
+      scoped = new CodeStore(project.folder, store.directory, true);
+      projectCode.set(project.folder, scoped);
+    }
+    return { code: scoped, project: project.name };
+  };
   const claudeCli = new ClaudeAdapter();
   const ask: Ask = options.ask ?? ((...a) => claudeCli.ask(...a));
   const figma = options.figma ?? new FigmaReader(undefined);
   const csrf = randomBytes(32).toString('hex');
+  // Code d'appairage du plugin Figma : affiché dans DS-Studio, collé dans le
+  // plugin, gardé sur ce poste ; on peut le renouveler pour couper l'accès.
+  const pluginFile = path.join(base.directory, 'plugin.json');
+  const pluginToken = async (renew = false) => {
+    if (!renew) {
+      const saved = await readPrivate(pluginFile, 1000)
+        .then((raw) => String(JSON.parse(raw).token ?? ''))
+        .catch(() => '');
+      if (/^[0-9a-f]{32}$/.test(saved)) return saved;
+    }
+    const token = randomBytes(16).toString('hex');
+    await atomicWrite(pluginFile, JSON.stringify({ token }) + '\n');
+    return token;
+  };
+  const pluginAllowed = async (given: unknown) => {
+    const expected = Buffer.from(await pluginToken());
+    const sent = Buffer.from(typeof given === 'string' ? given : '');
+    return sent.length === expected.length && timingSafeEqual(sent, expected);
+  };
   let busy = false;
   const active = new Set<AbortController>();
   const vite = options.dev
@@ -71,9 +159,39 @@ export async function createStudioServer(options: {
     res.setHeader('X-Frame-Options', 'SAMEORIGIN');
     res.setHeader(
       'Content-Security-Policy',
-      `default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'${options.dev ? ' ws://127.0.0.1:*' : ''}; frame-ancestors 'self'; base-uri 'none'; form-action 'self'`,
+      `default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'${options.dev ? ' ws://127.0.0.1:*' : ''}; frame-src 'self' http://localhost:* http://127.0.0.1:*; frame-ancestors 'self'; base-uri 'none'; form-action 'self'`,
     );
     try {
+      // Plugin Figma : seule entrée acceptée depuis une autre origine (« null »,
+      // l'iframe du plugin), en lecture seule, avec le code d'appairage.
+      // Figma n'accepte que « localhost » dans le manifeste du plugin : cette
+      // route seule accepte aussi cet hôte, toujours sur la boucle locale.
+      if (
+        req.url?.split('?')[0] === '/api/plugin/sync' &&
+        (req.headers.host === `127.0.0.1:${port}` ||
+          req.headers.host === `localhost:${port}`)
+      ) {
+        res.setHeader('Access-Control-Allow-Origin', 'null');
+        res.setHeader('Access-Control-Allow-Headers', 'X-DS-Plugin');
+        res.setHeader('Access-Control-Allow-Methods', 'GET');
+        if (req.method === 'OPTIONS') {
+          res.writeHead(204);
+          return res.end();
+        }
+        if (
+          req.method !== 'GET' ||
+          !(await pluginAllowed(req.headers['x-ds-plugin']))
+        )
+          throw new StudioError('Code d’appairage du plugin invalide.', 403);
+        const saved = await connection.read();
+        const state = store.snapshot();
+        return send(200, {
+          project: (await connection.status()).project?.name ?? null,
+          figmaFileKey: figmaFileKey(saved.figmaUrl) ?? null,
+          revision: state.revision,
+          tokens: state.tokens,
+        });
+      }
       if (req.headers.host !== `127.0.0.1:${port}`)
         throw new StudioError(
           'Hôte refusé. Utilisez l’adresse 127.0.0.1 affichée au démarrage.',
@@ -121,20 +239,71 @@ export async function createStudioServer(options: {
             );
           if (url.pathname === '/api/project')
             return send(200, await project.read());
-          if (url.pathname === '/api/figma') {
-            // Fichier : lien du brief privé, sinon lien Figma de la roadmap.
-            const brief = (await project.read()).project.figmaUrl;
-            const fromRoadmap = await readRoadmap(root)
-              .then(
-                (r) => r.links.find((l) => l.url.includes('figma.com'))?.url,
-              )
-              .catch(() => undefined);
-            return send(200, await figma.status(brief || fromRoadmap));
+          if (url.pathname === '/api/figma')
+            return send(200, await figma.status(await figmaUrl()));
+          // Lecture Figma du projet ouvert : composants, nœud, rendu, variables.
+          if (url.pathname === '/api/project-tokens') {
+            const project = (await connection.status()).project;
+            if (!project)
+              throw new StudioError('Ouvrez d’abord un projet.', 409);
+            return send(200, await readProjectTokens(project.folder));
+          }
+          if (url.pathname === '/api/figma/components')
+            return send(200, await figmaComponents(figma, await figmaUrl()));
+          if (url.pathname === '/api/figma/node')
+            return send(
+              200,
+              await figmaNode(
+                figma,
+                await figmaUrl(),
+                url.searchParams.get('id') ?? '',
+              ),
+            );
+          if (url.pathname === '/api/figma/variables') {
+            const read = await figmaVariables(figma, await figmaUrl());
+            return send(200, { ...read, ...variablesToTokens(read.items) });
+          }
+          if (url.pathname === '/api/figma/image') {
+            const png = await figmaImage(
+              figma,
+              await figmaUrl(),
+              url.searchParams.get('id') ?? '',
+            );
+            res.writeHead(200, { 'Content-Type': 'image/png' });
+            return res.end(png);
           }
           if (url.pathname === '/api/clodo')
             return send(200, await dashboard.readClodo());
+          if (url.pathname === '/api/preview')
+            return send(200, await dashboard.readPreview(store.directory));
+          if (url.pathname === '/api/connection')
+            return send(200, await connection.status());
+          if (url.pathname === '/api/plugin/pairing')
+            return send(200, {
+              token: await pluginToken(),
+              manifest: path.join(root, 'figma-plugin', 'manifest.json'),
+            });
+          if (url.pathname === '/api/git/status') {
+            const project = (await connection.status()).project;
+            if (!project)
+              throw new StudioError('Ouvrez d’abord un projet.', 409);
+            return send(200, {
+              ...(await gitStatus(project.folder)),
+              pending: await publishCounter.get(project.folder),
+              batch: BATCH,
+            });
+          }
+          if (url.pathname === '/api/project-dev') {
+            const project = (await connection.status()).project;
+            return send(
+              200,
+              project
+                ? await devServer.readFor(project.folder)
+                : devServer.read(),
+            );
+          }
           if (url.pathname === '/api/code/last')
-            return send(200, await code.last());
+            return send(200, await (await workspace()).code.last());
           if (url.pathname === '/api/roadmap')
             return send(200, await readRoadmap(root));
           if (url.pathname === '/api/dashboard')
@@ -214,18 +383,113 @@ export async function createStudioServer(options: {
         }
         if (url.pathname === '/api/commit') {
           const b = z.object({ id: z.string().uuid() }).strict().parse(body);
-          return send(200, await store.commit(b.id));
+          const next = await store.commit(b.id);
+          // Projet ouvert : le token validé part aussi dans son fichier DTCG.
+          const project = (await connection.status()).project;
+          if (project && store !== base)
+            await writeProjectTokens(project.folder, next.tokens).catch((e) =>
+              console.error('Écriture des tokens du projet impossible :', e),
+            );
+          await countChange();
+          return send(200, next);
         }
         // Code : Clodo propose, l'étudiante valide le diff, le serveur écrit.
         if (url.pathname === '/api/clodo')
           return send(200, await dashboard.saveClodo(body));
+        if (url.pathname === '/api/preview')
+          return send(200, await dashboard.savePreview(body, store.directory));
+        // Projet ouvert : dossier Git local et fichier Figma, choisis par l'étudiante.
+        if (url.pathname === '/api/connection') {
+          const before = (await connection.read()).folder;
+          const saved = await connection.save(body);
+          // Autre projet : son propre DS, et le serveur de dev de l'ancien s'arrête.
+          if (saved.project?.folder !== before) {
+            devServer.stop();
+            await useProject(saved.project?.folder);
+          }
+          return send(200, saved);
+        }
+        // Serveur de dev du projet ouvert : lancé et arrêté au clic, jamais seul.
+        if (url.pathname === '/api/project-dev/start') {
+          const project = (await connection.status()).project;
+          if (!project) throw new StudioError('Ouvrez d’abord un projet.', 409);
+          return send(200, await devServer.start(project.folder));
+        }
+        if (url.pathname === '/api/project-dev/install') {
+          const project = (await connection.status()).project;
+          if (!project) throw new StudioError('Ouvrez d’abord un projet.', 409);
+          return send(200, await devServer.install(project.folder));
+        }
+        // Tokens du projet ajoutés ou mis à jour par le diff habituel ; les
+        // tokens déjà présents dans DS-Studio ne sont jamais supprimés ici.
+        if (url.pathname === '/api/project-tokens/import') {
+          const b = z
+            .object({ revision: z.number().int().nonnegative() })
+            .strict()
+            .parse(body);
+          const project = (await connection.status()).project;
+          if (!project) throw new StudioError('Ouvrez d’abord un projet.', 409);
+          const { tokens } = await readProjectTokens(project.folder);
+          return send(
+            200,
+            store.proposeImport(b.revision, {
+              ...store.snapshot().tokens,
+              ...tokens,
+            }),
+          );
+        }
+        if (url.pathname === '/api/plugin/pairing/renew')
+          return send(200, {
+            token: await pluginToken(true),
+            manifest: path.join(root, 'figma-plugin', 'manifest.json'),
+          });
+        // Commit et push du projet ouvert, après l'accord donné dans le chat.
+        if (url.pathname === '/api/git/publish') {
+          const b = z
+            .object({ message: z.string().trim().min(1).max(500) })
+            .strict()
+            .parse(body);
+          const project = (await connection.status()).project;
+          if (!project) throw new StudioError('Ouvrez d’abord un projet.', 409);
+          const pending = await publishCounter.get(project.folder);
+          if (pending < BATCH)
+            throw new StudioError(
+              `Pas encore : ${pending}/${BATCH} modifications validées. La publication est proposée à ${BATCH}.`,
+              409,
+            );
+          const done = await publish(project.folder, b.message);
+          // Push refusé : le compteur reste plein, on pourra réessayer.
+          await publishCounter.reset(project.folder);
+          return send(200, done);
+        }
+        if (url.pathname === '/api/project-dev/stop')
+          return send(200, devServer.stop());
+        if (url.pathname === '/api/connection/pick')
+          return send(200, { folder: await pickFolder() });
+        // Vérifications avant enregistrement : rien n'est écrit.
+        if (url.pathname === '/api/connection/inspect') {
+          const b = z
+            .object({ folder: z.string().min(1).max(1000) })
+            .strict()
+            .parse(body);
+          return send(200, await inspectFolder(b.folder));
+        }
+        if (url.pathname === '/api/connection/figma') {
+          const b = z
+            .object({ url: z.string().max(500) })
+            .strict()
+            .parse(body);
+          return send(200, await figma.status(b.url));
+        }
         if (url.pathname === '/api/code/apply') {
           const b = z.object({ id: z.string().uuid() }).strict().parse(body);
-          return send(200, await code.apply(b.id));
+          const applied = await (await workspace()).code.apply(b.id);
+          await countChange();
+          return send(200, applied);
         }
         if (url.pathname === '/api/code/revert') {
           const b = z.object({ id: z.string().uuid() }).strict().parse(body);
-          return send(200, await code.revert(b.id));
+          return send(200, await (await workspace()).code.revert(b.id));
         }
         if (url.pathname === '/api/code') {
           const b = z
@@ -241,6 +505,7 @@ export async function createStudioServer(options: {
                     .strict(),
                 )
                 .max(10),
+              focus: focusSchema.optional(),
             })
             .strict()
             .parse(body);
@@ -252,16 +517,32 @@ export async function createStudioServer(options: {
           const cancel = () => controller.abort();
           res.once('close', cancel);
           try {
-            return send(
-              200,
-              await proposeCode(
-                ask,
-                code,
-                b.message,
-                b.history,
-                controller.signal,
-              ),
+            const scope = await workspace();
+            const { changes, ...reply } = await proposeCode(
+              ask,
+              scope.code,
+              b.message,
+              b.history,
+              controller.signal,
+              b.focus,
+              store.snapshot().tokens,
+              scope.project,
+              // Figma lu par le serveur, seulement si un fichier est relié.
+              figma.hasToken && (await figmaUrl())
+                ? {
+                    components: await figmaComponents(
+                      figma,
+                      await figmaUrl(),
+                    ).catch(() => []),
+                    node: async (id) => figmaNode(figma, await figmaUrl(), id),
+                  }
+                : undefined,
             );
+            // Clodo a choisi des tokens : même diff et même validation qu'à la main.
+            const tokenProposal = changes?.length
+              ? store.propose(store.snapshot().revision, changes, 'claude')
+              : null;
+            return send(200, { ...reply, tokenProposal });
           } finally {
             busy = false;
             active.delete(controller);
@@ -284,6 +565,7 @@ export async function createStudioServer(options: {
                     .strict(),
                 )
                 .max(10),
+              focus: focusSchema.optional(),
             })
             .strict()
             .parse(body);
@@ -337,6 +619,7 @@ export async function createStudioServer(options: {
                     .catch(() => 'indisponible')),
                 rules: await context('DESIGN_RULES.md'),
                 history: b.history,
+                focus: b.focus,
               },
               controller.signal,
             );
@@ -422,6 +705,7 @@ export async function createStudioServer(options: {
     server,
     close: async () => {
       for (const c of active) c.abort();
+      devServer.stop();
       await new Promise<void>((resolve, reject) =>
         server.close((e) => (e ? reject(e) : resolve())),
       );

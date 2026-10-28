@@ -11,10 +11,7 @@ import { createStudioServer } from '../app/server/http.js';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const seed = tokensSchema.parse(
   JSON.parse(
-    await readFile(
-      path.join(root, 'workspace/design-system.tokens.json'),
-      'utf8',
-    ),
+    await readFile(path.join(root, 'tests/fixtures/tokens.json'), 'utf8'),
   ),
 );
 async function fixture(
@@ -426,4 +423,226 @@ test('bulle Clodo : position enregistrée, valeurs hors écran refusées', async
   );
   for (const bad of [{ x: 2, y: 0 }, { x: 0.5 }, { x: 0, y: 0, z: 1 }])
     assert.equal((await post('clodo', bad)).status, 400);
+});
+
+test('sélection de la page DS transmise à Clodo, forme stricte', async (t) => {
+  const inputs: string[] = [];
+  const { post } = await fixture(t, false, async (_system, input) => {
+    inputs.push(input);
+    return JSON.stringify({ files: [], message: 'Rien à faire.' });
+  });
+  const focus = {
+    page: 'design-system',
+    kind: 'component',
+    name: 'ExampleForm',
+    path: ['ExampleForm'],
+    level: 'organism',
+    source: 'React · DesignSystem.tsx › ExampleForm',
+    selector: 'form.ds-form',
+    props: {},
+    tokens: ['space.md'],
+  };
+  const ok = await post('code', {
+    message: 'Change le spacing de ce composant',
+    history: [],
+    focus,
+  });
+  assert.equal(ok.status, 200);
+  assert.equal(JSON.parse(inputs[0]).focus.name, 'ExampleForm');
+  assert.equal(
+    (
+      await post('code', {
+        message: 'x',
+        history: [],
+        focus: { ...focus, script: 'non' },
+      })
+    ).status,
+    400,
+  );
+});
+
+test('un seul chat : Clodo peut choisir les tokens, soumis au diff', async (t) => {
+  const { post, store } = await fixture(t, false, async () =>
+    JSON.stringify({
+      changes: [{ key: 'space.md', value: 12 }],
+      files: [],
+      message: 'Je resserre space.md : tous les composants qui l’utilisent.',
+    }),
+  );
+  const response = await post('code', {
+    message: 'Resserre les espacements',
+    history: [],
+  });
+  assert.equal(response.status, 200);
+  const reply = await response.json();
+  assert.equal(reply.proposal, null);
+  assert.deepEqual(reply.tokenProposal.patches, [
+    { key: 'space.md', type: 'dimension', before: 16, after: 12 },
+  ]);
+  assert.equal(reply.tokenProposal.source, 'claude');
+  assert.equal(store.snapshot().revision, 0, 'rien avant validation');
+});
+
+test('Preview : formats et pages enregistrés, valeurs hors bornes refusées', async (t) => {
+  const { origin, post } = await fixture(t);
+  const initial = await (await fetch(origin + '/api/preview')).json();
+  assert.deepEqual(
+    initial.formats.map((f: { name: string }) => f.name),
+    ['iPhone', 'Tablette', 'Desktop'],
+  );
+  const next = {
+    ...initial,
+    pages: [...initial.pages, { id: 'profil-ab12', name: 'Profil' }],
+  };
+  assert.equal((await post('preview', next)).status, 200);
+  assert.deepEqual(await (await fetch(origin + '/api/preview')).json(), next);
+  const tooWide = {
+    ...next,
+    formats: [{ id: 'x', name: 'X', width: 99999, height: 800 }],
+  };
+  assert.equal((await post('preview', tooWide)).status, 400);
+});
+
+test('Ouvrir un projet : dossier Git inspecté, liens invalides refusés', async (t) => {
+  const { origin, post } = await fixture(t);
+  assert.deepEqual(await (await fetch(origin + '/api/connection')).json(), {
+    saved: {},
+  });
+  // Le dépôt de DS-Studio lui-même sert de dossier Git d'essai.
+  const inspected = await (
+    await post('connection/inspect', { folder: root })
+  ).json();
+  assert.equal(inspected.name, path.basename(root));
+  assert.ok(inspected.git, 'dépôt Git détecté');
+  assert.equal(
+    (await post('connection/inspect', { folder: 'relatif' })).status,
+    400,
+  );
+  assert.equal(
+    (
+      await post('connection', {
+        folder: root,
+        figmaUrl: 'https://evil.invalid/x',
+      })
+    ).status,
+    400,
+  );
+  const figmaUrl = 'https://www.figma.com/design/KpumlnYQdqqk0j0Q0GxPmA/Test';
+  const saved = await (
+    await post('connection', { folder: root, figmaUrl })
+  ).json();
+  assert.equal(saved.saved.figmaUrl, figmaUrl);
+  assert.equal(saved.project.name, path.basename(root));
+  assert.deepEqual(
+    (await (await fetch(origin + '/api/connection')).json()).saved,
+    saved.saved,
+  );
+});
+
+test('un DS par projet : le premier reprend l’existant, chacun garde le sien', async (t) => {
+  const { origin, post } = await fixture(t);
+  const state = async () => (await fetch(origin + '/api/state')).json();
+  const commit = async (value: string) => {
+    const proposal = await (
+      await post('proposals', {
+        revision: (await state()).revision,
+        changes: [{ key: 'color.brand', value }],
+      })
+    ).json();
+    assert.equal((await post('commit', { id: proposal.id })).status, 200);
+  };
+  await commit('#111111');
+  // Dossiers temporaires : jamais le dépôt de DS-Studio comme projet.
+  const first = await mkdtemp(path.join(tmpdir(), 'ds-premier-'));
+  t.after(() => rm(first, { recursive: true, force: true }));
+  // Premier projet ouvert : il reprend le DS déjà construit.
+  assert.equal((await post('connection', { folder: first })).status, 200);
+  assert.equal((await state()).tokens['color.brand'].$value, '#111111');
+  await commit('#222222');
+  const pages = await (await fetch(origin + '/api/preview')).json();
+  pages.pages.push({ id: 'profil-ab12', name: 'Profil', path: '/profil' });
+  assert.equal((await post('preview', pages)).status, 200);
+  // Autre projet : DS de départ, Preview par défaut.
+  const other = await mkdtemp(path.join(tmpdir(), 'ds-autre-'));
+  t.after(() => rm(other, { recursive: true, force: true }));
+  assert.equal((await post('connection', { folder: other })).status, 200);
+  const fresh = await state();
+  assert.equal(fresh.revision, 0);
+  assert.equal(fresh.tokens['color.brand'].$value, '#3F3F46');
+  assert.equal(
+    (await (await fetch(origin + '/api/preview')).json()).pages.length,
+    2,
+  );
+  // Retour au premier : on retrouve ses tokens et ses pages.
+  assert.equal((await post('connection', { folder: first })).status, 200);
+  assert.equal((await state()).tokens['color.brand'].$value, '#222222');
+  assert.equal(
+    (await (await fetch(origin + '/api/preview')).json()).pages.at(-1).name,
+    'Profil',
+  );
+});
+
+test('plugin Figma : lecture seule, code d’appairage obligatoire et renouvelable', async (t) => {
+  const { origin, post } = await fixture(t);
+  const sync = (code?: string) =>
+    fetch(origin + '/api/plugin/sync', {
+      headers: { Origin: 'null', ...(code ? { 'X-DS-Plugin': code } : {}) },
+    });
+  assert.equal((await sync()).status, 403);
+  assert.equal((await sync('0'.repeat(32))).status, 403);
+  const preflight = await fetch(origin + '/api/plugin/sync', {
+    method: 'OPTIONS',
+    headers: { Origin: 'null' },
+  });
+  assert.equal(preflight.status, 204);
+  assert.equal(preflight.headers.get('access-control-allow-origin'), 'null');
+  const { token } = await (await fetch(origin + '/api/plugin/pairing')).json();
+  const ok = await sync(token);
+  assert.equal(ok.status, 200);
+  const body = await ok.json();
+  assert.equal(body.tokens['color.brand'].$value, '#3F3F46');
+  // Depuis l'origine du plugin, aucune autre route n'est ouverte.
+  assert.equal(
+    (
+      await fetch(origin + '/api/state', {
+        headers: { Origin: 'null', 'X-DS-Plugin': token },
+      })
+    ).status,
+    403,
+  );
+  const renewed = await (await post('plugin/pairing/renew', {})).json();
+  assert.notEqual(renewed.token, token);
+  assert.equal((await sync(token)).status, 403, 'ancien code coupé');
+  assert.equal((await sync(renewed.token)).status, 200);
+});
+
+test('plugin Figma : « localhost » accepté pour sa route seulement', async (t) => {
+  const { origin } = await fixture(t);
+  const port = new URL(origin).port;
+  const { token } = await (await fetch(origin + '/api/plugin/pairing')).json();
+  // Requête vers 127.0.0.1 avec l'en-tête Host « localhost », comme Figma.
+  const get = (route: string) =>
+    new Promise<number>((resolve, reject) =>
+      http
+        .get(
+          {
+            host: '127.0.0.1',
+            port,
+            path: route,
+            headers: {
+              Host: `localhost:${port}`,
+              Origin: 'null',
+              'X-DS-Plugin': token,
+            },
+          },
+          (res) => {
+            res.resume();
+            resolve(res.statusCode ?? 0);
+          },
+        )
+        .on('error', reject),
+    );
+  assert.equal(await get('/api/plugin/sync'), 200);
+  assert.equal(await get('/api/state'), 403);
+  assert.equal(await get('/api/plugin/pairing'), 403);
 });

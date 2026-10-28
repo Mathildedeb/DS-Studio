@@ -138,3 +138,53 @@ export const clodoSchema = z
   .strict();
 export type ClodoPosition = z.infer<typeof clodoSchema>;
 export const defaultClodo: ClodoPosition = { x: 0.96, y: 0.92 };
+
+// Formats et pages de la Preview. Les pages « cards » et « form » sont les
+// écrans codés dans Scenario ; une page ajoutée s'ouvre vide, à remplir.
+const label = z.string().trim().min(1).max(40);
+export const previewSchema = z
+  .object({
+    formats: z
+      .array(
+        z
+          .object({
+            id: z.string().regex(/^[a-z0-9-]{1,40}$/),
+            name: label,
+            width: z.number().int().min(240).max(2560),
+            height: z.number().int().min(320).max(2000),
+          })
+          .strict(),
+      )
+      .min(1)
+      .max(20),
+    pages: z
+      .array(
+        z
+          .object({
+            id: z.string().regex(/^[a-z0-9-]{1,40}$/),
+            name: label,
+            // Route de la page dans le projet ouvert (ex. /profil).
+            path: z
+              .string()
+              .max(200)
+              .regex(/^\/[A-Za-z0-9\-._~/?=&#%]*$/, 'Chemin attendu : /page')
+              .optional(),
+          })
+          .strict(),
+      )
+      .min(1)
+      .max(40),
+  })
+  .strict();
+export type PreviewConfig = z.infer<typeof previewSchema>;
+export const defaultPreview: PreviewConfig = {
+  formats: [
+    { id: 'iphone', name: 'iPhone', width: 393, height: 852 },
+    { id: 'tablette', name: 'Tablette', width: 820, height: 1180 },
+    { id: 'desktop', name: 'Desktop', width: 1440, height: 900 },
+  ],
+  pages: [
+    { id: 'cards', name: 'Découvrir' },
+    { id: 'form', name: 'Inscription' },
+  ],
+};

@@ -1,0 +1,15 @@
+{
+  "name": "DS-Studio",
+  "id": "ds-studio-local-sync",
+  "api": "1.0.0",
+  "main": "code.js",
+  "ui": "ui.html",
+  "editorType": ["figma"],
+  "documentAccess": "dynamic-page",
+  "enablePrivatePluginApi": true,
+  "networkAccess": {
+    "allowedDomains": ["none"],
+    "devAllowedDomains": ["http://localhost:4310"],
+    "reasoning": "Lit les tokens validés dans DS-Studio, qui tourne sur cet ordinateur."
+  }
+}

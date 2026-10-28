@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<style>
+  body { font: 12px/1.45 Inter, system-ui, sans-serif; margin: 0; padding: 14px; color: var(--figma-color-text, #111); background: var(--figma-color-bg, #fff); }
+  h1 { font-size: 14px; margin: 0 0 4px; }
+  p { margin: 4px 0; color: var(--figma-color-text-secondary, #666); }
+  label { display: block; font-weight: 600; margin: 10px 0 4px; }
+  input[type=text], input[type=password] { width: 100%; box-sizing: border-box; padding: 6px 8px; border: 1px solid var(--figma-color-border, #ddd); border-radius: 6px; font: inherit; background: transparent; color: inherit; }
+  button { font: inherit; padding: 7px 12px; border-radius: 6px; border: 1px solid var(--figma-color-border, #ccc); background: transparent; color: inherit; cursor: pointer; }
+  button.primary { background: var(--figma-color-bg-brand, #0d99ff); color: #fff; border-color: transparent; }
+  button:disabled { opacity: .5; cursor: default; }
+  .row { display: flex; gap: 6px; margin-top: 10px; }
+  .box { margin-top: 12px; padding: 10px; border-radius: 8px; background: var(--figma-color-bg-secondary, #f5f5f5); }
+  ul { margin: 6px 0 0; padding: 0; list-style: none; max-height: 220px; overflow: auto; }
+  li { display: flex; align-items: center; gap: 6px; padding: 3px 0; border-bottom: 1px solid var(--figma-color-border, #eee); }
+  li code { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .sw { width: 14px; height: 14px; border-radius: 3px; border: 1px solid #0002; flex: none; }
+  .error { color: #d92d20; }
+  .ok { color: #16a34a; }
+</style>
+</head>
+<body>
+  <h1>DS-Studio → Figma</h1>
+  <p>Applique les tokens validés dans DS-Studio aux variables de ce fichier. Rien n’est modifié avant votre clic.</p>
+
+  <label for="code">Code d’appairage (affiché dans DS-Studio, onglet Figma)</label>
+  <input id="code" type="password" autocomplete="off" spellcheck="false">
+  <label for="server">Adresse de DS-Studio</label>
+  <input id="server" type="text" value="http://localhost:4310" spellcheck="false">
+  <div class="row"><button id="sync" class="primary">Voir les changements</button></div>
+  <label><input type="checkbox" id="auto"> Mode automatique : appliquer tout de suite chaque token validé dans DS-Studio, tant que ce plugin est ouvert</label>
+  <p id="auto-status"></p>
+
+  <div id="out"></div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const out = $('out');
+let current;
+let lastRevision = null;
+let timer = null;
+const settings = () => ({
+  server: $('server').value.trim().replace(/\/$/, ''),
+  code: $('code').value.trim(),
+});
+const save = () =>
+  parent.postMessage({ pluginMessage: Object.assign({ type: 'save-settings', auto: $('auto').checked }, settings()) }, '*');
+// Mode automatique : DS-Studio est relu toutes les 4 s ; une nouvelle
+// révision part directement vers les variables du fichier.
+const tick = async () => {
+  const { server, code } = settings();
+  try {
+    const r = await fetch(server + '/api/plugin/sync', { headers: { 'X-DS-Plugin': code } });
+    const body = await r.json();
+    if (!r.ok) throw new Error(body.error || 'DS-Studio a refusé la demande.');
+    if (body.revision !== lastRevision)
+      parent.postMessage({ pluginMessage: { type: 'plan', auto: true, revision: body.revision, tokens: body.tokens, fileKey: body.figmaFileKey } }, '*');
+  } catch (e) {
+    $('auto-status').innerHTML = `<span class="error">${esc(e.message === 'Failed to fetch' ? 'DS-Studio injoignable, nouvel essai dans 4 s…' : e.message)}</span>`;
+  }
+};
+const setAuto = (on) => {
+  clearInterval(timer);
+  timer = null;
+  if (on) {
+    $('auto-status').textContent = 'À l’écoute de DS-Studio…';
+    lastRevision = null;
+    tick();
+    timer = setInterval(tick, 4000);
+  } else $('auto-status').textContent = '';
+};
+$('auto').onchange = () => {
+  save();
+  setAuto($('auto').checked);
+};
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
+const swatch = (v) => /^#[0-9A-F]{6}$/i.test(v) ? `<span class="sw" style="background:${v}"></span>` : '';
+parent.postMessage({ pluginMessage: { type: 'load-settings' } }, '*');
+
+$('sync').onclick = async () => {
+  const { server, code } = settings();
+  save();
+  out.innerHTML = '<p>Lecture de DS-Studio…</p>';
+  try {
+    const r = await fetch(server + '/api/plugin/sync', { headers: { 'X-DS-Plugin': code } });
+    const body = await r.json();
+    if (!r.ok) throw new Error(body.error || 'DS-Studio a refusé la demande.');
+    current = body;
+    parent.postMessage({ pluginMessage: { type: 'plan', tokens: body.tokens, fileKey: body.figmaFileKey } }, '*');
+  } catch (e) {
+    out.innerHTML = `<p class="error">${esc(e.message === 'Failed to fetch' ? 'DS-Studio injoignable : est-il lancé sur cet ordinateur ?' : e.message)}</p>`;
+  }
+};
+
+onmessage = (event) => {
+  const msg = event.data.pluginMessage;
+  if (!msg) return;
+  if (msg.type === 'settings') {
+    if (msg.server) $('server').value = msg.server;
+    if (msg.code) $('code').value = msg.code;
+    if (msg.auto && msg.code) {
+      $('auto').checked = true;
+      setAuto(true);
+    }
+  }
+  if (msg.type === 'error') {
+    out.innerHTML = `<p class="error">${esc(msg.message)}</p>`;
+    // Mauvais fichier ou refus : le mode automatique s'arrête net.
+    if (timer) {
+      $('auto').checked = false;
+      setAuto(false);
+      save();
+    }
+  }
+  if (msg.type === 'auto') {
+    lastRevision = msg.revision;
+    const time = new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    $('auto-status').innerHTML = `<span class="ok">À l’écoute · révision ${msg.revision} synchronisée à ${time}${msg.updated ? ` · ${msg.updated} variable(s) mise(s) à jour` : ''}</span>${msg.failed.length ? `<br><span class="error">Non appliqué : ${esc(msg.failed.join(', '))}</span>` : ''}`;
+  }
+  if (msg.type === 'plan') {
+    const p = msg.plan;
+    current.plan = p;
+    out.innerHTML = `
+      <div class="box">
+        <strong>${esc(current.project || 'Projet')} → ${esc(msg.file)}</strong>
+        <p>${msg.variables} variables lues · ${p.same} déjà à jour · ${p.aliased.length} alias laissés tels quels</p>
+        <p><strong>${p.updates.length} variable(s) à mettre à jour</strong></p>
+        <ul>${p.updates.map((u) => `<li>${swatch(u.after)}<code title="${esc(u.name)}">${esc(u.name)}</code> ${esc(u.before)} → <strong>${esc(u.after)}</strong></li>`).join('')}</ul>
+        ${p.missing.length ? `<details><summary>${p.missing.length} token(s) sans variable reconnue</summary><ul>${p.missing.map((m) => `<li>${swatch(m.value)}<code title="${esc(m.key)}">${esc(m.key)}</code> ${m.near.length ? '≈ ' + esc(m.near.join(', ')) : 'aucune variable proche'}</li>`).join('')}</ul><div class="row"><button id="copy">Copier ce diagnostic</button></div></details>
+        <label><input type="checkbox" id="create"> Créer ces ${p.missing.length} token(s) dans une collection « DS-Studio » (seulement s'ils n'existent vraiment pas dans Figma)</label>` : ''}
+        <div class="row"><button id="apply" class="primary" ${p.updates.length || p.missing.length ? '' : 'disabled'}>Appliquer</button></div>
+      </div>`;
+    if ($('copy')) $('copy').onclick = () => {
+      const text = p.missing.map((m) => `${m.key} [${m.type}] ≈ ${m.near.join(' | ') || '—'}`).join('\n');
+      const area = document.createElement('textarea');
+      area.value = text;
+      document.body.appendChild(area);
+      area.select();
+      document.execCommand('copy');
+      area.remove();
+      $('copy').textContent = 'Copié';
+    };
+    $('apply').onclick = () => {
+      $('apply').disabled = true;
+      parent.postMessage({ pluginMessage: {
+        type: 'apply',
+        updates: p.updates,
+        create: $('create') && $('create').checked ? p.missing : [],
+      } }, '*');
+    };
+  }
+  if (msg.type === 'report') {
+    out.innerHTML = `<div class="box"><p class="ok"><strong>${msg.updated} variable(s) mise(s) à jour${msg.created ? `, ${msg.created} créée(s)` : ''}, valeurs relues.</strong></p>${msg.failed.length ? `<p class="error">Non appliqué : ${esc(msg.failed.join(', '))}</p>` : ''}<p>Les composants qui utilisent ces variables sont à jour.</p></div>`;
+  }
+};
+</script>
+</body>
+</html>

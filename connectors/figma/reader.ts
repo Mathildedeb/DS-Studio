@@ -1,7 +1,9 @@
 import { z } from 'zod';
+import { StudioError } from '../../app/server/store.js';
 
 // Lecture seule par l'API REST officielle, avec un jeton personnel de l'étudiant
-// (portée file_content:read). Aucune écriture, aucun accès aux variables (Enterprise).
+// (portée file_content:read). Aucune écriture. Les variables ne sont lisibles
+// qu'avec l'offre Enterprise : library.ts se replie alors sur les styles.
 export interface FigmaFileStatus {
   connected: boolean;
   label: string;
@@ -26,6 +28,76 @@ export class FigmaReader {
     private fetcher: typeof fetch = fetch,
     private ttl = 60_000,
   ) {}
+  private data = new Map<string, { at: number; value: unknown }>();
+  // GET borné vers api.figma.com, en cache ; erreurs réécrites sans leur corps.
+  // optional : 403/404 renvoient undefined (variables hors Enterprise).
+  async api(route: string, optional = false): Promise<unknown> {
+    if (!this.token)
+      throw new StudioError('Figma non connecté · jeton absent.', 409);
+    const hit = this.data.get(route);
+    if (hit && Date.now() - hit.at < this.ttl) return hit.value;
+    let response: Response;
+    try {
+      response = await this.fetcher(`https://api.figma.com${route}`, {
+        headers: { 'X-Figma-Token': this.token },
+        signal: AbortSignal.timeout(30_000),
+      });
+    } catch {
+      throw new StudioError('Figma injoignable · réessayez plus tard.', 502);
+    }
+    if (optional && (response.status === 403 || response.status === 404))
+      return undefined;
+    if (response.status === 401 || response.status === 403)
+      throw new StudioError('Figma : jeton refusé ou expiré.', 502);
+    if (response.status === 404)
+      throw new StudioError('Figma : fichier ou élément introuvable.', 404);
+    if (response.status === 429)
+      throw new StudioError(
+        'Figma : trop de demandes, réessayez dans une minute.',
+        429,
+      );
+    if (!response.ok) throw new StudioError('Figma : erreur du service.', 502);
+    const text = await response.text();
+    if (text.length > 40_000_000)
+      throw new StudioError('Figma : réponse trop volumineuse.', 502);
+    let value: unknown;
+    try {
+      value = JSON.parse(text);
+    } catch {
+      throw new StudioError('Figma : réponse illisible.', 502);
+    }
+    if (this.data.size > 200) this.data.clear();
+    this.data.set(route, { at: Date.now(), value });
+    return value;
+  }
+  // Rendu PNG hébergé par Figma : seul un hôte Figma ou AWS est suivi.
+  async download(link: string) {
+    let host = '';
+    try {
+      const u = new URL(link);
+      host = u.protocol === 'https:' ? u.hostname : '';
+    } catch {
+      /* Lien invalide : refusé ci-dessous. */
+    }
+    if (!/(^|\.)(amazonaws\.com|figma\.com)$/.test(host))
+      throw new StudioError('Figma : rendu indisponible.', 502);
+    let response: Response;
+    try {
+      response = await this.fetcher(link, {
+        signal: AbortSignal.timeout(30_000),
+      });
+    } catch {
+      throw new StudioError('Figma : rendu injoignable.', 502);
+    }
+    const bytes = Buffer.from(await response.arrayBuffer());
+    if (
+      !response.ok ||
+      bytes.length > 8_000_000 ||
+      bytes.subarray(1, 4).toString() !== 'PNG'
+    )
+      throw new StudioError('Figma : rendu illisible.', 502);
+    return bytes;
+  }
   get hasToken() {
     return !!this.token;
   }

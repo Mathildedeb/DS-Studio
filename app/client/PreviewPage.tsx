@@ -1,0 +1,371 @@
+import { useEffect, useState } from 'react';
+import { request } from './api.js';
+import { defaultPreview, type PreviewConfig } from '../shared/dashboard.js';
+import type { FolderInfo } from '../shared/connection.js';
+import type { Focus } from '../shared/focus.js';
+import type { DevStatus } from '../server/devserver.js';
+
+// Page Preview : un format (largeur × hauteur réelles) et une page du proto.
+// Formats et pages se créent ici et restent enregistrés sur ce poste. Avec un
+// projet ouvert, l'iframe affiche le serveur de dev de ce projet, à la route
+// de la page choisie.
+const builtIn = new Set(['cards', 'form']);
+const slug = (name: string) =>
+  `${
+    name
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-|-$/g, '')
+      .slice(0, 30) || 'item'
+  }-${Math.random().toString(36).slice(2, 6)}`;
+
+const routeOf = (name: string) =>
+  '/' +
+  name
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-|-$/g, '');
+
+export default function PreviewPage({
+  project,
+  onError,
+  onFocus,
+}: {
+  project?: FolderInfo;
+  onError: (message: string) => void;
+  onFocus: (focus: Focus) => void;
+}) {
+  const [dev, setDev] = useState<DevStatus>({ state: 'stopped', logs: [] });
+  const [route, setRoute] = useState('/');
+  useEffect(() => {
+    if (project)
+      request<DevStatus>('project-dev')
+        .then(setDev)
+        .catch(() => undefined);
+  }, [project?.folder]);
+  const run = (action: 'start' | 'stop' | 'install') => {
+    setDev((d) => ({
+      ...d,
+      state:
+        action === 'start'
+          ? 'starting'
+          : action === 'install'
+            ? 'installing'
+            : d.state,
+    }));
+    request<DevStatus>(`project-dev/${action}`, {})
+      .then(setDev)
+      .catch((e) => {
+        setDev((d) => ({ ...d, state: 'error' }));
+        onError(e.message);
+      });
+  };
+  const [config, setConfig] = useState<PreviewConfig>(defaultPreview);
+  const [format, setFormat] = useState('iphone');
+  const [page, setPage] = useState('cards');
+  const [adding, setAdding] = useState<'format' | 'page' | 'rename'>();
+  const [name, setName] = useState('');
+  const [width, setWidth] = useState('390');
+  const [height, setHeight] = useState('844');
+  useEffect(() => {
+    request<PreviewConfig>('preview')
+      .then(setConfig)
+      .catch((e) => onError(e.message));
+  }, []);
+  const save = (next: PreviewConfig) => {
+    setConfig(next);
+    request('preview', next).catch((e) => onError(e.message));
+  };
+  const f = config.formats.find((x) => x.id === format) ?? config.formats[0];
+  const p = config.pages.find((x) => x.id === page) ?? config.pages[0];
+  const path = p.path ?? '/';
+  // Clodo reçoit la page et le format affichés : « ici » = cette page.
+  useEffect(() => {
+    onFocus({
+      page: 'preview',
+      kind: 'page',
+      name: p.name,
+      path: [p.name],
+      value: project ? path : p.id,
+      props: { format: `${f.name} ${f.width}px` },
+    });
+  }, [p.name, path, f.name, f.width, !!project]);
+  const close = () => {
+    setAdding(undefined);
+    setName('');
+    setRoute('/');
+  };
+
+  return (
+    <section className="panel mobile-panel" aria-labelledby="preview-title">
+      <div className="preview-bar">
+        <div className="preview-group" role="group" aria-label="Format">
+          <span className="preview-label">Format</span>
+          {config.formats.map((x) => (
+            <button
+              key={x.id}
+              type="button"
+              className="preview-chip"
+              aria-pressed={x.id === f.id}
+              onClick={() => setFormat(x.id)}
+            >
+              {x.name} <small>{x.width}</small>
+            </button>
+          ))}
+          <button
+            type="button"
+            className="preview-add"
+            onClick={() =>
+              setAdding(adding === 'format' ? undefined : 'format')
+            }
+            aria-expanded={adding === 'format'}
+          >
+            + Format
+          </button>
+          {config.formats.length > 1 && (
+            <button
+              type="button"
+              className="preview-remove"
+              aria-label={`Supprimer le format ${f.name}`}
+              title={`Supprimer le format ${f.name}`}
+              onClick={() => {
+                const rest = config.formats.filter((x) => x.id !== f.id);
+                save({ ...config, formats: rest });
+                setFormat(rest[0].id);
+              }}
+            >
+              ×
+            </button>
+          )}
+        </div>
+        <div className="preview-group" role="group" aria-label="Page">
+          <span className="preview-label">Page</span>
+          {config.pages.map((x) => (
+            <button
+              key={x.id}
+              type="button"
+              className="preview-chip"
+              aria-pressed={x.id === p.id}
+              onClick={() => setPage(x.id)}
+            >
+              {x.name}
+            </button>
+          ))}
+          <button
+            type="button"
+            className="preview-add"
+            onClick={() => {
+              setRoute('/');
+              setAdding(adding === 'page' ? undefined : 'page');
+            }}
+            aria-expanded={adding === 'page'}
+          >
+            + Page
+          </button>
+          <button
+            type="button"
+            className="preview-add"
+            onClick={() => {
+              setName(p.name);
+              setRoute(path);
+              setAdding(adding === 'rename' ? undefined : 'rename');
+            }}
+            aria-expanded={adding === 'rename'}
+          >
+            Renommer
+          </button>
+          {(project ? config.pages.length > 1 : !builtIn.has(p.id)) && (
+            <button
+              type="button"
+              className="preview-remove"
+              aria-label={`Supprimer la page ${p.name}`}
+              title={`Supprimer la page ${p.name}`}
+              onClick={() => {
+                const rest = config.pages.filter((x) => x.id !== p.id);
+                save({ ...config, pages: rest });
+                setPage(rest[0].id);
+              }}
+            >
+              ×
+            </button>
+          )}
+        </div>
+      </div>
+
+      {adding && (
+        <form
+          className="preview-form"
+          onSubmit={(e) => {
+            e.preventDefault();
+            const n = name.trim();
+            if (!n) return;
+            if (adding === 'format') {
+              const id = slug(n);
+              save({
+                ...config,
+                formats: [
+                  ...config.formats,
+                  { id, name: n, width: Number(width), height: Number(height) },
+                ],
+              });
+              setFormat(id);
+            } else if (adding === 'page') {
+              const id = slug(n);
+              save({
+                ...config,
+                pages: [
+                  ...config.pages,
+                  project
+                    ? { id, name: n, path: route === '/' ? routeOf(n) : route }
+                    : { id, name: n },
+                ],
+              });
+              setPage(id);
+            } else
+              save({
+                ...config,
+                pages: config.pages.map((x) =>
+                  x.id === p.id
+                    ? { ...x, name: n, ...(project ? { path: route } : {}) }
+                    : x,
+                ),
+              });
+            close();
+          }}
+        >
+          <label className="field">
+            {adding === 'format'
+              ? 'Nom du format'
+              : adding === 'page'
+                ? 'Nom de la page'
+                : 'Nouveau nom'}
+            <input
+              autoFocus
+              value={name}
+              maxLength={40}
+              onChange={(e) => setName(e.target.value)}
+              placeholder={
+                adding === 'format' ? 'Android, iPad mini…' : 'Profil, Panier…'
+              }
+              required
+            />
+          </label>
+          {project && adding !== 'format' && (
+            <label className="field">
+              Chemin dans le projet
+              <input
+                value={route}
+                maxLength={200}
+                onChange={(e) => setRoute(e.target.value)}
+                placeholder="/profil"
+              />
+            </label>
+          )}
+          {adding === 'format' && (
+            <>
+              <label className="field">
+                Largeur (px)
+                <input
+                  type="number"
+                  min={240}
+                  max={2560}
+                  value={width}
+                  onChange={(e) => setWidth(e.target.value)}
+                  required
+                />
+              </label>
+              <label className="field">
+                Hauteur (px)
+                <input
+                  type="number"
+                  min={320}
+                  max={2000}
+                  value={height}
+                  onChange={(e) => setHeight(e.target.value)}
+                  required
+                />
+              </label>
+            </>
+          )}
+          <button className="studio-primary">
+            {adding === 'rename' ? 'Renommer' : 'Ajouter'}
+          </button>
+          <button type="button" onClick={close}>
+            Annuler
+          </button>
+        </form>
+      )}
+
+      {project && (
+        <div className="project-run" role="status">
+          <span>
+            Projet <strong>{project.name}</strong> ·{' '}
+            {dev.state === 'running'
+              ? `en ligne sur ${dev.url}`
+              : dev.state === 'starting'
+                ? 'lancement…'
+                : dev.state === 'installing'
+                  ? 'installation des dépendances…'
+                  : dev.state === 'error'
+                    ? 'erreur au lancement'
+                    : 'arrêté'}
+          </span>
+          {dev.needsInstall && dev.state !== 'installing' && (
+            <button type="button" onClick={() => run('install')}>
+              Installer les dépendances (npm install)
+            </button>
+          )}
+          {dev.state === 'installing' ? null : dev.state === 'running' ||
+            dev.state === 'starting' ? (
+            <button type="button" onClick={() => run('stop')}>
+              Arrêter
+            </button>
+          ) : (
+            <button
+              type="button"
+              className="studio-primary"
+              onClick={() => run('start')}
+            >
+              Lancer le projet
+            </button>
+          )}
+          {dev.logs.length > 0 && (
+            <details>
+              <summary>Journal {dev.command && `· ${dev.command}`}</summary>
+              <pre>{dev.logs.join('\n')}</pre>
+            </details>
+          )}
+        </div>
+      )}
+      <div className="viewport-scroll">
+        {!project ? (
+          <iframe
+            title="Aperçu responsive"
+            src={`/?preview=1&scenario=${encodeURIComponent(p.id)}&title=${encodeURIComponent(p.name)}`}
+            width={f.width}
+            height={f.height}
+          />
+        ) : dev.state === 'running' && dev.url ? (
+          <iframe
+            title="Aperçu responsive"
+            src={dev.url + path}
+            width={f.width}
+            height={f.height}
+          />
+        ) : (
+          <p className="project-idle">
+            {dev.state === 'starting'
+              ? 'Lancement du serveur de dev de votre projet…'
+              : 'Lancez le projet pour l’afficher ici, à taille réelle.'}
+          </p>
+        )}
+      </div>
+      <div className="panel-foot">
+        {f.name} · {f.width} × {f.height} px CSS
+        {project && ` · ${path}`} · aucun zoom appliqué · défilez si nécessaire
+      </div>
+    </section>
+  );
+}
