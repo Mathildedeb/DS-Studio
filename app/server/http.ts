@@ -18,7 +18,7 @@ import { ConnectionStore, inspectFolder, pickFolder } from './connection.js';
 import { DevServer } from './devserver.js';
 import { atomicWrite, readPrivate } from './files.js';
 import { readProjectTokens, writeProjectTokens } from './projectTokens.js';
-import { gitStatus, publish } from './gitops.js';
+import { BATCH, PublishCounter, gitStatus, publish } from './gitops.js';
 import {
   figmaComponents,
   figmaImage,
@@ -56,6 +56,12 @@ export async function createStudioServer(options: {
   const dashboard = new DashboardStore(store.directory, root);
   const code = new CodeStore(root, store.directory);
   const connection = new ConnectionStore(store.directory);
+  const publishCounter = new PublishCounter(store.directory);
+  // Une modification validée de plus dans le projet ouvert.
+  const countChange = async () => {
+    const project = (await connection.status()).project;
+    if (project) await publishCounter.add(project.folder);
+  };
   // Clodo écrit dans le projet ouvert, et seulement dedans ; sans projet, il
   // garde son périmètre historique sur l'interface de DS-Studio.
   const projectCode = new Map<string, CodeStore>();
@@ -281,7 +287,11 @@ export async function createStudioServer(options: {
             const project = (await connection.status()).project;
             if (!project)
               throw new StudioError('Ouvrez d’abord un projet.', 409);
-            return send(200, await gitStatus(project.folder));
+            return send(200, {
+              ...(await gitStatus(project.folder)),
+              pending: await publishCounter.get(project.folder),
+              batch: BATCH,
+            });
           }
           if (url.pathname === '/api/project-dev') {
             const project = (await connection.status()).project;
@@ -380,6 +390,7 @@ export async function createStudioServer(options: {
             await writeProjectTokens(project.folder, next.tokens).catch((e) =>
               console.error('Écriture des tokens du projet impossible :', e),
             );
+          await countChange();
           return send(200, next);
         }
         // Code : Clodo propose, l'étudiante valide le diff, le serveur écrit.
@@ -440,7 +451,16 @@ export async function createStudioServer(options: {
             .parse(body);
           const project = (await connection.status()).project;
           if (!project) throw new StudioError('Ouvrez d’abord un projet.', 409);
-          return send(200, await publish(project.folder, b.message));
+          const pending = await publishCounter.get(project.folder);
+          if (pending < BATCH)
+            throw new StudioError(
+              `Pas encore : ${pending}/${BATCH} modifications validées. La publication est proposée à ${BATCH}.`,
+              409,
+            );
+          const done = await publish(project.folder, b.message);
+          // Push refusé : le compteur reste plein, on pourra réessayer.
+          await publishCounter.reset(project.folder);
+          return send(200, done);
         }
         if (url.pathname === '/api/project-dev/stop')
           return send(200, devServer.stop());
@@ -463,7 +483,9 @@ export async function createStudioServer(options: {
         }
         if (url.pathname === '/api/code/apply') {
           const b = z.object({ id: z.string().uuid() }).strict().parse(body);
-          return send(200, await (await workspace()).code.apply(b.id));
+          const applied = await (await workspace()).code.apply(b.id);
+          await countChange();
+          return send(200, applied);
         }
         if (url.pathname === '/api/code/revert') {
           const b = z.object({ id: z.string().uuid() }).strict().parse(body);

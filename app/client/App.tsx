@@ -19,7 +19,7 @@ import FigmaPanel, { figmaLevel } from './FigmaPanel.js';
 import type { Level } from './dsRegistry.js';
 import type { FigmaComponent } from '../../connectors/figma/library.js';
 import type { ConnectionStatus } from '../shared/connection.js';
-import type { GitStatus } from '../server/gitops.js';
+import type { PublishStatus } from '../server/gitops.js';
 import type { FigmaFileStatus } from '../../connectors/figma/reader.js';
 import { useTokenDraft } from './useTokenDraft.js';
 import {
@@ -167,7 +167,7 @@ export default function App() {
   const [connection, setConnection] = useState<ConnectionStatus>();
   const [opening, setOpening] = useState(false);
   const [publishCard, setPublishCard] = useState<{
-    git: GitStatus;
+    git: PublishStatus;
     busy: boolean;
     done?: string;
     error?: string;
@@ -320,9 +320,7 @@ export default function App() {
       setProposal(undefined);
       announceChange();
       setNotice(`Révision ${next.revision} enregistrée sur disque.`);
-      void offerPublish(
-        'Tokens enregistrés dans ton projet. Je publie sur Git ?',
-      );
+      void offerPublish();
     });
     setSaving(false);
   }
@@ -344,12 +342,26 @@ export default function App() {
                 tokens: [key],
               }
             : componentFocus;
-  // Après une modification (ou « push » dans le chat) : Clodo demande l'accord
-  // avant de publier le projet ouvert sur une branche de travail.
-  async function offerPublish(intro: string) {
+  // Après une modification (ou « push » dans le chat) : rien ne part avant
+  // git.batch modifications validées ; alors Clodo demande l'accord avant de
+  // créer une nouvelle branche de travail et de la pousser.
+  async function offerPublish(asked = false) {
     if (!connection?.project) return;
     try {
-      const git = await request<GitStatus>('git/status');
+      const git = await request<PublishStatus>('git/status');
+      if (git.pending < git.batch) {
+        const left = `${git.pending}/${git.batch} modifications validées avant de publier sur Git.`;
+        if (asked)
+          setChat((c) => [
+            ...c,
+            {
+              role: 'assistant',
+              text: `Pas encore : ${left} Je te proposerai la publication à ${git.batch}.`,
+            },
+          ]);
+        else setNotice((n) => (n ? `${n} ${left}` : left));
+        return;
+      }
       if (!git.files.length && !git.ahead) {
         setChat((c) => [
           ...c,
@@ -361,7 +373,13 @@ export default function App() {
         return;
       }
       setPublishCard({ git, busy: false });
-      setChat((c) => [...c, { role: 'assistant', text: intro }]);
+      setChat((c) => [
+        ...c,
+        {
+          role: 'assistant',
+          text: `${git.pending} modifications validées : je crée une nouvelle branche design/… et je la pousse sur Git ?`,
+        },
+      ]);
       setClodoOpen(true);
     } catch (e) {
       setError((e as Error).message);
@@ -397,7 +415,7 @@ export default function App() {
     ) {
       setMessage('');
       setChat((c) => [...c, { role: 'user', text }]);
-      await offerPublish('Voici ce qui partira sur Git. Tu confirmes ?');
+      await offerPublish(true);
       return;
     }
     setMessage('');
@@ -1029,9 +1047,7 @@ export default function App() {
             setCodeProposal(undefined);
             setLastCode(applied);
             setNotice(`Code modifié : ${applied.files.join(', ')}.`);
-            void offerPublish(
-              'Code modifié dans ton projet. Je publie sur Git ?',
-            );
+            void offerPublish();
           } catch (e) {
             setCodeError((e as Error).message);
           } finally {

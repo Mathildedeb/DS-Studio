@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import type { GitStatus } from '../server/gitops.js';
+import type { PublishStatus } from '../server/gitops.js';
 
 export type ChatMessage = { role: 'user' | 'assistant'; text: string };
 
@@ -44,7 +44,7 @@ export default function Chat({
   lastCode?: { id: string; files: string[] };
   onRevert: () => void;
   // Carte « Je publie ? » : commit + push du projet, seulement à l'accord.
-  publish?: { git: GitStatus; busy: boolean; done?: string; error?: string };
+  publish?: { git: PublishStatus; busy: boolean; done?: string; error?: string };
   onPublish: (message: string) => void;
   onDismissPublish: () => void;
 }) {
@@ -127,12 +127,11 @@ export default function Chat({
           ) : (
             <>
               <p>
-                <strong>Je publie sur Git ?</strong> {publish.git.files.length}{' '}
-                fichier(s) modifié(s)
-                {publish.git.ahead > 0 && ' · commits à pousser'} ·{' '}
-                {publish.git.protected
-                  ? `nouvelle branche design/… (jamais ${publish.git.branch ?? 'main'})`
-                  : `branche ${publish.git.branch}`}
+                <strong>Je publie sur Git ?</strong> {publish.git.pending}{' '}
+                modifications validées · {publish.git.files.length} fichier(s)
+                {publish.git.ahead > 0 && ' · commits à pousser'} · nouvelle
+                branche design/… créée depuis{' '}
+                {publish.git.branch ?? 'main'}
               </p>
               {publish.git.files.length > 0 && (
                 <details>
@@ -172,7 +171,7 @@ export default function Chat({
                     )
                   }
                 >
-                  {publish.busy ? 'Publication…' : 'Oui, commit et push'}
+                  {publish.busy ? 'Publication…' : 'Oui, créer la branche et pousser'}
                 </button>
                 <button
                   type="button"

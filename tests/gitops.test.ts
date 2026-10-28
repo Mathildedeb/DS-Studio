@@ -4,7 +4,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdtemp, rm, writeFile, unlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { gitStatus, publish } from '../app/server/gitops.js';
+import { PublishCounter, gitStatus, publish } from '../app/server/gitops.js';
 
 const git = (cwd: string, ...args: string[]) =>
   execFileSync('git', args, { cwd, encoding: 'utf8' }).trim();
@@ -39,14 +39,33 @@ test('publication : branche de travail design/…, main intact, push réel', asy
   // main n'a pas bougé sur le dépôt distant.
   assert.equal(git(remote, 'log', '--format=%s', 'main'), 'init');
 
-  // Deuxième modification : même branche, pas de nouvelle.
+  // Lot suivant : toujours une nouvelle branche, même avec le même message.
   await writeFile(path.join(work, 'App.tsx'), 'export const App = 3;\n');
-  const second = await publish(work, 'Encore');
-  assert.equal(second.branch, first.branch);
-  assert.equal(git(remote, 'log', '-1', '--format=%s', first.branch), 'Encore');
+  const second = await publish(work, 'Bouton : variante outline');
+  assert.equal(second.branch, `${first.branch}-2`);
+  assert.equal(
+    git(remote, 'log', '-1', '--format=%s', second.branch),
+    'Bouton : variante outline',
+  );
+  assert.equal(git(remote, 'log', '--format=%s', 'main'), 'init');
 
   // Fichier sensible : refus net, rien n'est commité.
   await writeFile(path.join(work, '.env'), 'SECRET=1\n');
   await assert.rejects(publish(work, 'Secret'), /fichiers sensibles/);
   await unlink(path.join(work, '.env'));
+});
+
+test('compteur de publication : par projet, conservé sur disque, remis à zéro', async (t) => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'ds-count-'));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const counter = new PublishCounter(dir);
+  assert.equal(await counter.get('/a'), 0);
+  for (let i = 0; i < 3; i++) await counter.add('/a');
+  await counter.add('/b');
+  const reopened = new PublishCounter(dir);
+  assert.equal(await reopened.get('/a'), 3);
+  assert.equal(await reopened.get('/b'), 1);
+  await reopened.reset('/a');
+  assert.equal(await reopened.get('/a'), 0);
+  assert.equal(await reopened.get('/b'), 1);
 });

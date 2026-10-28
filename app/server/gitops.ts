@@ -2,10 +2,13 @@ import { execFile } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { StudioError } from './store.js';
+import { atomicWrite, readPrivate } from './files.js';
 
-// Publication du projet ouvert : jamais sur main, toujours sur une branche
-// de travail design/…, et seulement après l'accord de l'étudiante dans le
-// chat. L'authentification est celle de Git sur sa machine.
+// Publication du projet ouvert : rien ne part avant BATCH modifications
+// validées ; alors une nouvelle branche design/… est créée et poussée, après
+// l'accord de l'étudiante dans le chat. Jamais sur main. L'authentification
+// est celle de Git sur sa machine.
+export const BATCH = 10;
 export interface GitStatus {
   branch: string | null;
   remote: string | null;
@@ -14,6 +17,44 @@ export interface GitStatus {
   // Branche principale : la publication créera d'abord une branche de travail.
   protected: boolean;
 }
+// Avec le compteur : la carte « Je publie ? » n'apparaît qu'à BATCH.
+export interface PublishStatus extends GitStatus {
+  pending: number;
+  batch: number;
+}
+
+// Modifications validées (tokens, code) depuis la dernière publication,
+// par dossier de projet, dans l'état privé .ds-studio/.
+export class PublishCounter {
+  private file: string;
+  constructor(directory: string) {
+    this.file = path.join(directory, 'publish-counter.json');
+  }
+  private async all(): Promise<Record<string, number>> {
+    try {
+      return JSON.parse(await readPrivate(this.file, 100_000));
+    } catch {
+      return {};
+    }
+  }
+  private async set(folder: string, count: number) {
+    const all = await this.all();
+    all[folder] = count;
+    await atomicWrite(this.file, JSON.stringify(all, null, 2) + '\n');
+    return count;
+  }
+  async get(folder: string) {
+    const count = (await this.all())[folder];
+    return Number.isInteger(count) && count > 0 ? count : 0;
+  }
+  async add(folder: string) {
+    return this.set(folder, (await this.get(folder)) + 1);
+  }
+  reset(folder: string) {
+    return this.set(folder, 0);
+  }
+}
+
 const run = (folder: string, args: string[], timeout = 15_000) =>
   new Promise<string>((resolve, reject) =>
     execFile(
@@ -76,6 +117,12 @@ const slug = (s: string) =>
     .replace(/^-|-$/g, '')
     .slice(0, 40) || 'maj';
 
+const branchExists = (folder: string, branch: string) =>
+  run(folder, ['rev-parse', '--verify', '--quiet', `refs/heads/${branch}`]).then(
+    () => true,
+    () => false,
+  );
+
 export async function publish(folder: string, message: string) {
   const status = await gitStatus(folder);
   const risky = status.files.filter((f) => sensitive.test(f.path));
@@ -88,13 +135,14 @@ export async function publish(folder: string, message: string) {
     );
   if (!status.files.length && !status.ahead)
     throw new StudioError('Rien à publier : aucun changement.', 409);
-  let branch = status.branch!;
-  // Sur la branche principale : une branche de travail emporte les changements.
-  if (status.protected) {
-    const day = new Date().toISOString().slice(0, 10);
-    branch = `design/${day}-${slug(message)}`;
-    await run(folder, ['switch', '-c', branch]);
-  }
+  // Chaque lot de modifications part sur sa propre branche de travail,
+  // créée depuis la position actuelle (main ou la branche du lot précédent).
+  const day = new Date().toISOString().slice(0, 10);
+  const base = `design/${day}-${slug(message)}`;
+  let branch = base;
+  for (let n = 2; await branchExists(folder, branch); n++)
+    branch = `${base}-${n}`;
+  await run(folder, ['switch', '-c', branch]);
   // Les fichiers générés depuis les tokens (tokens.css…) suivent le JSON.
   const scripts = await readFile(path.join(folder, 'package.json'), 'utf8')
     .then((raw) => JSON.parse(raw).scripts ?? {})
