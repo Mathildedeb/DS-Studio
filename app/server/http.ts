@@ -1,7 +1,7 @@
 import http from 'node:http';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
-import { createHash, randomBytes } from 'node:crypto';
+import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { z } from 'zod';
 import { proposeSchema } from '../shared/model.js';
 import { focusSchema } from '../shared/focus.js';
@@ -16,6 +16,7 @@ import { proposeCode, type Ask } from '../../connectors/agents/coder.js';
 import { CodeStore } from './code.js';
 import { ConnectionStore, inspectFolder, pickFolder } from './connection.js';
 import { DevServer } from './devserver.js';
+import { atomicWrite, readPrivate } from './files.js';
 import { readProjectTokens, writeProjectTokens } from './projectTokens.js';
 import { gitStatus, publish } from './gitops.js';
 import {
@@ -28,7 +29,7 @@ import {
 import { unvalidatedAdapter } from '../../connectors/agents/unvalidated.js';
 import type { AgentAdapter } from '../../connectors/agents/types.js';
 import { figmaStatus } from '../../connectors/figma/contract.js';
-import { FigmaReader } from '../../connectors/figma/reader.js';
+import { FigmaReader, figmaFileKey } from '../../connectors/figma/reader.js';
 import type { RecordInfo } from '../../scripts/runtime.mjs';
 
 export async function createStudioServer(options: {
@@ -104,6 +105,25 @@ export async function createStudioServer(options: {
   const ask: Ask = options.ask ?? ((...a) => claudeCli.ask(...a));
   const figma = options.figma ?? new FigmaReader(undefined);
   const csrf = randomBytes(32).toString('hex');
+  // Code d'appairage du plugin Figma : affiché dans DS-Studio, collé dans le
+  // plugin, gardé sur ce poste ; on peut le renouveler pour couper l'accès.
+  const pluginFile = path.join(base.directory, 'plugin.json');
+  const pluginToken = async (renew = false) => {
+    if (!renew) {
+      const saved = await readPrivate(pluginFile, 1000)
+        .then((raw) => String(JSON.parse(raw).token ?? ''))
+        .catch(() => '');
+      if (/^[0-9a-f]{32}$/.test(saved)) return saved;
+    }
+    const token = randomBytes(16).toString('hex');
+    await atomicWrite(pluginFile, JSON.stringify({ token }) + '\n');
+    return token;
+  };
+  const pluginAllowed = async (given: unknown) => {
+    const expected = Buffer.from(await pluginToken());
+    const sent = Buffer.from(typeof given === 'string' ? given : '');
+    return sent.length === expected.length && timingSafeEqual(sent, expected);
+  };
   let busy = false;
   const active = new Set<AbortController>();
   const vite = options.dev
@@ -141,6 +161,30 @@ export async function createStudioServer(options: {
           'Hôte refusé. Utilisez l’adresse 127.0.0.1 affichée au démarrage.',
           403,
         );
+      // Plugin Figma : seule entrée acceptée depuis une autre origine (« null »,
+      // l'iframe du plugin), en lecture seule, avec le code d'appairage.
+      if (req.url?.split('?')[0] === '/api/plugin/sync') {
+        res.setHeader('Access-Control-Allow-Origin', 'null');
+        res.setHeader('Access-Control-Allow-Headers', 'X-DS-Plugin');
+        res.setHeader('Access-Control-Allow-Methods', 'GET');
+        if (req.method === 'OPTIONS') {
+          res.writeHead(204);
+          return res.end();
+        }
+        if (
+          req.method !== 'GET' ||
+          !(await pluginAllowed(req.headers['x-ds-plugin']))
+        )
+          throw new StudioError('Code d’appairage du plugin invalide.', 403);
+        const saved = await connection.read();
+        const state = store.snapshot();
+        return send(200, {
+          project: (await connection.status()).project?.name ?? null,
+          figmaFileKey: figmaFileKey(saved.figmaUrl) ?? null,
+          revision: state.revision,
+          tokens: state.tokens,
+        });
+      }
       if (req.headers.origin && req.headers.origin !== origin)
         throw new StudioError('Origine non autorisée.', 403);
       if (req.headers['sec-fetch-site'] === 'cross-site')
@@ -222,6 +266,11 @@ export async function createStudioServer(options: {
             return send(200, await dashboard.readPreview(store.directory));
           if (url.pathname === '/api/connection')
             return send(200, await connection.status());
+          if (url.pathname === '/api/plugin/pairing')
+            return send(200, {
+              token: await pluginToken(),
+              manifest: path.join(root, 'figma-plugin', 'manifest.json'),
+            });
           if (url.pathname === '/api/git/status') {
             const project = (await connection.status()).project;
             if (!project)
@@ -372,6 +421,11 @@ export async function createStudioServer(options: {
             }),
           );
         }
+        if (url.pathname === '/api/plugin/pairing/renew')
+          return send(200, {
+            token: await pluginToken(true),
+            manifest: path.join(root, 'figma-plugin', 'manifest.json'),
+          });
         // Commit et push du projet ouvert, après l'accord donné dans le chat.
         if (url.pathname === '/api/git/publish') {
           const b = z

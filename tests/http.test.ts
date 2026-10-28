@@ -581,3 +581,37 @@ test('un DS par projet : le premier reprend l’existant, chacun garde le sien',
     'Profil',
   );
 });
+
+test('plugin Figma : lecture seule, code d’appairage obligatoire et renouvelable', async (t) => {
+  const { origin, post } = await fixture(t);
+  const sync = (code?: string) =>
+    fetch(origin + '/api/plugin/sync', {
+      headers: { Origin: 'null', ...(code ? { 'X-DS-Plugin': code } : {}) },
+    });
+  assert.equal((await sync()).status, 403);
+  assert.equal((await sync('0'.repeat(32))).status, 403);
+  const preflight = await fetch(origin + '/api/plugin/sync', {
+    method: 'OPTIONS',
+    headers: { Origin: 'null' },
+  });
+  assert.equal(preflight.status, 204);
+  assert.equal(preflight.headers.get('access-control-allow-origin'), 'null');
+  const { token } = await (await fetch(origin + '/api/plugin/pairing')).json();
+  const ok = await sync(token);
+  assert.equal(ok.status, 200);
+  const body = await ok.json();
+  assert.equal(body.tokens['color.brand'].$value, '#3F3F46');
+  // Depuis l'origine du plugin, aucune autre route n'est ouverte.
+  assert.equal(
+    (
+      await fetch(origin + '/api/state', {
+        headers: { Origin: 'null', 'X-DS-Plugin': token },
+      })
+    ).status,
+    403,
+  );
+  const renewed = await (await post('plugin/pairing/renew', {})).json();
+  assert.notEqual(renewed.token, token);
+  assert.equal((await sync(token)).status, 403, 'ancien code coupé');
+  assert.equal((await sync(renewed.token)).status, 200);
+});

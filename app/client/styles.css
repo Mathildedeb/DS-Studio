@@ -2423,3 +2423,25 @@ h2[id] {
   display: flex;
   gap: 6px;
 }
+.figma-plugin summary {
+  cursor: pointer;
+}
+.figma-plugin ol {
+  margin: 4px 0;
+  padding-left: 18px;
+  color: var(--studio-muted);
+}
+.figma-plugin code {
+  word-break: break-all;
+}
+.plugin-code {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+}
+.plugin-code button {
+  min-height: 0;
+  padding: 3px 8px;
+  font-size: 11px;
+}
