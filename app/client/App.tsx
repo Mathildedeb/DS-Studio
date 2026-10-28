@@ -557,6 +557,9 @@ export default function App() {
           status={connection}
           onClose={mustOpen ? undefined : () => setOpening(false)}
           onDone={(next) => {
+            // Autre projet : ses tokens, son historique et ses pages, à neuf.
+            if (next.project?.folder !== connection?.project?.folder)
+              return location.reload();
             setConnection(next);
             setOpening(false);
             request<FigmaFileStatus>('figma')

@@ -538,3 +538,43 @@ test('Ouvrir un projet : dossier Git inspecté, liens invalides refusés', async
     saved.saved,
   );
 });
+
+test('un DS par projet : le premier reprend l’existant, chacun garde le sien', async (t) => {
+  const { origin, post } = await fixture(t);
+  const state = async () => (await fetch(origin + '/api/state')).json();
+  const commit = async (value: string) => {
+    const proposal = await (
+      await post('proposals', {
+        revision: (await state()).revision,
+        changes: [{ key: 'color.brand', value }],
+      })
+    ).json();
+    assert.equal((await post('commit', { id: proposal.id })).status, 200);
+  };
+  await commit('#111111');
+  // Premier projet ouvert : il reprend le DS déjà construit.
+  assert.equal((await post('connection', { folder: root })).status, 200);
+  assert.equal((await state()).tokens['color.brand'].$value, '#111111');
+  await commit('#222222');
+  const pages = await (await fetch(origin + '/api/preview')).json();
+  pages.pages.push({ id: 'profil-ab12', name: 'Profil', path: '/profil' });
+  assert.equal((await post('preview', pages)).status, 200);
+  // Autre projet : DS de départ, Preview par défaut.
+  const other = await mkdtemp(path.join(tmpdir(), 'ds-autre-'));
+  t.after(() => rm(other, { recursive: true, force: true }));
+  assert.equal((await post('connection', { folder: other })).status, 200);
+  const fresh = await state();
+  assert.equal(fresh.revision, 0);
+  assert.equal(fresh.tokens['color.brand'].$value, '#3F3F46');
+  assert.equal(
+    (await (await fetch(origin + '/api/preview')).json()).pages.length,
+    2,
+  );
+  // Retour au premier : on retrouve ses tokens et ses pages.
+  assert.equal((await post('connection', { folder: root })).status, 200);
+  assert.equal((await state()).tokens['color.brand'].$value, '#222222');
+  assert.equal(
+    (await (await fetch(origin + '/api/preview')).json()).pages.at(-1).name,
+    'Profil',
+  );
+});

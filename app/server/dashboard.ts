@@ -119,20 +119,21 @@ export class DashboardStore {
       clodoSchema.parse(position),
     );
   }
-  async readPreview(): Promise<PreviewConfig> {
+  // directory : dossier du projet ouvert (sinon le dossier commun).
+  async readPreview(directory = this.directory): Promise<PreviewConfig> {
     try {
       return previewSchema.parse(
         JSON.parse(
-          await readPrivate(path.join(this.directory, 'preview.json'), 20_000),
+          await readPrivate(path.join(directory, 'preview.json'), 20_000),
         ),
       );
     } catch {
       return defaultPreview;
     }
   }
-  savePreview(config: unknown) {
+  savePreview(config: unknown, directory = this.directory) {
     return this.write(
-      path.join(this.directory, 'preview.json'),
+      path.join(directory, 'preview.json'),
       previewSchema.parse(config),
     );
   }

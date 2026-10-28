@@ -1,3 +1,4 @@
+import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { readPrivate } from './files.js';
 import { StudioError } from './store.js';
@@ -66,22 +67,54 @@ export function convertDtcg(json: unknown) {
   return { tokens: tokensSchema.parse(kept) as Tokens, skipped };
 }
 
+// design-system/tokens.json d'abord ; sinon le premier *tokens*.json du
+// projet (3 niveaux, sans dépendances ni dossiers cachés) qui contient des $value.
+async function findTokensFile(folder: string) {
+  const preferred = path.join(folder, ...projectTokensFile.split('/'));
+  if (await fs.stat(preferred).catch(() => undefined)) return projectTokensFile;
+  const skip = new Set(['node_modules', 'dist', 'build', 'out', 'coverage']);
+  const queue: string[] = [''];
+  while (queue.length) {
+    const dir = queue.shift()!;
+    const entries = await fs
+      .readdir(path.join(folder, dir), { withFileTypes: true })
+      .catch(() => []);
+    for (const e of entries.sort((a, b) => a.name.localeCompare(b.name))) {
+      const rel = dir ? `${dir}/${e.name}` : e.name;
+      if (e.isDirectory()) {
+        if (
+          !e.name.startsWith('.') &&
+          !skip.has(e.name) &&
+          rel.split('/').length < 3
+        )
+          queue.push(rel);
+      } else if (e.isFile() && /tokens?\.json$/i.test(e.name)) {
+        const raw = await readPrivate(path.join(folder, rel), 2_000_000).catch(
+          () => '',
+        );
+        if (raw.includes('"$value"')) return rel;
+      }
+    }
+  }
+  return undefined;
+}
+
 export async function readProjectTokens(folder: string) {
-  let raw: string;
-  try {
-    raw = await readPrivate(
-      path.join(folder, ...projectTokensFile.split('/')),
-      2_000_000,
-    );
-  } catch {
+  const file = await findTokensFile(folder);
+  if (!file)
     throw new StudioError(
-      `Pas de ${projectTokensFile} dans le projet ouvert.`,
+      'Aucun fichier de tokens (format DTCG, *tokens.json) dans le projet ouvert.',
       404,
     );
+  let raw: string;
+  try {
+    raw = await readPrivate(path.join(folder, ...file.split('/')), 2_000_000);
+  } catch {
+    throw new StudioError(`${file} illisible.`, 422);
   }
   try {
-    return { file: projectTokensFile, ...convertDtcg(JSON.parse(raw)) };
+    return { file, ...convertDtcg(JSON.parse(raw)) };
   } catch {
-    throw new StudioError(`${projectTokensFile} illisible.`, 422);
+    throw new StudioError(`${file} illisible.`, 422);
   }
 }

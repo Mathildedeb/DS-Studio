@@ -31,3 +31,26 @@ test('tokens DTCG du projet : alias résolus, valeurs non portables listées', (
     ['couleur avec transparence', 'type shadow'],
   );
 });
+
+test('fichier de tokens trouvé ailleurs que dans design-system/', async (t) => {
+  const { mkdtemp, mkdir, writeFile, rm } = await import('node:fs/promises');
+  const { tmpdir } = await import('node:os');
+  const path = await import('node:path');
+  const { readProjectTokens } = await import('../app/server/projectTokens.js');
+  const root = await mkdtemp(path.join(tmpdir(), 'ds-tokens-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await assert.rejects(readProjectTokens(root), /Aucun fichier de tokens/);
+  await mkdir(path.join(root, 'src', 'theme'), { recursive: true });
+  await mkdir(path.join(root, 'node_modules', 'x'), { recursive: true });
+  await writeFile(
+    path.join(root, 'node_modules', 'x', 'tokens.json'),
+    '{"a":{"b":{"$type":"color","$value":"#000000"}}}',
+  );
+  await writeFile(
+    path.join(root, 'src', 'theme', 'design-tokens.json'),
+    '{"color":{"brand":{"$type":"color","$value":"#123456"}}}',
+  );
+  const found = await readProjectTokens(root);
+  assert.equal(found.file, 'src/theme/design-tokens.json');
+  assert.deepEqual(Object.keys(found.tokens), ['color.brand']);
+});

@@ -1,7 +1,7 @@
 import http from 'node:http';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { z } from 'zod';
 import { proposeSchema } from '../shared/model.js';
 import { focusSchema } from '../shared/focus.js';
@@ -40,7 +40,11 @@ export async function createStudioServer(options: {
   dev?: boolean;
   control?: { record: RecordInfo; stop: () => void };
 }) {
-  const { root, store } = options;
+  const { root } = options;
+  // Données communes (connexion, brief, tableau de bord) dans base ; tokens,
+  // historique et Preview dans un dossier par projet ouvert.
+  const base = options.store;
+  let store = base;
   const adapters: Record<string, AgentAdapter> = {
     codex: options.agent ?? new CodexAdapter(),
     claude: options.claude ?? new ClaudeAdapter(),
@@ -54,6 +58,30 @@ export async function createStudioServer(options: {
   // garde son périmètre historique sur l'interface de DS-Studio.
   const projectCode = new Map<string, CodeStore>();
   const devServer = new DevServer();
+  const projectStores = new Map<string, Store>();
+  const useProject = async (folder: string | undefined) => {
+    if (!folder) return void (store = base);
+    const cached = projectStores.get(folder);
+    if (cached) return void (store = cached);
+    const projects = path.join(base.directory, 'projects');
+    const firstEver = !(await fs.stat(projects).catch(() => undefined));
+    const dir = path.join(
+      projects,
+      createHash('sha256').update(folder).digest('hex').slice(0, 16),
+    );
+    await fs.mkdir(dir, { recursive: true, mode: 0o700 });
+    // Premier projet ouvert : il reprend le DS déjà construit, rien n'est perdu.
+    if (firstEver)
+      for (const name of ['state.json', 'state.previous.json', 'preview.json'])
+        await fs
+          .copyFile(path.join(base.directory, name), path.join(dir, name))
+          .catch(() => undefined);
+    const next = base.sibling(dir);
+    await next.init();
+    projectStores.set(folder, next);
+    store = next;
+  };
+  await useProject((await connection.status()).project?.folder);
   // Fichier Figma : celui du projet ouvert, sinon le brief, sinon la roadmap.
   const figmaUrl = async () =>
     (await connection.read()).figmaUrl ||
@@ -190,7 +218,7 @@ export async function createStudioServer(options: {
           if (url.pathname === '/api/clodo')
             return send(200, await dashboard.readClodo());
           if (url.pathname === '/api/preview')
-            return send(200, await dashboard.readPreview());
+            return send(200, await dashboard.readPreview(store.directory));
           if (url.pathname === '/api/connection')
             return send(200, await connection.status());
           if (url.pathname === '/api/project-dev') {
@@ -289,10 +317,18 @@ export async function createStudioServer(options: {
         if (url.pathname === '/api/clodo')
           return send(200, await dashboard.saveClodo(body));
         if (url.pathname === '/api/preview')
-          return send(200, await dashboard.savePreview(body));
+          return send(200, await dashboard.savePreview(body, store.directory));
         // Projet ouvert : dossier Git local et fichier Figma, choisis par l'étudiante.
-        if (url.pathname === '/api/connection')
-          return send(200, await connection.save(body));
+        if (url.pathname === '/api/connection') {
+          const before = (await connection.read()).folder;
+          const saved = await connection.save(body);
+          // Autre projet : son propre DS, et le serveur de dev de l'ancien s'arrête.
+          if (saved.project?.folder !== before) {
+            devServer.stop();
+            await useProject(saved.project?.folder);
+          }
+          return send(200, saved);
+        }
         // Serveur de dev du projet ouvert : lancé et arrêté au clic, jamais seul.
         if (url.pathname === '/api/project-dev/start') {
           const project = (await connection.status()).project;

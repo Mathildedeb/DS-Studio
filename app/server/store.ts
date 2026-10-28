@@ -67,6 +67,10 @@ export class Store {
       await this.write(this.state);
     }
   }
+  // Même DS de départ, autre dossier : le stockage d'un autre projet.
+  sibling(directory: string) {
+    return new Store(directory, this.seed);
+  }
   snapshot(): State {
     return structuredClone(this.state);
   }
