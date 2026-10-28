@@ -9,7 +9,7 @@ import { gitStatus, publish } from '../app/server/gitops.js';
 const git = (cwd: string, ...args: string[]) =>
   execFileSync('git', args, { cwd, encoding: 'utf8' }).trim();
 
-test('publication : branche de travail ds-studio/…, main intact, push réel', async (t) => {
+test('publication : branche de travail design/…, main intact, push réel', async (t) => {
   const root = await mkdtemp(path.join(tmpdir(), 'ds-git-'));
   t.after(() => rm(root, { recursive: true, force: true }));
   const remote = path.join(root, 'distant.git');
@@ -32,7 +32,7 @@ test('publication : branche de travail ds-studio/…, main intact, push réel', 
   const first = await publish(work, 'Bouton : variante outline');
   assert.match(
     first.branch,
-    /^ds-studio\/\d{4}-\d{2}-\d{2}-bouton-variante-outline$/,
+    /^design\/\d{4}-\d{2}-\d{2}-bouton-variante-outline$/,
   );
   assert.equal(first.pushed, true);
   assert.match(git(remote, 'branch'), new RegExp(first.branch));

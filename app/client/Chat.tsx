@@ -131,7 +131,7 @@ export default function Chat({
                 fichier(s) modifié(s)
                 {publish.git.ahead > 0 && ' · commits à pousser'} ·{' '}
                 {publish.git.protected
-                  ? `nouvelle branche ds-studio/… (jamais ${publish.git.branch ?? 'main'})`
+                  ? `nouvelle branche design/… (jamais ${publish.git.branch ?? 'main'})`
                   : `branche ${publish.git.branch}`}
               </p>
               {publish.git.files.length > 0 && (

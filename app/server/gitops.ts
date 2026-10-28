@@ -4,7 +4,7 @@ import path from 'node:path';
 import { StudioError } from './store.js';
 
 // Publication du projet ouvert : jamais sur main, toujours sur une branche
-// de travail ds-studio/…, et seulement après l'accord de l'étudiante dans le
+// de travail design/…, et seulement après l'accord de l'étudiante dans le
 // chat. L'authentification est celle de Git sur sa machine.
 export interface GitStatus {
   branch: string | null;
@@ -92,7 +92,7 @@ export async function publish(folder: string, message: string) {
   // Sur la branche principale : une branche de travail emporte les changements.
   if (status.protected) {
     const day = new Date().toISOString().slice(0, 10);
-    branch = `ds-studio/${day}-${slug(message)}`;
+    branch = `design/${day}-${slug(message)}`;
     await run(folder, ['switch', '-c', branch]);
   }
   // Les fichiers générés depuis les tokens (tokens.css…) suivent le JSON.
