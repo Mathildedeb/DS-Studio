@@ -60,7 +60,16 @@ function plan(tokens, variables) {
   for (const [key, token] of Object.entries(tokens)) {
     const v = matchVariable(key, token.$type, variables);
     if (!v) {
-      result.missing.push({ key, type: token.$type, value: token.$value });
+      result.missing.push({
+        key,
+        type: token.$type,
+        value: token.$value,
+        // Pour comprendre l'échec : variables au dernier segment identique.
+        near: variables
+          .filter((x) => norm(x.name).split('.').pop() === key.split('.').pop())
+          .slice(0, 3)
+          .map((x) => x.path + ' (' + x.resolvedType + ')'),
+      });
       continue;
     }
     const before = readable(v);

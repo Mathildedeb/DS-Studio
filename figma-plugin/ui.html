@@ -74,9 +74,20 @@ onmessage = (event) => {
         <p>${msg.variables} variables lues · ${p.same} déjà à jour · ${p.aliased.length} alias laissés tels quels</p>
         <p><strong>${p.updates.length} variable(s) à mettre à jour</strong></p>
         <ul>${p.updates.map((u) => `<li>${swatch(u.after)}<code title="${esc(u.name)}">${esc(u.name)}</code> ${esc(u.before)} → <strong>${esc(u.after)}</strong></li>`).join('')}</ul>
-        ${p.missing.length ? `<label><input type="checkbox" id="create"> Créer les ${p.missing.length} token(s) sans variable (collection « DS-Studio »)</label>` : ''}
+        ${p.missing.length ? `<details><summary>${p.missing.length} token(s) sans variable reconnue</summary><ul>${p.missing.map((m) => `<li>${swatch(m.value)}<code title="${esc(m.key)}">${esc(m.key)}</code> ${m.near.length ? '≈ ' + esc(m.near.join(', ')) : 'aucune variable proche'}</li>`).join('')}</ul><div class="row"><button id="copy">Copier ce diagnostic</button></div></details>
+        <label><input type="checkbox" id="create"> Créer ces ${p.missing.length} token(s) dans une collection « DS-Studio » (seulement s'ils n'existent vraiment pas dans Figma)</label>` : ''}
         <div class="row"><button id="apply" class="primary" ${p.updates.length || p.missing.length ? '' : 'disabled'}>Appliquer</button></div>
       </div>`;
+    if ($('copy')) $('copy').onclick = () => {
+      const text = p.missing.map((m) => `${m.key} [${m.type}] ≈ ${m.near.join(' | ') || '—'}`).join('\n');
+      const area = document.createElement('textarea');
+      area.value = text;
+      document.body.appendChild(area);
+      area.select();
+      document.execCommand('copy');
+      area.remove();
+      $('copy').textContent = 'Copié';
+    };
     $('apply').onclick = () => {
       $('apply').disabled = true;
       parent.postMessage({ pluginMessage: {
