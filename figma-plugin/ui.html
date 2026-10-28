@@ -39,6 +39,8 @@
 const $ = (id) => document.getElementById(id);
 const out = $('out');
 let current;
+let lastImpacted = [];
+let impactedRevision = null;
 let timer = null;
 const settings = () => ({
   server: $('server').value.trim().replace(/\/$/, ''),
@@ -160,7 +162,16 @@ onmessage = (event) => {
       });
   }
   if (msg.type === 'auto') {
-    report({ revision: msg.revision, updated: msg.updated, created: msg.created, same: msg.same, failed: msg.failed, warning: msg.warning || null });
+    // Les composants touchés valent pour la révision qui les a modifiés : un
+    // passage suivant sans écriture garde la liste, une autre révision la vide.
+    if (msg.updated || msg.created) {
+      lastImpacted = msg.impacted;
+      impactedRevision = msg.revision;
+    } else if (impactedRevision !== msg.revision) {
+      lastImpacted = [];
+      impactedRevision = msg.revision;
+    }
+    report({ revision: msg.revision, updated: msg.updated, created: msg.created, same: msg.same, failed: msg.failed, warning: msg.warning || null, impacted: lastImpacted });
     const time = new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
     $('auto-status').innerHTML = `<span class="ok">À l’écoute · révision ${msg.revision} vérifiée à ${time}${msg.updated ? ` · ${msg.updated} variable(s) mise(s) à jour` : ''}</span>${msg.failed.length ? `<br><span class="error">Non appliqué : ${esc(reasons(msg.failed))}</span>` : ''}${msg.warning ? `<br><span class="error">${esc(msg.warning)}</span>` : ''}`;
   }
@@ -204,7 +215,9 @@ onmessage = (event) => {
       current.plan.blocked.map((b) => ({ key: b.key, reason: b.reason })),
       current.plan.missing.map((m) => ({ key: m.key, reason: 'aucune variable de ce nom dans Figma, ni de collection évidente pour la créer' })),
     );
-    report({ revision: msg.revision, updated: msg.updated, created: msg.created, same: current.plan.same, failed, warning: null });
+    lastImpacted = msg.impacted;
+    impactedRevision = msg.revision;
+    report({ revision: msg.revision, updated: msg.updated, created: msg.created, same: current.plan.same, failed, warning: null, impacted: msg.impacted });
     out.innerHTML = `<div class="box"><p class="ok"><strong>${msg.updated} variable(s) mise(s) à jour${msg.created ? `, ${msg.created} créée(s)` : ''}, valeurs relues.</strong></p>${failed.length ? `<p class="error">Non appliqué : ${esc(reasons(failed))}</p>` : ''}<p>Les composants liés à ces variables suivent ; ceux qui ont des valeurs en dur ne changent pas.</p></div>`;
   }
 };

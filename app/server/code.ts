@@ -139,6 +139,18 @@ export class CodeStore {
       .catch(() => false);
   }
   // Liste montrée à Clodo pour qu'il choisisse ce qu'il doit lire.
+  // Fichiers du code qui mentionnent l'un de ces textes (variables CSS ou
+  // noms de tokens), hors fichiers générés du design system.
+  async usages(needles: string[]) {
+    const found: string[] = [];
+    for (const { file } of await this.catalogue()) {
+      if (/(^|\/)design-system\//.test(file)) continue;
+      const text = await this.read(file).catch(() => '');
+      if (needles.some((n) => text.includes(n))) found.push(file);
+      if (found.length >= 30) break;
+    }
+    return found;
+  }
   async catalogue() {
     const files: { file: string; size: number }[] = [];
     if (this.project) {

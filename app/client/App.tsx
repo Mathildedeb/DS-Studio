@@ -20,7 +20,13 @@ import type { Level } from './dsRegistry.js';
 import type { FigmaComponent } from '../../connectors/figma/library.js';
 import type { ConnectionStatus } from '../shared/connection.js';
 import type { PublishStatus } from '../server/gitops.js';
-import { circuitSteps, type CircuitData } from '../shared/circuit.js';
+import { adviseChange } from '../shared/advice.js';
+import {
+  circuitConclusion,
+  circuitImpact,
+  circuitSteps,
+  type CircuitData,
+} from '../shared/circuit.js';
 import type { FigmaFileStatus } from '../../connectors/figma/reader.js';
 import { useTokenDraft } from './useTokenDraft.js';
 import {
@@ -261,6 +267,57 @@ export default function App() {
       clearInterval(timer);
     };
   }, [watch]);
+  // Diff ouvert : Clodo donne son avis AVANT la validation (contrastes,
+  // échelle, neutres, alias), dans le diff et dans le chat ; calculé sur
+  // place, sans appel à l'IA.
+  const [aliases, setAliases] = useState<{
+    id: string;
+    links: Record<string, string>;
+  }>();
+  const advised = useRef<string>(undefined);
+  // Un import ou une annulation reprend un état connu : pas d'avis.
+  const advice =
+    proposal && state && proposal.source !== 'import' && proposal.source !== 'undo'
+      ? adviseChange(proposal.patches, state.tokens, aliases?.links)
+      : [];
+  useEffect(() => {
+    if (!proposal) return;
+    const id = proposal.id;
+    request<Record<string, string>>('aliases')
+      .catch(() => ({}))
+      .then((links) => setAliases({ id, links }));
+  }, [proposal]);
+  // Une fois les liens connus, l'avis part une seule fois dans le chat.
+  useEffect(() => {
+    if (
+      !proposal ||
+      aliases?.id !== proposal.id ||
+      advised.current === proposal.id ||
+      !advice.length
+    )
+      return;
+    advised.current = proposal.id;
+    setChat((c) => [
+      ...c,
+      {
+        role: 'assistant',
+        text: `Avant de valider :\n${advice.map((a) => `${a.level === 'warn' ? '⚠' : '•'} ${a.text}`).join('\n')}`,
+      },
+    ]);
+  });
+  // Plus rien en cours : Clodo conclut dans le chat (c'est bon, ou le
+  // problème et sa solution), une fois par issue ; aucun appel au CLI.
+  const concluded = useRef<string>(undefined);
+  useEffect(() => {
+    if (watch === undefined || !circuit) return;
+    const end = circuitConclusion(
+      circuitSteps(circuit, watch),
+      circuitImpact(circuit, watch),
+    );
+    if (!end || concluded.current === `${watch}:${end.key}`) return;
+    concluded.current = `${watch}:${end.key}`;
+    setChat((c) => [...c, { role: 'assistant', text: end.text }]);
+  }, [circuit, watch]);
   // Import envoyé par le plugin Figma (« Récupérer depuis Figma ») : son diff
   // s'ouvre ici et Clodo l'annonce ; rien n'est écrit avant « Valider ».
   const seenImport = useRef<string>(undefined);
@@ -1170,6 +1227,18 @@ export default function App() {
             Une autre validation a modifié le DS. Fermez ce diff et refaites
             votre proposition ; aucun écrasement n’est permis.
           </p>
+        )}
+        {advice.length > 0 && (
+          <section className="diff-advice" aria-label="Avis de Clodo avant de valider">
+            <strong>Avant de valider, l’avis de Clodo</strong>
+            <ul>
+              {advice.map((a) => (
+                <li key={a.text} className={`advice-${a.level}`}>
+                  {a.text}
+                </li>
+              ))}
+            </ul>
+          </section>
         )}
         <div className="diff-scroll">
           <table>

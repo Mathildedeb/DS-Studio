@@ -60,14 +60,14 @@ test('plugin Figma : récupérer, alias résolus, transparences et doublons éca
   );
 });
 
-test('plugin Figma : synchroniser, alias rebranché ou bloqué avec sa raison', async () => {
+test('plugin Figma : même nom, même changement ; un alias devient une valeur directe', async () => {
   const { plan } = await load();
   const result = plain(
     plan(
       {
         'color.primary.purple.700': { $type: 'color', $value: '#AA00FF' },
         'spacings.compact.spacing1': { $type: 'dimension', $value: 6 },
-        'text.secondaire': { $type: 'color', $value: '#9900FF' },
+        'text.secondaire': { $type: 'color', $value: '#302636' },
         'color.semantic.succes.disable': { $type: 'color', $value: '#000000' },
         'text.default': { $type: 'color', $value: '#FFFFFF' },
         'color.neutral.0': { $type: 'color', $value: '#FAFAFA' },
@@ -76,15 +76,15 @@ test('plugin Figma : synchroniser, alias rebranché ou bloqué avec sa raison', 
       variables,
     ),
   );
+  // text.secondaire est écrit lui-même ; sa base color.neutral.900 ne bouge pas.
   assert.deepEqual(
-    result.updates.map((u: { id: string; before: string; after: string }) => [u.id, u.before, u.after]),
-    [['m1', '#9900FF', '#AA00FF']],
+    result.updates.map((u: { id: string; after: string; detached: boolean }) => [u.id, u.after, u.detached]),
+    [
+      ['m1', '#AA00FF', false],
+      ['u1', '#302636', true],
+    ],
   );
-  // L'alias suit la variable de base qui a la nouvelle valeur (avant la mise à jour).
-  assert.deepEqual(
-    result.retargets.map((r: { id: string; targetId: string }) => [r.id, r.targetId]),
-    [['u1', 'm1']],
-  );
+  assert.deepEqual(result.retargets, []);
   // color.neutral.0 garde sa couleur : rien à écrire, sa transparence est intacte.
   assert.equal(result.same, 3);
   // text.default changerait une variable transparente : bloqué, jamais écrasé.
@@ -95,13 +95,12 @@ test('plugin Figma : synchroniser, alias rebranché ou bloqué avec sa raison', 
   assert.deepEqual(result.missing.map((m: { key: string }) => m.key), ['color.accent']);
 });
 
-test('plugin Figma : nouveau token créé chez ses voisines, alias rebranché dessus', async () => {
+test('plugin Figma : nouveau token créé chez ses voisines', async () => {
   const { plan } = await load();
   const result = plain(
     plan(
       {
         'color.primary.purple.850': { $type: 'color', $value: '#302636' },
-        'text.secondaire': { $type: 'color', $value: '#302636' },
         'color.accent': { $type: 'color', $value: '#123456' },
       },
       variables,
@@ -112,14 +111,8 @@ test('plugin Figma : nouveau token créé chez ses voisines, alias rebranché de
     result.creates.map((c: { key: string; collection: string; name: string }) => [c.key, c.collection, c.name]),
     [['color.primary.purple.850', 'Master', 'color/Primary/purple/850']],
   );
-  // L'alias suit la variable créée dans le même passage.
-  assert.deepEqual(
-    result.retargets.map((r: { id: string; createKey: string; targetName: string }) => [r.id, r.createKey, r.targetName]),
-    [['u1', 'color.primary.purple.850', 'Master/color/Primary/purple/850']],
-  );
   // Sans voisine, aucune collection évidente : rien n'est créé.
   assert.deepEqual(result.missing.map((m: { key: string }) => m.key), ['color.accent']);
-  assert.deepEqual(result.blocked, []);
 });
 
 test('plugin Figma : liens d’alias récupérés, un alias suit sa base mise à jour', async () => {
@@ -139,4 +132,23 @@ test('plugin Figma : liens d’alias récupérés, un alias suit sa base mise à
   assert.deepEqual(result.retargets, []);
   assert.deepEqual(result.blocked, []);
   assert.equal(result.same, 1);
+});
+
+test('plugin Figma : couleur en minuscules dans DS-Studio, même couleur que dans Figma', async () => {
+  const { plan } = await load();
+  const result = plain(
+    plan(
+      {
+        'color.primary.purple.700': { $type: 'color', $value: '#9900ff' },
+        'color.neutral.900': { $type: 'color', $value: '#5b3b6d' },
+        'text.secondaire': { $type: 'color', $value: '#5b3b6d' },
+      },
+      variables,
+    ),
+  );
+  // Identique malgré la casse : rien à écrire, rien de signalé.
+  assert.equal(result.same, 2);
+  assert.deepEqual(result.updates.map((u: { id: string }) => u.id), ['m2']);
+  assert.deepEqual(result.retargets, []);
+  assert.deepEqual(result.blocked, []);
 });

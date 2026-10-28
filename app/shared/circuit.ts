@@ -5,6 +5,8 @@ export interface CircuitData {
   revision: number;
   step: {
     revision: number;
+    keys?: string[];
+    usedIn?: string[];
     code: { state: 'ok' | 'error' | 'absent'; detail?: string };
     interface: { state: 'ok' | 'error' | 'absent'; detail?: string };
   } | null;
@@ -16,6 +18,7 @@ export interface CircuitData {
       created: number;
       failed: { key: string; reason: string }[];
       warning?: string | null;
+      impacted?: { name: string; page: string }[];
     } | null;
     pluginOpen: boolean;
   };
@@ -125,4 +128,70 @@ export function circuitSteps(data: CircuitData, revision: number): CircuitStep[]
           : `${data.git.pending}/${data.git.batch} avant publication${figmaBehind ? ' · bloquée tant que Figma n’est pas à jour' : ''}`,
     });
   return steps;
+}
+
+// Ce que la modification a touché : composants Figma liés aux variables
+// écrites, et fichiers du code qui utilisent les tokens changés.
+export function circuitImpact(data: CircuitData, revision: number) {
+  const parts: string[] = [];
+  const report = data.figma.report;
+  const impacted = report && report.revision >= revision ? report.impacted : undefined;
+  if (impacted?.length)
+    parts.push(
+      `Composants Figma touchés (${impacted.length}) : ${impacted
+        .slice(0, 8)
+        .map((c) => `${c.name} (${c.page})`)
+        .join(', ')}${impacted.length > 8 ? '…' : ''}`,
+    );
+  else if (impacted) parts.push('Aucun composant Figma touché');
+  const step = data.step?.revision === revision ? data.step : null;
+  if (step && data.git)
+    parts.push(
+      step.usedIn?.length
+        ? `Code : ${step.usedIn.join(', ')}`
+        : 'Aucun fichier du code ne l’utilise encore',
+    );
+  return parts.join('\n');
+}
+
+// Conclusion de Clodo une fois plus rien en cours : « c'est bon » quand tout
+// ce qui devait être mis à jour l'est, sinon le problème et sa solution.
+// key change quand l'issue change (⚠ puis ✓ après réouverture du plugin…).
+export function circuitConclusion(
+  steps: CircuitStep[],
+  impact = '',
+): { key: string; text: string } | null {
+  if (steps.some((s) => s.state === 'pending')) return null;
+  const warns = steps.filter((s) => s.state === 'warn');
+  const github = steps.find((s) => s.id === 'github');
+  if (warns.length)
+    return {
+      key: 'warn:' + warns.map((w) => w.id + w.detail).join('|'),
+      text: `⚠ Pas encore à jour partout\n${warns
+        .map((w) => `${w.label} : ${w.detail}${w.fix ? `\n→ ${w.fix}` : ''}`)
+        .join('\n')}`,
+    };
+  const names: Partial<Record<CircuitStep['id'], string>> = {
+    code: 'ton code',
+    interface: 'ton interface',
+    figma: 'Figma',
+  };
+  const done = steps
+    .filter((s) => s.state === 'ok' && names[s.id])
+    .map((s) => names[s.id]!);
+  const where = done.length
+    ? done.length > 1
+      ? `${done.slice(0, -1).join(', ')} et ${done.at(-1)}`
+      : done[0]
+    : 'DS Studio';
+  return {
+    key: 'ok',
+    text: [
+      `C’est bon ✓ À jour : ${where}`,
+      impact,
+      github && `GitHub : ${github.detail}`,
+    ]
+      .filter(Boolean)
+      .join('\n'),
+  };
 }

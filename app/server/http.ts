@@ -37,6 +37,9 @@ import type { RecordInfo } from '../../scripts/runtime.mjs';
 // fichiers générés pour son interface (npm run tokens).
 export interface Circuit {
   revision: number;
+  // Tokens changés et fichiers du code qui les utilisent.
+  keys: string[];
+  usedIn: string[];
   code: { state: 'ok' | 'error' | 'absent'; detail?: string };
   interface: TokensScript;
 }
@@ -170,8 +173,8 @@ export async function createStudioServer(options: {
     }
   };
   // Liens d'alias de Figma (usage → base), gardés avec le DS du projet :
-  // modifier un usage ou sa base change tout le groupe, dans un seul diff,
-  // pour que DS-Studio et Figma disent toujours la même chose.
+  // modifier une base change aussi ses usages, dans un seul diff, comme dans
+  // Figma ; modifier un usage ne change que lui (même nom, même changement).
   const aliasFile = () => path.join(store.directory, 'aliases.json');
   const readAliases = async (): Promise<Record<string, string>> => {
     try {
@@ -186,15 +189,12 @@ export async function createStudioServer(options: {
     const tokens = store.snapshot().tokens;
     const out = new Map<string, Change>();
     for (const c of changes) {
-      const base = aliases[c.key] ?? c.key;
-      const group = [base, ...Object.keys(aliases).filter((k) => aliases[k] === base)];
-      if (c.value === null || group.length < 2 || !tokens[base]) {
-        out.set(c.key, c);
-        continue;
-      }
+      // Même nom, même changement : seul un token de base entraîne ses usages.
+      const group = Object.keys(aliases).filter((k) => aliases[k] === c.key);
+      out.set(c.key, c);
+      if (c.value === null) continue;
       for (const key of group)
-        if (tokens[key] || key === c.key)
-          out.set(key, key === c.key ? c : { key, value: c.value });
+        if (tokens[key] && !out.has(key)) out.set(key, { key, value: c.value });
     }
     return [...out.values()];
   };
@@ -371,6 +371,14 @@ export async function createStudioServer(options: {
             same: z.number().int().nonnegative().optional(),
             failed: issues,
             warning: z.string().max(300).nullable().optional(),
+            impacted: z
+              .array(
+                z
+                  .object({ name: z.string().max(200), page: z.string().max(200) })
+                  .strict(),
+              )
+              .max(200)
+              .optional(),
           })
           .strict()
           .parse(body);
@@ -498,6 +506,9 @@ export async function createStudioServer(options: {
               revision: store.snapshot().revision,
               pluginOpen: Date.now() - pluginSeenAt < 12_000,
             });
+          // Liens d'alias du DS ouvert, pour les conseils avant validation.
+          if (url.pathname === '/api/aliases')
+            return send(200, await readAliases());
           // État du circuit après la dernière validation (checklist du chat).
           if (url.pathname === '/api/circuit') {
             const project = (await connection.status()).project;
@@ -637,8 +648,11 @@ export async function createStudioServer(options: {
           // puis les fichiers que son interface charge sont régénérés. Chaque
           // étape est notée telle qu'elle s'est passée, pour la checklist.
           const project = (await connection.status()).project;
+          const changed = next.history.at(-1)?.patches.map((p) => p.key) ?? [];
           const step: Circuit = {
             revision: next.revision,
+            keys: changed,
+            usedIn: [],
             code: { state: 'absent' },
             interface: { state: 'absent' },
           };
@@ -659,6 +673,23 @@ export async function createStudioServer(options: {
             }
             if (step.code.state === 'ok')
               step.interface = await runTokensScript(project.folder);
+            step.usedIn = await (await workspace()).code
+              .usages(
+                changed.flatMap((k) => [`--${k.replaceAll('.', '-')}`, `'${k}'`, `"${k}"`]),
+              )
+              .catch(() => []);
+          }
+          // Un usage modifié seul n'est plus un alias de sa base : son lien
+          // est retiré, sinon modifier la base l'emporterait à nouveau.
+          const links = await readAliases();
+          const loose = changed.filter(
+            (k) =>
+              links[k] &&
+              next.tokens[k]?.$value !== next.tokens[links[k]]?.$value,
+          );
+          if (loose.length) {
+            for (const k of loose) delete links[k];
+            await atomicWrite(aliasFile(), JSON.stringify(links) + '\n');
           }
           circuits.set(store, step);
           await countChange();

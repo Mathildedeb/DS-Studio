@@ -721,7 +721,7 @@ test('plugin Figma : import proposé par le diff, compte rendu gardé, rien écr
   );
 });
 
-test('alias Figma : modifier un usage change sa base et tout son groupe, dans un seul diff', async (t) => {
+test('alias Figma : une base entraîne ses usages, un usage ne change que lui', async (t) => {
   const { origin, post, store } = await fixture(t);
   const { token } = await (await fetch(origin + '/api/plugin/pairing')).json();
   const tokens = store.snapshot().tokens;
@@ -739,9 +739,9 @@ test('alias Figma : modifier un usage change sa base et tout son groupe, dans un
   });
   assert.deepEqual(await sent.json(), { added: 0, changed: 0, removed: 0, aliases: 2 });
   assert.equal(store.snapshot().revision, 0);
-  // Un usage modifié : sa base et l'autre usage suivent.
+  // Une base modifiée : ses usages suivent, dans le même diff (comme Figma).
   const p = await (
-    await post('proposals', { revision: 0, changes: [{ key: 'color.text', value: '#302636' }] })
+    await post('proposals', { revision: 0, changes: [{ key: 'color.brand', value: '#302636' }] })
   ).json();
   assert.deepEqual(
     p.patches.map((x: { key: string; after: string }) => [x.key, x.after]),
@@ -751,9 +751,18 @@ test('alias Figma : modifier un usage change sa base et tout son groupe, dans un
       ['color.text', '#302636'],
     ],
   );
-  // Un token hors groupe ne bouge que lui-même.
-  const alone = await (
-    await post('proposals', { revision: 0, changes: [{ key: 'color.canvas', value: '#FFFFFF' }] })
+  // Même nom, même changement : un usage modifié ne change que lui.
+  const usage = await (
+    await post('proposals', { revision: 0, changes: [{ key: 'color.text', value: '#FFFFFF' }] })
   ).json();
-  assert.deepEqual(alone.patches.map((x: { key: string }) => x.key), ['color.canvas']);
+  assert.deepEqual(usage.patches.map((x: { key: string }) => x.key), ['color.text']);
+  // Validé : il n'est plus lié à sa base, qui ne l'emporte plus.
+  assert.equal((await post('commit', { id: usage.id })).status, 200);
+  const after = await (
+    await post('proposals', { revision: 1, changes: [{ key: 'color.brand', value: '#111111' }] })
+  ).json();
+  assert.deepEqual(
+    after.patches.map((x: { key: string }) => x.key),
+    ['color.brand', 'color.brandHover'],
+  );
 });

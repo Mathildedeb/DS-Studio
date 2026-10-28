@@ -153,9 +153,12 @@ function collect(variables) {
     });
   return { tokens, skipped, aliases };
 }
+// Couleurs comparées sans tenir compte de la casse : DS-Studio peut écrire
+// « #5b3b6d » quand Figma relit « #5B3B6D ».
+const hexEq = (a, b) => String(a).toUpperCase() === String(b).toUpperCase();
 const same = (type, figmaValue, tokenValue) =>
   type === 'color'
-    ? toHex(figmaValue) === tokenValue
+    ? hexEq(toHex(figmaValue), tokenValue)
     : figmaValue === tokenValue;
 // Où créer la variable d'un nouveau token : dans la collection de ses
 // voisines de même groupe, nommée comme elles (« color.primary.purple.850 »
@@ -175,9 +178,8 @@ function placeFor(key, byKey) {
   return null;
 }
 // Synchroniser : ce qu'il faut changer dans Figma pour suivre les tokens.
-// Un alias est rebranché sur la variable de base qui a la nouvelle valeur
-// (existante ou créée dans ce même passage) ; s'il n'y en a pas exactement
-// une, il est bloqué avec sa raison.
+// Chaque token modifie la variable qui porte son nom. Un alias dont la base
+// reçoit la même valeur dans ce passage la suit sans être touché.
 function plan(tokens, variables) {
   const byId = new Map(variables.map((v) => [v.id, v]));
   const { byKey } = keyed(variables);
@@ -202,7 +204,7 @@ function plan(tokens, variables) {
   for (const [key, token] of Object.entries(tokens)) {
     const v = byKey.get(key);
     if (v && !isAlias(v.value) && v.resolvedType === kinds[token.$type])
-      incoming.set(v.id, token.$value);
+      incoming.set(v.id, String(token.$value).toUpperCase());
   }
   for (const [key, token] of Object.entries(tokens)) {
     const v = byKey.get(key);
@@ -220,7 +222,7 @@ function plan(tokens, variables) {
     const root = baseOf(v, byId);
     if (
       same(token.$type, current, token.$value) ||
-      (isAlias(v.value) && root && incoming.get(root.id) === token.$value)
+      (isAlias(v.value) && root && incoming.get(root.id) === String(token.$value).toUpperCase())
     ) {
       result.same++;
       continue;
@@ -230,39 +232,17 @@ function plan(tokens, variables) {
       continue;
     }
     const before = token.$type === 'color' ? toHex(current) : current;
-    if (!isAlias(v.value)) {
-      result.updates.push({ key, id: v.id, name, type: token.$type, before, after: token.$value });
-      continue;
-    }
-    const target = byId.get(v.value.id);
-    const candidates = variables.filter(
-      (x) =>
-        x.collection !== LEGACY &&
-        x.resolvedType === v.resolvedType &&
-        !isAlias(x.value) &&
-        same(token.$type, x.value, token.$value),
-    );
-    const preferred = candidates.filter(
-      (x) => target && x.collection === target.collection,
-    );
-    const pick = preferred.length === 1 ? preferred[0] : candidates.length === 1 ? candidates[0] : null;
-    // Sinon, une variable créée dans ce passage avec cette valeur.
-    const created = candidates.length
-      ? []
-      : result.creates.filter((c) => c.type === token.$type && c.value === token.$value);
-    const base = { key, id: v.id, name, type: token.$type, before, after: token.$value };
-    if (pick)
-      result.retargets.push({ ...base, targetId: pick.id, targetName: pick.collection + '/' + pick.name });
-    else if (created.length === 1)
-      result.retargets.push({ ...base, createKey: created[0].key, targetName: created[0].collection + '/' + created[0].name });
-    else
-      result.blocked.push({
-        key,
-        name,
-        reason: candidates.length || created.length
-          ? 'alias : plusieurs variables valent ' + token.$value + ', à choisir dans Figma'
-          : 'alias : aucune variable de base ne vaut ' + token.$value,
-      });
+    // Même nom, même changement : la variable du token reçoit la valeur ;
+    // un alias devient une valeur directe (detached), sa base ne bouge pas.
+    result.updates.push({
+      key,
+      id: v.id,
+      name,
+      type: token.$type,
+      before,
+      after: token.$value,
+      detached: isAlias(v.value),
+    });
   }
   return result;
 }
@@ -361,7 +341,46 @@ if (typeof figma !== 'undefined') {
       }
     }
     const created = [...made.keys()].length;
-    return { updated: written.length - created - wrong, created, failed };
+    return {
+      updated: written.length - created - wrong,
+      created,
+      failed,
+      ids: written.map((u) => u.id),
+    };
+  };
+
+  // Une propriété liée à l'une de ces variables (couleur, espacement…).
+  const usesAny = (bound, ids) => {
+    if (!bound || typeof bound !== 'object') return false;
+    if (bound.type === 'VARIABLE_ALIAS') return ids.has(bound.id);
+    return Object.values(bound).some((b) => usesAny(b, ids));
+  };
+  // Composants qui utilisent les variables modifiées, directement ou par un
+  // alias qui y mène : la liste que Clodo donne après la mise à jour.
+  const impactedComponents = async (ids) => {
+    if (!ids.length) return [];
+    const all = await readVariables();
+    const byId = new Map(all.map((x) => [x.id, x]));
+    const touched = new Set(ids);
+    for (const v of all) {
+      const base = baseOf(v, byId);
+      if (base && touched.has(base.id)) touched.add(v.id);
+    }
+    await figma.loadAllPagesAsync();
+    const found = new Map();
+    for (const page of figma.root.children) {
+      for (const node of page.findAll((n) => usesAny(n.boundVariables, touched))) {
+        let c = node;
+        while (c && c.type !== 'COMPONENT' && c.type !== 'COMPONENT_SET' && c.type !== 'PAGE')
+          c = c.parent;
+        if (!c || c.type === 'PAGE') continue;
+        const top = c.type === 'COMPONENT' && c.parent && c.parent.type === 'COMPONENT_SET' ? c.parent : c;
+        found.set(top.id, { name: top.name, page: page.name });
+        if (found.size >= 60) break;
+      }
+      if (found.size >= 60) break;
+    }
+    return [...found.values()];
   };
 
   figma.ui.onmessage = async (msg) => {
@@ -400,7 +419,9 @@ if (typeof figma !== 'undefined') {
           const report =
             p.updates.length || p.retargets.length || p.creates.length
               ? await applyChanges(p.updates, p.retargets, p.creates)
-              : { updated: 0, created: 0, failed: [] };
+              : { updated: 0, created: 0, failed: [], ids: [] };
+          report.impacted = await impactedComponents(report.ids);
+          delete report.ids;
           report.failed = report.failed.concat(
             p.blocked.map((b) => ({ key: b.key, reason: b.reason })),
             p.missing.map((m) => ({ key: m.key, reason: 'aucune variable de ce nom dans Figma, ni de collection évidente pour la créer' })),
@@ -423,6 +444,8 @@ if (typeof figma !== 'undefined') {
           msg.retargets || [],
           msg.creates || [],
         );
+        report.impacted = await impactedComponents(report.ids);
+        delete report.ids;
         figma.ui.postMessage(Object.assign({ type: 'report', revision: msg.revision }, report));
       }
     } catch (e) {

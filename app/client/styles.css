@@ -2423,6 +2423,22 @@ h2[id] {
   display: flex;
   gap: 6px;
 }
+.diff-advice {
+  display: grid;
+  gap: 4px;
+  margin: 8px 0;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: var(--studio-surface-alt);
+  font-size: 13px;
+}
+.diff-advice ul {
+  margin: 0;
+  padding-left: 18px;
+}
+.diff-advice .advice-warn {
+  color: var(--studio-warning-text);
+}
 .chat-circuit ul {
   display: grid;
   gap: 6px;

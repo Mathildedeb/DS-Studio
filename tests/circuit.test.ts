@@ -52,3 +52,54 @@ test('checklist : un échec donne sa raison et une solution, jamais un ✅', () 
   // Sans projet ni Figma : seules les lignes utiles.
   assert.deepEqual(states({ ...base, git: null, figmaLinked: false }), ['ds:ok', 'figma:todo']);
 });
+
+test('checklist : Clodo conclut une fois rien en cours, avec la solution en cas d’échec', async () => {
+  const { circuitConclusion } = await import('../app/shared/circuit.js');
+  // Plugin ouvert, Figma en cours : pas encore de conclusion.
+  assert.equal(circuitConclusion(circuitSteps({ ...base, figma: { report: null, pluginOpen: true } }, 8)), null);
+  const closed = circuitConclusion(circuitSteps(base, 8));
+  assert.match(closed?.text ?? '', /^⚠ Pas encore à jour partout\nMettre à jour Figma : .*\n→ Ouvre le plugin DS-Studio/);
+  const done = circuitConclusion(
+    circuitSteps({ ...base, figma: { pluginOpen: true, report: { revision: 8, updated: 1, created: 0, failed: [] } } }, 8),
+  );
+  assert.equal(done?.key, 'ok');
+  assert.equal(
+    done?.text,
+    'C’est bon ✓ À jour : ton code, ton interface et Figma\nGitHub : 4/10 avant publication',
+  );
+});
+
+test('checklist : Clodo liste les composants Figma et les fichiers du code touchés', async () => {
+  const { circuitImpact, circuitConclusion } = await import('../app/shared/circuit.js');
+  const data: CircuitData = {
+    ...base,
+    step: { ...base.step!, keys: ['background.composant.dark'], usedIn: ['src/App.css'] },
+    figma: {
+      pluginOpen: true,
+      report: {
+        revision: 8,
+        updated: 1,
+        created: 0,
+        failed: [],
+        impacted: [
+          { name: 'Card', page: 'Molécules' },
+          { name: 'Menu', page: 'Organism' },
+        ],
+      },
+    },
+  };
+  const impact = circuitImpact(data, 8);
+  assert.equal(
+    impact,
+    'Composants Figma touchés (2) : Card (Molécules), Menu (Organism)\nCode : src/App.css',
+  );
+  assert.equal(
+    circuitConclusion(circuitSteps(data, 8), impact)?.text,
+    'C’est bon ✓ À jour : ton code, ton interface et Figma\nComposants Figma touchés (2) : Card (Molécules), Menu (Organism)\nCode : src/App.css\nGitHub : 4/10 avant publication',
+  );
+  // Rien n'utilise le token : Clodo le dit aussi.
+  assert.match(
+    circuitImpact({ ...data, step: { ...data.step!, usedIn: [] }, figma: { ...data.figma, report: { ...data.figma.report!, impacted: [] } } }, 8),
+    /^Aucun composant Figma touché\nAucun fichier du code ne l’utilise encore$/,
+  );
+});
