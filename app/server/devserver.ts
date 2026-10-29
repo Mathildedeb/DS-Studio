@@ -161,12 +161,24 @@ export class DevServer {
   stop() {
     const child = this.child;
     this.child = undefined;
-    if (child?.pid)
-      try {
-        process.kill(-child.pid, 'SIGTERM');
-      } catch {
-        child.kill('SIGTERM');
-      }
+    if (child?.pid) {
+      // Sous Windows, pas de groupe de processus : « npm » tué seul laisse
+      // vivre le vrai serveur (et ses sorties ouvertes). On coupe l'arbre.
+      if (process.platform === 'win32')
+        spawn('taskkill', ['/pid', String(child.pid), '/T', '/F'], {
+          stdio: 'ignore',
+          windowsHide: true,
+        }).on('error', () => child.kill());
+      else
+        try {
+          process.kill(-child.pid, 'SIGTERM');
+        } catch {
+          child.kill('SIGTERM');
+        }
+      // Les sorties du serveur ne retiennent plus DS-Studio.
+      child.stdout?.destroy();
+      child.stderr?.destroy();
+    }
     this.status = { state: 'stopped', logs: this.status.logs };
     return this.read();
   }
