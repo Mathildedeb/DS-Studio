@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { request } from './api.js';
+import SyncPanel from './SyncPanel.js';
 import type { Proposal } from '../shared/model.js';
 import type { Focus } from '../shared/focus.js';
 import type { Level } from './dsRegistry.js';
@@ -71,6 +72,7 @@ export default function FigmaPanel({
       hidden={!active}
     >
       <div className="ds-list">
+        <SyncPanel active={active} onAsk={onAsk} />
         <section className="figma-tokens" aria-label="Tokens du projet">
           <strong>Tokens du projet</strong>
           {project ? (

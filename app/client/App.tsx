@@ -549,10 +549,13 @@ export default function App() {
         branch: string;
         commit: string;
         pushed: boolean;
+        pr?: { url?: string; error?: string };
       }>('git/publish', { message: commitMessage });
-      const text = done.pushed
-        ? `Publié : commit ${done.commit} poussé sur la branche ${done.branch}.`
-        : `Commit ${done.commit} fait sur ${done.branch} (pas de dépôt distant).`;
+      const text = !done.pushed
+        ? `Commit ${done.commit} fait sur ${done.branch} (pas de dépôt distant).`
+        : done.pr?.url
+          ? `Publié : branche ${done.branch} poussée, Pull Request ouverte : ${done.pr.url}`
+          : `Publié : commit ${done.commit} poussé sur la branche ${done.branch}. Pull Request à ouvrir sur GitHub${done.pr?.error ? ` (gh : ${done.pr.error})` : ''}.`;
       setPublishCard((p) => p && { ...p, busy: false, done: text });
       setChat((c) => [...c, { role: 'assistant', text }]);
       setConnection(await request<ConnectionStatus>('connection'));

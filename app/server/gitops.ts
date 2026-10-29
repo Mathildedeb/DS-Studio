@@ -123,6 +123,23 @@ const branchExists = (folder: string, branch: string) =>
     () => false,
   );
 
+// Pull Request ouverte par gh (GitHub CLI) s'il est installé et connecté ;
+// sinon la branche est poussée et la PR reste à ouvrir sur GitHub.
+const openPullRequest = (folder: string, branch: string) =>
+  new Promise<{ url?: string; error?: string }>((done) =>
+    execFile(
+      'gh',
+      ['pr', 'create', '--head', branch, '--fill'],
+      { cwd: folder, timeout: 60_000 },
+      (error, stdout, stderr) =>
+        done(
+          error
+            ? { error: (stderr || error.message).trim().split('\n').at(-1)?.slice(0, 200) }
+            : { url: stdout.trim().split('\n').find((l) => l.startsWith('https://')) },
+        ),
+    ),
+  );
+
 export async function publish(folder: string, message: string) {
   const status = await gitStatus(folder);
   const risky = status.files.filter((f) => sensitive.test(f.path));
@@ -175,5 +192,6 @@ export async function publish(folder: string, message: string) {
     branch,
     commit: await run(folder, ['rev-parse', '--short', 'HEAD']),
     pushed: true,
+    pr: await openPullRequest(folder, branch),
   };
 }

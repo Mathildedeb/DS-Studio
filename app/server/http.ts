@@ -22,6 +22,13 @@ import { BATCH, PublishCounter, gitStatus, publish } from './gitops.js';
 import { runTokensScript, type TokensScript } from './npm.js';
 import { codedFor } from '../shared/components.js';
 import { applyOps, planSchema } from '../shared/pagePlan.js';
+import {
+  compareComponents,
+  figmaComponentSchema,
+  type FigmaComponentProps,
+  type FigmaOp,
+  type Ledger,
+} from '../shared/componentSync.js';
 import { panelSelection } from '../shared/panel.js';
 import { readProps, type PropSpec } from '../shared/props.js';
 import { proposePage } from '../../connectors/agents/pageBuilder.js';
@@ -190,6 +197,24 @@ export async function createStudioServer(options: {
   // Dernière validation de chaque DS : code et interface du projet mis à jour ?
   const circuits = new WeakMap<Store, Circuit>();
   const syncFile = () => path.join(store.directory, 'figma-sync.json');
+  // Composants : ce que le plugin a vu, les variantes à créer dans Figma, le
+  // résultat de chacune et le registre de synchro, gardés avec le DS du projet.
+  type ComponentSync = {
+    snapshot?: { at: string; components: FigmaComponentProps[] };
+    queue: FigmaOp[];
+    results: { op: FigmaOp; ok: boolean; reason: string; at: string }[];
+    ledger: Ledger;
+  };
+  const componentFile = () => path.join(store.directory, 'component-sync.json');
+  const readComponentSync = async (): Promise<ComponentSync> => {
+    try {
+      return { queue: [], results: [], ledger: {}, ...JSON.parse(await readPrivate(componentFile(), 2_000_000)) };
+    } catch {
+      return { queue: [], results: [], ledger: {} };
+    }
+  };
+  const saveComponentSync = (data: ComponentSync) =>
+    atomicWrite(componentFile(), JSON.stringify(data) + '\n');
   const readSync = async () => {
     try {
       return JSON.parse(await readPrivate(syncFile(), 200_000));
@@ -291,7 +316,7 @@ export async function createStudioServer(options: {
       // (POST report). Aucune route du plugin n'écrit de token.
       const pluginRoute = req.url?.split('?')[0] ?? '';
       if (
-        ['/api/plugin/sync', '/api/plugin/import', '/api/plugin/report'].includes(
+        ['/api/plugin/sync', '/api/plugin/import', '/api/plugin/report', '/api/plugin/components'].includes(
           pluginRoute,
         ) &&
         (req.headers.host === `127.0.0.1:${port}` ||
@@ -321,9 +346,35 @@ export async function createStudioServer(options: {
             figmaFileKey: expected,
             revision: state.revision,
             tokens: state.tokens,
+            componentOps: (await readComponentSync()).queue,
           });
         }
         const body = await pluginBody(req);
+        // Variantes vues dans Figma, et résultat des créations demandées.
+        if (pluginRoute === '/api/plugin/components') {
+          const b = z
+            .object({
+              components: z.array(figmaComponentSchema).max(300),
+              results: z
+                .array(
+                  z.object({ id: z.string().max(60), ok: z.boolean(), reason: z.string().max(300) }).strict(),
+                )
+                .max(100),
+            })
+            .strict()
+            .parse(body);
+          const data = await readComponentSync();
+          const at = new Date().toISOString();
+          for (const r of b.results) {
+            const op = data.queue.find((o) => o.id === r.id);
+            if (!op) continue;
+            data.queue = data.queue.filter((o) => o.id !== r.id);
+            data.results = [{ op, ok: r.ok, reason: r.reason, at }, ...data.results].slice(0, 50);
+          }
+          data.snapshot = { at, components: b.components };
+          await saveComponentSync(data);
+          return send(200, { ok: true });
+        }
         if (pluginRoute === '/api/plugin/import') {
           const b = z
             .object({
@@ -497,6 +548,44 @@ export async function createStudioServer(options: {
             );
             res.writeHead(200, { 'Content-Type': 'image/png' });
             return res.end(png);
+          }
+          // Espace Synchro : composants Figma ↔ code, écarts, file d'attente.
+          if (url.pathname === '/api/component-sync') {
+            const scope = await workspace();
+            const data = await readComponentSync();
+            const pairs = [];
+            if (scope.project && data.snapshot) {
+              const coded = await scope.code.components();
+              const map = await scope.code.componentMap();
+              for (const figmaC of data.snapshot.components) {
+                const c = codedFor(figmaC.name, coded, map);
+                if (!c || !figmaC.props.length) continue;
+                pairs.push({
+                  figma: figmaC,
+                  file: c.file,
+                  specs: readProps(await scope.code.source(c.file).catch(() => ''), c.name),
+                });
+              }
+            }
+            const summary = compareComponents(pairs, data.ledger);
+            if (JSON.stringify(summary.ledger) !== JSON.stringify(data.ledger))
+              await saveComponentSync({ ...data, ledger: summary.ledger });
+            const queued = new Set(data.queue.map((o) => `${o.component} ${o.property} ${o.value}`));
+            return send(200, {
+              pluginSeenAt: pluginSeenAt || null,
+              snapshotAt: data.snapshot?.at ?? null,
+              figmaComponents: data.snapshot?.components.length ?? 0,
+              matched: pairs.length,
+              items: summary.items.map((i) => ({ ...i, queued: queued.has(`${i.figmaId} ${i.property} ${i.value}`) })),
+              synced: summary.synced,
+              unsupported: summary.unsupported,
+              queue: data.queue,
+              results: data.results.slice(0, 10),
+              git: await (async () => {
+                const project = (await connection.status()).project;
+                return project ? gitStatus(project.folder).catch(() => null) : null;
+              })(),
+            });
           }
           if (url.pathname === '/api/code/progress')
             return send(200, { busy, steps: progress });
@@ -795,6 +884,22 @@ export async function createStudioServer(options: {
         }
         // Code : Clodo propose, l'étudiante valide le diff, le serveur écrit.
         // Annuler la dernière modification du chat sur une page.
+        // Créer dans Figma une valeur de variante qui n'existe que dans le code.
+        if (url.pathname === '/api/component-sync/send') {
+          const b = z
+            .object({
+              component: z.string().max(200),
+              property: z.string().max(80),
+              value: z.string().max(80),
+            })
+            .strict()
+            .parse(body);
+          const data = await readComponentSync();
+          if (!data.queue.some((o) => o.component === b.component && o.property === b.property && o.value === b.value))
+            data.queue.push({ id: Math.random().toString(36).slice(2, 10), ...b });
+          await saveComponentSync(data);
+          return send(200, { queue: data.queue });
+        }
         if (url.pathname === '/api/page-plan/undo') {
           const b = z
             .object({ page: z.string().regex(/^[\w-]{1,60}$/) })
