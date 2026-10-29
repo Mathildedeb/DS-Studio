@@ -7,7 +7,7 @@ import type { Focus } from '../shared/focus.js';
 import type { DevStatus } from '../server/devserver.js';
 import type { CodeProposal } from '../server/code.js';
 import type { CodeComponent } from '../shared/components.js';
-import PreviewBuild from './PreviewBuild.js';
+import PreviewBuild, { type BuildRequest } from './PreviewBuild.js';
 import DeviceFrame, { closestIPhone, isPhone } from './DeviceFrame.js';
 
 // Page Preview : un format (largeur × hauteur réelles) et une page du proto.
@@ -51,7 +51,7 @@ export default function PreviewPage({
   code?: { components: CodeComponent[]; map: Record<string, string> };
   figma?: FigmaComponent[];
   onAsk: (message: string) => void;
-  onBuild: (message: string, focus: Focus) => void;
+  onBuild: (request: BuildRequest) => void;
   onCodeProposal: (p: CodeProposal) => void;
   chatChange?: { page: string; n: number };
 }) {
@@ -122,6 +122,15 @@ export default function PreviewPage({
     setRoute('/');
   };
 
+  // Construire : la page de travail se resserre pour laisser la place au canvas.
+  const building = !!project && mode === 'build' && dev.state === 'running';
+  useEffect(() => {
+    if (!building) return;
+    document.documentElement.dataset.building = '';
+    return () => {
+      delete document.documentElement.dataset.building;
+    };
+  }, [building]);
   return (
     <section className="panel mobile-panel" aria-labelledby="preview-title">
       <div className="preview-bar">
@@ -358,7 +367,10 @@ export default function PreviewPage({
       )}
 
       {project && (
-        <div className="project-run" role="status">
+        <div
+          className={building ? 'project-run project-run-compact' : 'project-run'}
+          role="status"
+        >
           <span>
             Projet <strong>{project.name}</strong> ·{' '}
             {dev.state === 'running'

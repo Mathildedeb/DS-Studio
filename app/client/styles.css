@@ -3121,3 +3121,493 @@ h2[id] {
   font: inherit;
   font-size: 12px;
 }
+
+/* Calques en arbre : indentation mesurée, type discret, noms tronqués,
+   repères de dépôt avant / après / dedans. */
+.build-layers li {
+  position: relative;
+}
+.build-layer {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-height: 26px;
+  border-radius: 6px;
+}
+.build-layer:hover {
+  background: var(--studio-border);
+}
+.build-layer[aria-selected='true'] {
+  background: rgb(138 56 245 / 14%);
+}
+.build-twist {
+  flex: none;
+  width: 16px;
+  height: 20px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--studio-muted);
+  font-size: 10px;
+  cursor: pointer;
+}
+.build-kind {
+  flex: none;
+  width: 16px;
+  color: var(--studio-muted);
+  font-size: 11px;
+  text-align: center;
+}
+.build-layers .build-layer-name {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  gap: 6px;
+  align-items: center;
+  padding: 3px 4px;
+  background: none;
+}
+.build-layers .build-layer-name[aria-pressed='true'] {
+  background: none;
+  color: #5b1fb0;
+  font-weight: 600;
+}
+.build-layer-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.build-rename {
+  flex: 1;
+  min-width: 0;
+  padding: 2px 4px;
+  border: 1px solid #8a38f5;
+  border-radius: 4px;
+  font: inherit;
+}
+.build-drop-before::before,
+.build-drop-after::after {
+  content: '';
+  position: absolute;
+  left: 8px;
+  right: 4px;
+  height: 2px;
+  background: #8a38f5;
+}
+.build-drop-before::before {
+  top: -1px;
+}
+.build-drop-after::after {
+  bottom: -1px;
+}
+.build-drop-inside > .build-layer {
+  outline: 2px solid #8a38f5;
+  outline-offset: -2px;
+}
+.build-layout {
+  display: grid;
+  gap: 8px;
+}
+.build-layout h4 {
+  margin: 6px 0 0;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--studio-muted);
+}
+.build-sides {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+/* Panneau de gauche : onglets Calques / Composants, outils compacts,
+   actions au survol, menu contextuel. */
+.build-tabs [role='tablist'] {
+  display: flex;
+  flex: 1;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 8px;
+  background: var(--studio-border);
+}
+.build-tabs [role='tab'] {
+  flex: 1;
+  min-height: 28px;
+  padding: 2px 6px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--studio-muted);
+  cursor: pointer;
+}
+.build-tabs [role='tab'][aria-selected='true'] {
+  background: var(--studio-surface, #fff);
+  color: inherit;
+  box-shadow: 0 1px 2px #1b2e4a1f;
+}
+.build-layer-tools {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+.build-layer-tools .build-group-head {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.build-layer-tools button,
+.build-layer-actions button {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  font-size: 13px;
+  cursor: pointer;
+}
+.build-layer-tools button:hover:not(:disabled),
+.build-layer-actions button:hover {
+  background: var(--studio-border-strong);
+}
+.build-layer-tools button:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+.build-layer-actions {
+  display: none;
+  flex: none;
+}
+.build-layer:hover .build-layer-actions,
+.build-layer:focus-within .build-layer-actions {
+  display: flex;
+}
+.build-layer-actions button {
+  width: 20px;
+  height: 20px;
+  font-size: 11px;
+  color: var(--studio-muted);
+}
+.build-fiche-head {
+  display: grid;
+  gap: 6px;
+}
+.build-fiche-head button {
+  justify-self: start;
+  padding: 2px 6px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  font: inherit;
+  font-size: 12px;
+  color: var(--studio-muted);
+  cursor: pointer;
+}
+.build-fiche-head button:hover {
+  background: var(--studio-border);
+}
+.build-menu {
+  position: fixed;
+  z-index: 20;
+  display: grid;
+  min-width: 210px;
+  margin: 0;
+  padding: 4px;
+  list-style: none;
+  border: 1px solid var(--studio-border-strong);
+  border-radius: 8px;
+  background: var(--studio-surface, #fff);
+  box-shadow: 0 12px 32px #1b2e4a33;
+  font-size: 13px;
+}
+.build-menu button {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  width: 100%;
+  padding: 5px 8px;
+  border: 0;
+  border-radius: 5px;
+  background: none;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.build-menu button:hover:not(:disabled) {
+  background: rgb(138 56 245 / 12%);
+}
+.build-menu button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.build-menu kbd {
+  color: var(--studio-muted);
+  font: inherit;
+  font-size: 11px;
+}
+.build-side > .build-search {
+  flex: none;
+}
+
+/* Propriétés : sections repliables, actions en icônes, alignement en grille. */
+.build-prop-head {
+  display: grid;
+  gap: 0;
+}
+.build-prop-head .build-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.build-prop-head small {
+  color: var(--studio-muted);
+  font-size: 11px;
+}
+.build-icons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+}
+.build-icons button {
+  min-width: 28px;
+  height: 28px;
+  padding: 0 6px;
+  border: 1px solid var(--studio-border);
+  border-radius: 6px;
+  background: var(--studio-surface, #fff);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+.build-icons button:hover:not(:disabled) {
+  border-color: var(--studio-border-strong);
+}
+.build-icons button:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+.build-section {
+  border-top: 1px solid var(--studio-border);
+  padding-top: 6px;
+}
+.build-section-head {
+  display: flex;
+  gap: 6px;
+  width: 100%;
+  padding: 2px 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  text-align: left;
+  cursor: pointer;
+}
+.build-section-head span {
+  width: 10px;
+  color: var(--studio-muted);
+}
+.build-section-body {
+  display: grid;
+  gap: 8px;
+  padding: 6px 0 4px;
+}
+.build-num,
+.build-size {
+  grid-template-columns: minmax(0, 1fr) 96px;
+  align-items: center;
+}
+.build-num input,
+.build-size select,
+.build-size input {
+  min-width: 0;
+}
+.build-size-row {
+  display: flex;
+  gap: 4px;
+}
+.build-size-row select {
+  flex: 1;
+}
+.build-size-row input {
+  width: 64px;
+}
+.build-size {
+  grid-template-columns: minmax(0, 1fr) 150px;
+}
+.build-swatch-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+.build-swatch-row select {
+  flex: 1;
+  min-width: 0;
+}
+.build-swatch {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  border: 1px solid var(--studio-border-strong);
+  border-radius: 4px;
+}
+.build-align-row {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+.build-align {
+  display: grid;
+  grid-template-columns: repeat(3, 22px);
+  gap: 2px;
+  padding: 4px;
+  border: 1px solid var(--studio-border);
+  border-radius: 8px;
+  background: var(--studio-surface, #fff);
+}
+.build-align button {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: none;
+  cursor: pointer;
+}
+.build-align button i {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--studio-border-strong);
+}
+.build-align button:hover {
+  background: var(--studio-border);
+}
+.build-align button[aria-pressed='true'] i {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  background: #8a38f5;
+}
+.build-align-options {
+  display: grid;
+  gap: 4px;
+}
+.build-link-button {
+  justify-self: start;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: #5b1fb0;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+/* Build piloté par le chat : checklist des étapes. */
+.chat-build-steps {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 13px;
+}
+.chat-build-steps li[data-state='todo'] {
+  color: #6b7080;
+}
+.chat-build-steps li[data-state='doing'] {
+  font-weight: 600;
+}
+.chat-build-link {
+  align-self: center;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+/* Page de travail en mode Construire : titre sur une ligne, barres denses,
+   espace de travail à la hauteur exacte de l'écran. Rien n'est retiré. */
+[data-building] .intro {
+  padding: 10px 24px 8px;
+}
+[data-building] .intro h1 {
+  margin: 0;
+  font-size: 18px;
+  letter-spacing: -0.3px;
+}
+[data-building] .intro p {
+  display: none;
+}
+[data-building] .preview-bar {
+  gap: 6px 18px;
+  padding: 6px 12px;
+}
+[data-building] .preview-group {
+  gap: 4px;
+}
+[data-building] .preview-chip,
+[data-building] .preview-add,
+[data-building] .preview-remove {
+  padding: 3px 10px;
+  font-size: 12px;
+}
+.project-run-compact {
+  gap: 4px 10px;
+  padding: 4px 12px;
+  font-size: 12px;
+}
+.project-run-compact button,
+.project-run-compact a {
+  padding: 2px 8px;
+  font-size: 12px;
+  min-height: 0;
+}
+.project-run-compact details {
+  flex-basis: auto;
+}
+.project-run-compact details[open] {
+  flex-basis: 100%;
+}
+[data-building] .viewport-device {
+  padding: 8px;
+}
+[data-building] .build {
+  gap: 6px;
+}
+[data-building] .build-toolbar {
+  gap: 4px;
+  padding: 4px;
+}
+[data-building] .build-tool,
+[data-building] .build-segment button,
+[data-building] .build-device select,
+[data-building] .build-toolbar .studio-primary {
+  min-height: 28px;
+  padding: 2px 9px;
+  font-size: 12px;
+}
+.build-body .build-side {
+  height: var(--build-h, max(480px, calc(100dvh - 300px)));
+}
+.build-body .build-stage {
+  height: var(--build-h, auto);
+  box-sizing: border-box;
+  overflow: hidden;
+}
+.build-body .device-box {
+  height: calc(var(--build-h, 600px) - 16px);
+}
+.build[data-narrow] .build-side {
+  height: auto;
+  max-height: var(--build-h);
+}

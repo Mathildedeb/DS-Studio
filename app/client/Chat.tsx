@@ -38,6 +38,9 @@ export default function Chat({
   focus,
   lastCode,
   onRevert,
+  build,
+  onBuildYes,
+  onBuildLater,
   publish,
   onPublish,
   onDismissPublish,
@@ -59,6 +62,18 @@ export default function Chat({
   // Dernière modification de code appliquée, annulable depuis la barre.
   lastCode?: { id: string; files: string[] };
   onRevert: () => void;
+  // Build d'une page : checklist des étapes et la question de l'étape en cours.
+  build?: {
+    page: string;
+    route?: string | false;
+    steps: { label: string; state: 'done' | 'doing' | 'todo' | 'warn' }[];
+    checks?: { ok: boolean; text: string }[];
+    note?: string;
+    busy: boolean;
+    question: string;
+  };
+  onBuildYes?: () => void;
+  onBuildLater?: () => void;
   // Carte « Je publie ? » : commit + push du projet, seulement à l'accord.
   publish?: { git: PublishStatus; busy: boolean; done?: string; error?: string };
   onPublish: (message: string) => void;
@@ -173,6 +188,53 @@ export default function Chat({
         )}
         {thinking && <Progress agentName={agentName} />}
       </div>
+      {build && (
+        <section className="chat-publish chat-build" aria-label={`Build de la page ${build.page}`}>
+          <p>
+            <strong>Build · {build.page}</strong>
+          </p>
+          <ol className="chat-build-steps">
+            {build.steps.map((s) => (
+              <li key={s.label} data-state={s.state}>
+                <span aria-hidden="true">{{ done: '✓', doing: '⏳', todo: '○', warn: '⚠️' }[s.state]}</span> {s.label}
+              </li>
+            ))}
+          </ol>
+          {build.checks && (
+            <details open={build.checks.some((c) => !c.ok)}>
+              <summary>
+                Vérification du code : {build.checks.filter((c) => c.ok).length}/{build.checks.length}
+              </summary>
+              <ul>
+                {build.checks.map((c) => (
+                  <li key={c.text}>
+                    {c.ok ? '✓' : '⚠️'} {c.text}
+                  </li>
+                ))}
+              </ul>
+            </details>
+          )}
+          {build.note && <p className="error">{build.note}</p>}
+          <p>{build.question}</p>
+          {!build.busy && (
+            <div>
+              {build.question !== 'Build terminé.' && (
+                <button type="button" className="studio-primary" onClick={onBuildYes}>
+                  {build.question.startsWith('Tu la testes') ? 'C’est bon' : 'Oui'}
+                </button>
+              )}
+              {build.question.startsWith('Tu la testes') && build.route && (
+                <a className="chat-build-link" href={`http://localhost:5173${build.route}`} target="_blank" rel="noreferrer">
+                  Ouvrir la page codée ↗
+                </a>
+              )}
+              <button type="button" onClick={onBuildLater}>
+                {build.question === 'Build terminé.' ? 'Fermer' : 'Plus tard'}
+              </button>
+            </div>
+          )}
+        </section>
+      )}
       {publish && (
         <section className="chat-publish" aria-label="Publier sur Git">
           {publish.done ? (

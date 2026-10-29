@@ -10,6 +10,7 @@ import {
   removeInstance,
   setProp,
 } from '../app/shared/pagePlan.js';
+import type { Instance } from '../app/shared/pagePlan.js';
 import { bridgeFiles } from '../app/server/bridge.js';
 
 const fixture = (name: string) =>
@@ -58,9 +59,9 @@ test('plan de page : ajouter, déplacer, dupliquer, supprimer ; une instance à 
   const copy = duplicateInstance(plan, a);
   plan = setProp(copy.plan, copy.id!, 'userType', 'cauchemar');
   // La copie change seule ; l'original garde ses valeurs.
-  assert.deepEqual(plan.instances.map((i) => i.props.userType ?? null), [null, 'cauchemar', 'cauchemar']);
+  assert.deepEqual((plan.instances as Instance[]).map((i) => i.props.userType ?? null), [null, 'cauchemar', 'cauchemar']);
   plan = setProp(plan, copy.id!, 'userType', undefined);
-  assert.equal(plan.instances[1].props.userType, undefined);
+  assert.equal((plan.instances[1] as Instance).props.userType, undefined);
   plan = removeInstance(plan, a);
   assert.equal(plan.instances.length, 2);
   assert.doesNotThrow(() => planSchema.parse(plan));
@@ -103,7 +104,7 @@ test('chat sur la page : opérations validées contre les vrais composants', asy
     catalog,
   );
   assert.deepEqual(
-    plan.instances.map((i) => [i.component, i.props]),
+    (plan.instances as Instance[]).map((i) => [i.component, i.props]),
     [
       ['Avatar', {}],
       ['Avatar', { userType: 'cauchemar' }],
@@ -115,7 +116,7 @@ test('chat sur la page : opérations validées contre les vrais composants', asy
     'Button : « couleur = rouge » n’existe pas dans le DS, ignoré.',
     'Header n’est pas dans le Design System, ignoré.',
     'Avatar : « userType = zombie » n’existe pas dans le DS, ignoré.',
-    'Instance inconnu introuvable, ignorée.',
+    'Calque inconnu introuvable, ignoré.',
   ]);
 });
 
@@ -133,7 +134,7 @@ test('composant pas encore codé : ajouté en maquette Figma, avec ses variantes
     catalog,
   );
   assert.deepEqual(
-    plan.instances.map(({ component, file, figma, props }) => ({ component, file, figma, props })),
+    (plan.instances as Instance[]).map(({ component, file, figma, props }) => ({ component, file, figma, props })),
     [{ component: 'card.donut', file: undefined, figma: '12:34', props: { Size: 'large' } }],
   );
   assert.equal(notes.length, 1);
@@ -162,4 +163,94 @@ test('chat : crée une page et lie un bouton vers elle, dans la même réponse',
     'La page « Découvrir » existe déjà.',
   ]);
   assert.doesNotThrow(() => planSchema.parse(plan));
+});
+
+test('calques en arbre : grouper, Auto Layout, imbriquer, dégrouper, renommer', async () => {
+  const { wrapNodes, unwrapNode, findNode, flatten, renameNode, setLayout, labelOf, applyOps } = await import(
+    '../app/shared/pagePlan.js'
+  );
+  const btn = (id: string) => ({ id, component: 'Button', file: 'src/components/atoms/Button/Button.tsx', props: {} });
+  let plan: import('../app/shared/pagePlan.js').PagePlan = { instances: [btn('a'), btn('b'), btn('c')] };
+  // Une ancienne page (liste plate) reste valide telle quelle.
+  assert.doesNotThrow(() => planSchema.parse(plan));
+  const g = wrapNodes(plan, ['c', 'b'], 'autolayout', { direction: 'row', gap: 8 });
+  plan = g.plan;
+  assert.deepEqual(flatten(plan).map((f) => [f.node.id === g.id ? 'AL' : f.node.id, f.depth]), [
+    ['a', 0],
+    ['AL', 0],
+    ['b', 1],
+    ['c', 1],
+  ]);
+  // Déplacer « a » dans l'Auto Layout, puis l'Auto Layout dans lui-même : refusé.
+  plan = moveInstance(plan, 'a', 0, g.id!);
+  assert.equal(findNode(plan, 'a')!.parent!.id, g.id);
+  assert.deepEqual(moveInstance(plan, g.id!, 0, 'a'), plan);
+  plan = setLayout(renameNode(plan, g.id!, 'Actions'), g.id!, { gap: 24 });
+  const al = findNode(plan, g.id!)!.node as import('../app/shared/pagePlan.js').AutoLayout;
+  assert.equal(labelOf(al), 'Actions');
+  assert.deepEqual([al.layout.direction, al.layout.gap], ['row', 24]);
+  assert.doesNotThrow(() => planSchema.parse(plan));
+  // Calques de niveaux différents : pas de groupe, une explication.
+  assert.ok(wrapNodes(plan, ['a', g.id!], 'group').error);
+  plan = unwrapNode(plan, g.id!);
+  assert.deepEqual(plan.instances.map((n) => n.id), ['a', 'b', 'c']);
+  // Le chat : mettre en Auto Layout et ajouter dedans.
+  const chat = applyOps(
+    plan,
+    [{ op: 'wrap', ids: ['a', 'b'], kind: 'autolayout', name: 'Barre', layout: { direction: 'row' } }],
+    { Button: { file: 'src/components/atoms/Button/Button.tsx', specs: [] } },
+  );
+  const bar = chat.plan.instances[0] as import('../app/shared/pagePlan.js').AutoLayout;
+  assert.deepEqual([bar.type, bar.name, bar.layout.direction, bar.children.length], ['autolayout', 'Barre', 'row', 2]);
+  const added = applyOps(chat.plan, [{ op: 'add', component: 'Button', parent: bar.id }], {
+    Button: { file: 'src/components/atoms/Button/Button.tsx', specs: [] },
+  });
+  assert.equal((added.plan.instances[0] as typeof bar).children.length, 3);
+});
+
+test('propriétés : dimensions, styles et adaptation par appareil', async () => {
+  const { wrapNodes, setLayout, clearAdapt, setSize, setStyle, layoutOn, deviceOf, findNode } = await import(
+    '../app/shared/pagePlan.js'
+  );
+  const btn = (id: string) => ({ id, component: 'Button', file: 'src/components/atoms/Button/Button.tsx', props: {} });
+  const g = wrapNodes({ instances: [btn('a'), btn('b')] }, ['a', 'b'], 'autolayout');
+  let plan = setLayout(g.plan, g.id!, { direction: 'row' });
+  // Sur mobile seulement : vertical, 8 d'écart ; la base ne bouge pas.
+  plan = setLayout(plan, g.id!, { direction: 'column', gap: 8 }, 'mobile');
+  type AL = import('../app/shared/pagePlan.js').AutoLayout;
+  const al = () => findNode(plan, g.id!)!.node as AL;
+  assert.equal(deviceOf(393), 'mobile');
+  assert.equal(deviceOf(820), 'tablet');
+  assert.equal(deviceOf(1440), 'desktop');
+  assert.deepEqual([layoutOn(al().layout, al().adapt, 'mobile').direction, layoutOn(al().layout, al().adapt, 'mobile').gap], ['column', 8]);
+  assert.equal(layoutOn(al().layout, al().adapt, 'desktop').direction, 'row');
+  plan = clearAdapt(plan, g.id!, 'mobile');
+  assert.equal(al().adapt, undefined);
+  plan = setSize(plan, 'a', { width: 'fill' });
+  plan = setStyle(plan, g.id!, { fill: '--color-neutral-900', radius: 12 });
+  assert.deepEqual((findNode(plan, 'a')!.node as import('../app/shared/pagePlan.js').Instance).size, { width: 'fill' });
+  assert.deepEqual(al().style, { fill: '--color-neutral-900', radius: 12 });
+  plan = setStyle(plan, g.id!, { fill: undefined, radius: undefined });
+  assert.equal(al().style, undefined);
+  assert.doesNotThrow(() => planSchema.parse(plan));
+  assert.throws(() => planSchema.parse({ instances: [{ ...al(), style: { fill: 'red;}' } }] }));
+});
+
+test('Build vérifié : composants, ordre, espacements, direction, liens', async () => {
+  const { checkBuild, wrapNodes, setLayout, setLink } = await import('../app/shared/pagePlan.js');
+  const c = (id: string, component: string) => ({ id, component, file: `src/components/atoms/${component}/${component}.tsx`, props: {} });
+  const g = wrapNodes({ instances: [c('a', 'Avatar'), c('b', 'Button')] }, ['a', 'b'], 'autolayout');
+  let plan = setLayout(g.plan, g.id!, { direction: 'row', gap: 12 });
+  plan = setLink(plan, 'b', 'profil-1');
+  const pages = [{ id: 'profil-1', name: 'Profil', path: '/profil' }];
+  const good = `<div style={{ display: 'flex', flexDirection: 'row', gap: 12 }}><Avatar /><Button onClick={() => go('/profil')} /></div>`;
+  assert.ok(checkBuild(plan, good, pages).every((x) => x.ok));
+  const bad = `<div style={{ gap: 8 }}><Button /></div>`;
+  const out = checkBuild(plan, bad, pages).filter((x) => !x.ok).map((x) => x.text);
+  assert.deepEqual(out, [
+    'Composants absents du code : Avatar',
+    'Auto Layout : écart de 12 px introuvable dans le code',
+    'Auto Layout : disposition horizontale introuvable',
+    'Button : lien vers /profil introuvable',
+  ]);
 });

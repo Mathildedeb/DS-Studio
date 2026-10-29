@@ -21,7 +21,7 @@ import { readProjectTokens, writeProjectTokens } from './projectTokens.js';
 import { BATCH, PublishCounter, gitStatus, projectPullRequest, publish } from './gitops.js';
 import { runTokensScript, type TokensScript } from './npm.js';
 import { codedFor } from '../shared/components.js';
-import { applyOps, planSchema } from '../shared/pagePlan.js';
+import { applyOps, checkBuild, isContainer, planSchema, type Node } from '../shared/pagePlan.js';
 import {
   compareComponents,
   figmaComponentSchema,
@@ -888,6 +888,28 @@ export async function createStudioServer(options: {
         }
         // Code : Clodo propose, l'étudiante valide le diff, le serveur écrit.
         // Annuler la dernière modification du chat sur une page.
+        // Build : le code écrit suit-il les calques ? Lecture du code (pas du
+        // rendu) : chaque composant présent, dans l'ordre, les espacements et
+        // directions des Auto Layout, les liens vers les autres pages.
+        if (url.pathname === '/api/page-build/check') {
+          const b = z
+            .object({
+              page: z.string().regex(/^[\w-]{1,60}$/),
+              files: z.array(z.string().max(300)).max(40),
+            })
+            .strict()
+            .parse(body);
+          const scope = await workspace();
+          if (!scope.project) throw new StudioError('Ouvrez d’abord un projet.', 409);
+          const plan = await readPrivate(path.join(store.directory, 'pages', `${b.page}.json`), 500_000)
+            .then((raw) => planSchema.parse(JSON.parse(raw)))
+            .catch(() => ({ instances: [] }));
+          const code = (
+            await Promise.all(b.files.filter((f) => /\.(tsx|jsx|ts|css)$/.test(f)).map((f) => scope.code.source(f).catch(() => '')))
+          ).join('\n');
+          const { pages } = await dashboard.readPreview(store.directory);
+          return send(200, { checks: checkBuild(plan, code, pages) });
+        }
         // Créer dans Figma une valeur de variante qui n'existe que dans le code.
         if (url.pathname === '/api/component-sync/send') {
           const b = z
@@ -1179,14 +1201,32 @@ export async function createStudioServer(options: {
                 .catch(() => ({ instances: [] }));
               const { pages } = await dashboard.readPreview(store.directory);
               const routeOf = (id: string) => pages.find((p) => p.id === id)?.path ?? `/${id}`;
-              request += `\n\nPlan de la page (ordre d'affichage) :\n${JSON.stringify(
-                plan.instances.map(({ component, file, figma, props, link }) => ({
-                  component,
-                  ...(file ? { file } : { figma_id: figma, a_coder: true }),
-                  props,
-                  ...(link ? { au_clic_aller_a: routeOf(link) } : {}),
-                })),
-              )}\nPages du proto (nom → route) : ${JSON.stringify(
+              // Arbre des calques : composants, Groupes et Auto Layout imbriqués.
+              const tree = (nodes: Node[]): unknown[] =>
+                nodes.map((n) => {
+                  const go = n.link ? { au_clic_aller_a: routeOf(n.link) } : {};
+                  if (isContainer(n))
+                    return {
+                      [n.type === 'group' ? 'groupe' : 'auto_layout']: n.name ?? true,
+                      ...(n.type === 'autolayout' ? { layout: n.layout } : {}),
+                      // Réglages propres à mobile (< 600 px), tablette (< 1024 px) ou desktop.
+                      ...(n.type === 'autolayout' && n.adapt ? { adaptation: n.adapt } : {}),
+                      ...(n.type === 'group' && n.size ? { taille: n.size } : {}),
+                      // Fond : variable CSS d'un token du projet ; arrondi en px.
+                      ...(n.style ? { style: n.style } : {}),
+                      ...go,
+                      enfants: tree(n.children),
+                    };
+                  return {
+                    component: n.component,
+                    ...(n.name ? { nom: n.name } : {}),
+                    ...(n.file ? { file: n.file } : { figma_id: n.figma, a_coder: true }),
+                    props: n.props,
+                    ...(n.size ? { taille: n.size } : {}),
+                    ...go,
+                  };
+                });
+              request += `\n\nArbre des calques de la page (ordre d'affichage) :\n${JSON.stringify(tree(plan.instances))}\nPages du proto (nom → route) : ${JSON.stringify(
                 pages.map((p) => ({ nom: p.name, route: p.path ?? `/${p.id}` })),
               )}`;
             }
