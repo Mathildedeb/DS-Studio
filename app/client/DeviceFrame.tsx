@@ -73,7 +73,7 @@ export default function DeviceFrame({
       <div className="device-fit" style={{ width: outerW * s, height: outerH * s }}>
         <div
           className={device ? 'device device-phone' : 'device'}
-          style={{ width: outerW, height: outerH, transform: `scale(${s})` }}
+          style={{ width: outerW, height: outerH, transform: s < 1 ? `scale(${s})` : undefined }}
         >
           <div className="device-screen" style={{ width, height }}>
             {children}

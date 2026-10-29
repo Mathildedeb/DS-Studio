@@ -520,6 +520,20 @@ export default function PreviewBuild({
         if (narrow) setRight(true);
       }
       if (d?.type === 'ds-studio:rects') setRects(d.rects);
+      // Gestes sur le canvas : espacements, taille fixe, déplacement ; chacun
+      // devient un réglage du calque, annulable comme les autres.
+      if (d?.type === 'ds-studio:layout' && d.id && d.patch) {
+        if (d.id === selected) layout(d.patch);
+        else save(setLayout(plan, d.id, d.patch));
+      }
+      if (d?.type === 'ds-studio:size' && d.id && d.patch) {
+        const n = findNode(plan, d.id)?.node;
+        if (n && isContainer(n) && n.type === 'autolayout') {
+          if (d.id === selected) layout(d.patch);
+          else save(setLayout(plan, d.id, d.patch));
+        } else if (n) save(setSize(plan, d.id, d.patch));
+      }
+      if (d?.type === 'ds-studio:move' && d.id && Number.isInteger(d.to)) save(moveInstance(plan, d.id, d.to));
       // Mode Tester : un clic sur une instance liée ouvre sa page.
       if (d?.type === 'ds-studio:navigate' && pages.some((p) => p.id === d.page)) onNavigate(d.page);
       if (d?.type === 'ds-studio:key' && typeof d.key === 'string')
