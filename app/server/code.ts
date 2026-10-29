@@ -140,6 +140,11 @@ export class CodeStore {
       .catch(() => false);
   }
   // Liste montrée à Clodo pour qu'il choisisse ce qu'il doit lire.
+  // Contenu d'un fichier modifiable (lecture seule), pour lire les
+  // propriétés d'un composant ou le point d'entrée du projet.
+  source(file: string) {
+    return this.read(file);
+  }
   // Composants React déjà codés dans le projet : nom du fichier (Avatar.tsx,
   // ou le dossier pour un index.tsx) et noms exportés en majuscule, hors
   // fichiers générés du design system.

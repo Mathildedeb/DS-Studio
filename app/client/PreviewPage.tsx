@@ -4,6 +4,9 @@ import { defaultPreview, type PreviewConfig } from '../shared/dashboard.js';
 import type { FolderInfo } from '../shared/connection.js';
 import type { Focus } from '../shared/focus.js';
 import type { DevStatus } from '../server/devserver.js';
+import type { CodeProposal } from '../server/code.js';
+import type { CodeComponent } from '../shared/components.js';
+import PreviewBuild from './PreviewBuild.js';
 
 // Page Preview : un format (largeur × hauteur réelles) et une page du proto.
 // Formats et pages se créent ici et restent enregistrés sur ce poste. Avec un
@@ -32,11 +35,21 @@ export default function PreviewPage({
   project,
   onError,
   onFocus,
+  code,
+  onAsk,
+  onCodeProposal,
 }: {
   project?: FolderInfo;
   onError: (message: string) => void;
   onFocus: (focus: Focus) => void;
+  // Mode « Construire » : composants codés du projet, chat et diff de code.
+  code?: { components: CodeComponent[]; map: Record<string, string> };
+  onAsk: (message: string) => void;
+  onCodeProposal: (p: CodeProposal) => void;
 }) {
+  // Aperçu du projet tel qu'il est codé, ou construction de la page avec
+  // les composants du DS (plan de page, sans toucher au code).
+  const [mode, setMode] = useState<'view' | 'build'>('view');
   const [dev, setDev] = useState<DevStatus>({ state: 'stopped', logs: [] });
   const [route, setRoute] = useState('/');
   useEffect(() => {
@@ -140,6 +153,27 @@ export default function PreviewPage({
             </button>
           )}
         </div>
+        {project && (
+          <div className="preview-group" role="group" aria-label="Mode">
+            <span className="preview-label">Mode</span>
+            <button
+              type="button"
+              className="preview-chip"
+              aria-pressed={mode === 'view'}
+              onClick={() => setMode('view')}
+            >
+              Aperçu
+            </button>
+            <button
+              type="button"
+              className="preview-chip"
+              aria-pressed={mode === 'build'}
+              onClick={() => setMode('build')}
+            >
+              Construire
+            </button>
+          </div>
+        )}
         <div className="preview-group" role="group" aria-label="Page">
           <span className="preview-label">Page</span>
           {config.pages.map((x) => (
@@ -346,6 +380,17 @@ export default function PreviewPage({
             src={`/?preview=1&scenario=${encodeURIComponent(p.id)}&title=${encodeURIComponent(p.name)}`}
             width={f.width}
             height={f.height}
+          />
+        ) : dev.state === 'running' && dev.url && mode === 'build' ? (
+          <PreviewBuild
+            page={{ id: p.id, name: p.name }}
+            devUrl={dev.url.replace(/\/$/, '')}
+            width={f.width}
+            height={f.height}
+            code={code}
+            onAsk={onAsk}
+            onCodeProposal={onCodeProposal}
+            onError={onError}
           />
         ) : dev.state === 'running' && dev.url ? (
           <iframe

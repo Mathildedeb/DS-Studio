@@ -21,6 +21,9 @@ import { readProjectTokens, writeProjectTokens } from './projectTokens.js';
 import { BATCH, PublishCounter, gitStatus, publish } from './gitops.js';
 import { runTokensScript, type TokensScript } from './npm.js';
 import { codedFor } from '../shared/components.js';
+import { planSchema } from '../shared/pagePlan.js';
+import { readProps } from '../shared/props.js';
+import { bridgeEntry, bridgeFiles, bridgeHtml } from './bridge.js';
 import {
   figmaComponents,
   figmaImage,
@@ -521,6 +524,52 @@ export async function createStudioServer(options: {
                 : null,
             );
           }
+          // Preview « construire » : plan de la page (instances du DS), gardé
+          // avec le DS du projet dans DS-Studio, jamais dans le code du projet.
+          if (url.pathname === '/api/page-plan') {
+            const page = z
+              .string()
+              .regex(/^[\w-]{1,60}$/)
+              .parse(url.searchParams.get('page'));
+            try {
+              return send(
+                200,
+                planSchema.parse(
+                  JSON.parse(
+                    await readPrivate(path.join(store.directory, 'pages', `${page}.json`), 500_000),
+                  ),
+                ),
+              );
+            } catch {
+              return send(200, { instances: [] });
+            }
+          }
+          // Propriétés modifiables d'un composant, lues dans son vrai code.
+          if (url.pathname === '/api/component-props') {
+            const scope = await workspace();
+            if (!scope.project) throw new StudioError('Ouvrez d’abord un projet.', 409);
+            const file = z
+              .string()
+              .regex(/^src\/[\w./-]+\.(tsx|jsx)$/)
+              .parse(url.searchParams.get('file'));
+            const name = path.posix.basename(file).replace(/\.(tsx|jsx)$/, '');
+            const component =
+              name === 'index' ? path.posix.basename(path.posix.dirname(file)) : name;
+            return send(200, readProps(await scope.code.source(file), component));
+          }
+          // Relais de la Preview présent dans le projet ?
+          if (url.pathname === '/api/ds-bridge') {
+            const project = (await connection.status()).project;
+            const has = async (f: string) =>
+              !!project &&
+              (await fs
+                .stat(path.join(project.folder, ...f.split('/')))
+                .then((s) => s.isFile())
+                .catch(() => false));
+            return send(200, {
+              installed: (await has(bridgeHtml)) && (await has(bridgeEntry)),
+            });
+          }
           // Liens d'alias du DS ouvert, pour les conseils avant validation.
           if (url.pathname === '/api/aliases')
             return send(200, await readAliases());
@@ -711,6 +760,31 @@ export async function createStudioServer(options: {
           return send(200, next);
         }
         // Code : Clodo propose, l'étudiante valide le diff, le serveur écrit.
+        if (url.pathname === '/api/page-plan') {
+          const b = z
+            .object({ page: z.string().regex(/^[\w-]{1,60}$/), plan: planSchema })
+            .strict()
+            .parse(body);
+          await fs.mkdir(path.join(store.directory, 'pages'), { recursive: true, mode: 0o700 });
+          await atomicWrite(
+            path.join(store.directory, 'pages', `${b.page}.json`),
+            JSON.stringify(b.plan, null, 2) + '\n',
+          );
+          return send(200, b.plan);
+        }
+        // Installer le relais : deux fichiers proposés en diff, validés à la main.
+        if (url.pathname === '/api/ds-bridge/install') {
+          const scope = await workspace();
+          if (!scope.project) throw new StudioError('Ouvrez d’abord un projet.', 409);
+          const read = (f: string) => scope.code.source(f).catch(() => '');
+          const files = bridgeFiles(await read('index.html'), await read('src/main.tsx'));
+          return send(
+            200,
+            await scope.code.propose(
+              files.map((f) => ({ file: f.file, search: '', replace: f.content })),
+            ),
+          );
+        }
         if (url.pathname === '/api/figma-import/dismiss') {
           figmaImport = undefined;
           return send(200, { ok: true });

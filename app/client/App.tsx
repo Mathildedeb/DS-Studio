@@ -1184,6 +1184,9 @@ export default function App() {
               project={connection?.project}
               onError={setError}
               onFocus={setPreviewFocus}
+              code={projectCode}
+              onAsk={askClodo}
+              onCodeProposal={setCodeProposal}
             />
           </main>
         </>
