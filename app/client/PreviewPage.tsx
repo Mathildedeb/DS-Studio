@@ -86,15 +86,16 @@ export default function PreviewPage({
   const [config, setConfig] = useState<PreviewConfig>(defaultPreview);
   const [format, setFormat] = useState('iphone');
   const [page, setPage] = useState('cards');
-  const [adding, setAdding] = useState<'format' | 'page' | 'rename'>();
+  const [adding, setAdding] = useState<'format' | 'page' | 'rename' | 'site'>();
   const [name, setName] = useState('');
   const [width, setWidth] = useState('390');
   const [height, setHeight] = useState('844');
+  // Relu quand le chat a créé une page : elle apparaît dans la barre.
   useEffect(() => {
     request<PreviewConfig>('preview')
       .then(setConfig)
       .catch((e) => onError(e.message));
-  }, []);
+  }, [chatChange?.n]);
   const save = (next: PreviewConfig) => {
     setConfig(next);
     request('preview', next).catch((e) => onError(e.message));
@@ -244,6 +245,12 @@ export default function PreviewPage({
           onSubmit={(e) => {
             e.preventDefault();
             const n = name.trim();
+            if (adding === 'site') {
+              const { siteUrl: _, ...rest } = config;
+              save(n ? { ...rest, siteUrl: n } : rest);
+              close();
+              return;
+            }
             if (!n) return;
             if (adding === 'format') {
               const id = slug(n);
@@ -280,7 +287,9 @@ export default function PreviewPage({
           }}
         >
           <label className="field">
-            {adding === 'format'
+            {adding === 'site'
+              ? 'Lien du proto en ligne (vide pour le retirer)'
+              : adding === 'format'
               ? 'Nom du format'
               : adding === 'page'
                 ? 'Nom de la page'
@@ -288,15 +297,21 @@ export default function PreviewPage({
             <input
               autoFocus
               value={name}
-              maxLength={40}
               onChange={(e) => setName(e.target.value)}
               placeholder={
-                adding === 'format' ? 'Android, iPad mini…' : 'Profil, Panier…'
+                adding === 'site'
+                  ? 'https://mon-proto.vercel.app'
+                  : adding === 'format'
+                    ? 'Android, iPad mini…'
+                    : 'Profil, Panier…'
               }
-              required
+              type={adding === 'site' ? 'url' : 'text'}
+              pattern={adding === 'site' ? 'https://.*' : undefined}
+              maxLength={adding === 'site' ? 300 : 40}
+              required={adding !== 'site'}
             />
           </label>
-          {project && adding !== 'format' && (
+          {project && (adding === 'page' || adding === 'rename') && (
             <label className="field">
               Chemin dans le projet
               <input
@@ -334,7 +349,7 @@ export default function PreviewPage({
             </>
           )}
           <button className="studio-primary">
-            {adding === 'rename' ? 'Renommer' : 'Ajouter'}
+            {adding === 'rename' ? 'Renommer' : adding === 'site' ? 'Enregistrer' : 'Ajouter'}
           </button>
           <button type="button" onClick={close}>
             Annuler
@@ -375,6 +390,23 @@ export default function PreviewPage({
               Lancer le projet
             </button>
           )}
+          {config.siteUrl ? (
+            <a className="preview-site" href={config.siteUrl} target="_blank" rel="noreferrer">
+              Voir en ligne ↗
+            </a>
+          ) : null}
+          <button
+            type="button"
+            className="preview-add"
+            onClick={() => {
+              setName(config.siteUrl ?? '');
+              setAdding(adding === 'site' ? undefined : 'site');
+            }}
+            aria-expanded={adding === 'site'}
+            title="Lien du proto mis en ligne (Vercel, Netlify…)"
+          >
+            {config.siteUrl ? 'Modifier le lien' : '+ Lien en ligne'}
+          </button>
           {dev.logs.length > 0 && (
             <details>
               <summary>Journal {dev.command && `· ${dev.command}`}</summary>
@@ -397,7 +429,9 @@ export default function PreviewPage({
           />
         ) : dev.state === 'running' && dev.url && mode === 'build' ? (
           <PreviewBuild
-            page={{ id: p.id, name: p.name }}
+            page={{ id: p.id, name: p.name, path }}
+            pages={config.pages}
+            onNavigate={setPage}
             devUrl={dev.url.replace(/\/$/, '')}
             width={f.width}
             height={f.height}

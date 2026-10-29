@@ -1342,6 +1342,43 @@ h2[id] {
   border-radius: 18px;
   background: #fff;
 }
+.chat-progress {
+  display: grid;
+  gap: 6px;
+  max-width: 92%;
+  font-size: 13px;
+}
+.chat-progress p {
+  display: flex;
+  gap: 5px;
+  margin: 0;
+}
+.chat-progress ol {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.chat-progress li {
+  color: #5c6170;
+}
+.chat-progress li[aria-current] {
+  color: #1b1d24;
+  font-weight: 600;
+}
+.chat-progress li span {
+  display: inline-block;
+  width: 14px;
+  color: #2e7d4f;
+}
+.chat-progress li[aria-current] span {
+  color: #8a38f5;
+  animation: chatDot 1.1s ease-in-out infinite;
+}
+.chat-progress small {
+  color: #5c6170;
+}
 .chat-thinking span[aria-hidden] {
   width: 7px;
   height: 7px;
@@ -2908,6 +2945,14 @@ h2[id] {
   border-radius: 2px;
   background: #8a38f5;
   box-shadow: 0 0 0 3px rgb(138 56 245 / 25%);
+}
+.build-link {
+  margin-left: auto;
+  color: #5b1fb0;
+  font-size: 11px;
+}
+.preview-site {
+  font-weight: 600;
 }
 .build-title {
   margin: 0;

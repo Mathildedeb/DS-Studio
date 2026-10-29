@@ -162,6 +162,12 @@ export async function createStudioServer(options: {
     return sent.length === expected.length && timingSafeEqual(sent, expected);
   };
   let busy = false;
+  // Étapes de la demande IA en cours, lues par le chat pendant qu'il attend.
+  let progress: { at: number; text: string }[] = [];
+  const started = { at: 0 };
+  const step = (text: string) => {
+    progress = [...progress, { at: Math.round((Date.now() - started.at) / 1000), text: text.slice(0, 200) }].slice(-30);
+  };
   const active = new Set<AbortController>();
   // Arrêt en cours : le port est fermé mais une connexion keep-alive du
   // navigateur peut encore arriver ici. Sans adresse, le contrôle d'hôte
@@ -492,6 +498,8 @@ export async function createStudioServer(options: {
             res.writeHead(200, { 'Content-Type': 'image/png' });
             return res.end(png);
           }
+          if (url.pathname === '/api/code/progress')
+            return send(200, { busy, steps: progress });
           if (url.pathname === '/api/clodo')
             return send(200, await dashboard.readClodo());
           if (url.pathname === '/api/preview')
@@ -960,6 +968,8 @@ export async function createStudioServer(options: {
           if (busy)
             throw new StudioError('Une demande IA est déjà en cours.', 429);
           busy = true;
+          progress = [];
+          started.at = Date.now();
           const controller = new AbortController();
           active.add(controller);
           const cancel = () => controller.abort();
@@ -968,6 +978,7 @@ export async function createStudioServer(options: {
             const scope = await workspace();
             // Mode Construire : Clodo modifie le plan de la page, pas le code.
             if (b.focus?.source === 'build' && scope.project) {
+              step('Je lis tes composants : code et variantes Figma…');
               const page = z.string().regex(/^[\w-]{1,60}$/).parse(String(b.focus.value));
               const coded = (await scope.code.components()).filter((c) =>
                 c.file.startsWith('src/components/'),
@@ -991,25 +1002,31 @@ export async function createStudioServer(options: {
                 figma.hasToken && (await figmaUrl())
                   ? await figmaComponents(figma, await figmaUrl()).catch(() => [])
                   : [];
-              for (const name of uncoded) {
-                const found = figmaList.find((c) => c.name === name);
-                catalog[name] = {
-                  ...(found ? { figma: found.id } : {}),
-                  specs: found
-                    ? ((await variantsOf(found.id).catch(() => null))?.props ?? [])
-                    : [],
-                };
-              }
+              await Promise.all(
+                uncoded.map(async (name) => {
+                  const found = figmaList.find((c) => c.name === name);
+                  catalog[name] = {
+                    ...(found ? { figma: found.id } : {}),
+                    specs: found
+                      ? ((await variantsOf(found.id).catch(() => null))?.props ?? [])
+                      : [],
+                  };
+                }),
+              );
               const file = path.join(store.directory, 'pages', `${page}.json`);
               const plan = await readPrivate(file, 500_000)
                 .then((raw) => planSchema.parse(JSON.parse(raw)))
                 .catch(() => ({ instances: [] }));
+              step('Je lis la page et ses pages voisines…');
+              const preview = await dashboard.readPreview(store.directory);
+              step('Je prépare les changements de la page…');
               const reply = await proposePage(
                 ask,
                 {
                   request: b.message,
                   history: b.history,
                   plan,
+                  pages: preview.pages.map(({ id, name }) => ({ id, name })),
                   selected: b.focus.selector,
                   components: Object.entries(catalog)
                     .filter(([, c]) => c.file)
@@ -1020,7 +1037,14 @@ export async function createStudioServer(options: {
                 },
                 controller.signal,
               );
-              const done = applyOps(plan, reply.ops, catalog);
+              const done = applyOps(plan, reply.ops, catalog, preview.pages);
+              step(`J’applique ${reply.ops.length} opération(s) sur la page`);
+              // Pages créées par le chat : ajoutées à la Preview, vides.
+              if (done.pages.length)
+                await dashboard.savePreview(
+                  { ...preview, pages: [...preview.pages, ...done.pages] },
+                  store.directory,
+                );
               const changed = JSON.stringify(done.plan) !== JSON.stringify(plan);
               if (changed) {
                 await fs.mkdir(path.dirname(file), { recursive: true, mode: 0o700 });
@@ -1032,23 +1056,29 @@ export async function createStudioServer(options: {
                 message: [reply.message, ...done.notes].join('\n'),
                 proposal: null,
                 tokenProposal: null,
-                page: changed ? page : null,
+                page: changed || done.pages.length ? page : null,
               });
             }
             // Build : le plan de la page part avec la demande, Clodo code la
             // page et les composants encore en maquette, proposés en diff.
             let request = b.message;
             if (b.focus?.source === 'page-build' && scope.project) {
+              step('Build : je lis le plan de la page…');
               const page = z.string().regex(/^[\w-]{1,60}$/).parse(String(b.focus.value));
               const plan = await readPrivate(path.join(store.directory, 'pages', `${page}.json`), 500_000)
                 .then((raw) => planSchema.parse(JSON.parse(raw)))
                 .catch(() => ({ instances: [] }));
+              const { pages } = await dashboard.readPreview(store.directory);
+              const routeOf = (id: string) => pages.find((p) => p.id === id)?.path ?? `/${id}`;
               request += `\n\nPlan de la page (ordre d'affichage) :\n${JSON.stringify(
-                plan.instances.map(({ component, file, figma, props }) => ({
+                plan.instances.map(({ component, file, figma, props, link }) => ({
                   component,
                   ...(file ? { file } : { figma_id: figma, a_coder: true }),
                   props,
+                  ...(link ? { au_clic_aller_a: routeOf(link) } : {}),
                 })),
+              )}\nPages du proto (nom → route) : ${JSON.stringify(
+                pages.map((p) => ({ nom: p.name, route: p.path ?? `/${p.id}` })),
               )}`;
             }
             const { changes, ...reply } = await proposeCode(
@@ -1081,6 +1111,7 @@ export async function createStudioServer(options: {
                     node: async (id) => figmaNode(figma, await figmaUrl(), id),
                   }
                 : undefined,
+              step,
             );
             // Clodo a choisi des tokens : même diff et même validation qu'à la main.
             const tokenProposal = changes?.length

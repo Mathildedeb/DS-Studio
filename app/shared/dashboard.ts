@@ -174,6 +174,12 @@ export const previewSchema = z
       )
       .min(1)
       .max(40),
+    // Adresse du proto mis en ligne (Vercel, Netlify…), ouverte depuis la Preview.
+    siteUrl: z
+      .string()
+      .max(300)
+      .regex(/^https:\/\/[^\s"'<>]+$/, 'Lien attendu : https://…')
+      .optional(),
   })
   .strict();
 export type PreviewConfig = z.infer<typeof previewSchema>;

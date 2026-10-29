@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { PublishStatus } from '../server/gitops.js';
 import type { CircuitStep } from '../shared/circuit.js';
+import { request } from './api.js';
 
 // circuit : réponse de Clodo qui suit une validation (checklist de la
 // révision indiquée) ; elle reste dans l'atelier, jamais envoyée au CLI.
@@ -170,14 +171,7 @@ export default function Chat({
             </article>
           ),
         )}
-        {thinking && (
-          <p className="chat-thinking" role="status">
-            <span aria-hidden="true" />
-            <span aria-hidden="true" />
-            <span aria-hidden="true" />
-            <span className="sr-only">{agentName} réfléchit…</span>
-          </p>
-        )}
+        {thinking && <Progress agentName={agentName} />}
       </div>
       {publish && (
         <section className="chat-publish" aria-label="Publier sur Git">
@@ -310,6 +304,47 @@ export default function Chat({
           Aucun outil ni commande ; propositions seulement.
         </p>
       </details>
+    </div>
+  );
+}
+
+// Pendant que Clodo travaille : ses étapes réelles, lues sur le serveur, au
+// lieu de simples points. La dernière est en cours ; le temps passe à côté.
+function Progress({ agentName }: { agentName: string }) {
+  const [steps, setSteps] = useState<{ at: number; text: string }[]>([]);
+  const [seconds, setSeconds] = useState(0);
+  useEffect(() => {
+    const start = Date.now();
+    const read = () =>
+      request<{ busy: boolean; steps: { at: number; text: string }[] }>('code/progress')
+        .then((p) => setSteps(p.steps))
+        .catch(() => undefined);
+    void read();
+    const timer = setInterval(() => {
+      setSeconds(Math.round((Date.now() - start) / 1000));
+      void read();
+    }, 1500);
+    return () => clearInterval(timer);
+  }, []);
+  return (
+    <div className="chat-thinking chat-progress" role="status" aria-live="polite">
+      {steps.length ? (
+        <ol>
+          {steps.map((s, i) => (
+            <li key={i} aria-current={i === steps.length - 1 ? 'step' : undefined}>
+              <span>{i === steps.length - 1 ? '◌' : '✓'}</span> {s.text}
+            </li>
+          ))}
+        </ol>
+      ) : (
+        <p>
+          <span aria-hidden="true" />
+          <span aria-hidden="true" />
+          <span aria-hidden="true" />
+          <span className="sr-only">{agentName} réfléchit…</span>
+        </p>
+      )}
+      <small>{agentName} travaille depuis {seconds} s</small>
     </div>
   );
 }

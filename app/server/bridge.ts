@@ -6,7 +6,7 @@
 export const bridgeHtml = 'ds-studio.html';
 export const bridgeEntry = 'src/ds-studio/canvas.tsx';
 // Marque de version du relais : un relais plus ancien est proposé en mise à jour.
-export const bridgeMark = 'Relais DS-Studio v3';
+export const bridgeMark = 'Relais DS-Studio v4';
 
 // Même <head> que index.html (polices…), avec le relais comme script.
 export function bridgeFiles(indexHtml: string, mainSource: string) {
@@ -32,6 +32,8 @@ type Instance = {
   id: string
   component: string
   file?: string
+  // Page ouverte au clic, en mode Tester.
+  link?: string
   props: Record<string, Value>
   // Maquette Figma (rendu PNG à l'échelle 2), tant que le composant n'est pas codé.
   image?: string
@@ -106,7 +108,10 @@ function Canvas() {
             key={instance.id}
             data-ds-id={instance.id}
             onClickCapture={(event) => {
-              if (interactive) return
+              if (interactive) {
+                if (instance.link) parent.postMessage({ type: 'ds-studio:navigate', page: instance.link }, '*')
+                return
+              }
               event.preventDefault()
               event.stopPropagation()
               parent.postMessage({ type: 'ds-studio:select', id: instance.id }, '*')

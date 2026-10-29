@@ -8,6 +8,7 @@ import {
   duplicateInstance,
   moveInstance,
   removeInstance,
+  setLink,
   setProp,
   type PagePlan,
 } from '../shared/pagePlan.js';
@@ -71,6 +72,8 @@ const narrowQuery = '(max-width: 900px)';
 // Un composant pas encore codé s'utilise en maquette Figma : Build le code.
 export default function PreviewBuild({
   page,
+  pages,
+  onNavigate,
   devUrl,
   width,
   height,
@@ -82,7 +85,10 @@ export default function PreviewBuild({
   onFocus,
   chatChange,
 }: {
-  page: { id: string; name: string };
+  page: { id: string; name: string; path: string };
+  // Pages de la Preview : cibles des interactions « au clic, aller à ».
+  pages: { id: string; name: string; path?: string }[];
+  onNavigate: (page: string) => void;
   devUrl: string;
   width: number;
   height: number;
@@ -394,6 +400,8 @@ export default function PreviewBuild({
         if (narrow) setRight(true);
       }
       if (d?.type === 'ds-studio:rects') setRects(d.rects);
+      // Mode Tester : un clic sur une instance liée ouvre sa page.
+      if (d?.type === 'ds-studio:navigate' && pages.some((p) => p.id === d.page)) onNavigate(d.page);
       if (d?.type === 'ds-studio:key' && typeof d.key === 'string')
         shortcutRef.current({ key: d.key, meta: !!d.meta, shift: !!d.shift, alt: !!d.alt });
     };
@@ -445,14 +453,32 @@ export default function PreviewBuild({
     });
   };
 
+  // Une maquette dont le composant vient d'être codé devient une vraie
+  // instance : même place, mêmes réglages, liée à son fichier.
+  useEffect(() => {
+    if (!code) return;
+    let changed = false;
+    const instances = plan.instances.map((i) => {
+      const c = !i.file && codedFor(i.component, code.components, code.map);
+      if (!c) return i;
+      changed = true;
+      const { figma: _, ...rest } = i;
+      return { ...rest, component: c.name, file: c.file };
+    });
+    if (changed) {
+      setPlan({ instances });
+      void write({ instances });
+    }
+  }, [code, plan]);
   const toBuild = plan.instances.filter((i) => !i.file);
+  const toCode = [...new Set(toBuild.map((i) => i.component))];
+  // Build en deux temps, pour des réponses courtes et vérifiables : d'abord
+  // les composants encore en maquette, puis la page qui les assemble.
   const build = () =>
     onBuild(
-      `Build de la page « ${page.name} » : code la vraie page React avec les composants du DS, dans l'ordre et avec les props du plan ci-dessous. Réutilise les composants codés (file) sans les recoder.${
-        toBuild.length
-          ? ` Code d'abord, fidèles à Figma et avec mes tokens, les composants encore en maquette : ${[...new Set(toBuild.map((i) => i.component))].join(', ')}.`
-          : ''
-      } Ajoute la page au projet sans casser l'existant.`,
+      toCode.length
+        ? `Build, étape 1/2 de la page « ${page.name} » : code UNIQUEMENT ces composants du DS, encore en maquette, fidèles à Figma et avec mes tokens, chacun dans son dossier src/components/<niveau>/<Nom>/ avec son CSS et une interface <Nom>Props pour ses variantes : ${toCode.join(', ')}. Ne touche à aucune page : la page sera codée à l'étape 2.`
+        : `Build, étape 2/2 : code la vraie page React « ${page.name} » avec les composants du DS, dans l'ordre et avec les props du plan ci-dessous, en réutilisant les composants codés (file) sans les recoder. La page vit à la route ${page.path} du projet : rends-la accessible à cette adresse sans casser l'existant. Les interactions « au_clic_aller_a » ouvrent la route indiquée : code cette navigation.`,
       {
         page: 'preview',
         kind: 'page',
@@ -547,9 +573,9 @@ export default function PreviewBuild({
           className="studio-primary"
           onClick={build}
           disabled={!plan.instances.length}
-          title={toBuild.length ? `Clodo code aussi ${toBuild.length} maquette(s)` : 'Clodo code la page'}
+          title={toCode.length ? `D'abord les composants : ${toCode.join(', ')}` : 'Clodo code la page et sa navigation'}
         >
-          Build{toBuild.length ? ` · ${toBuild.length} à coder` : ''}
+          {toCode.length ? `Build 1/2 · coder ${toCode.length} composant(s)` : 'Build 2/2 · coder la page'}
         </button>
         <button
           type="button"
@@ -669,6 +695,11 @@ export default function PreviewBuild({
                       }}
                     >
                       <span aria-hidden="true">⋮⋮</span> {i.component}
+                      {i.link && (
+                        <small className="build-link">
+                          → {pages.find((x) => x.id === i.link)?.name ?? 'page'}
+                        </small>
+                      )}
                     </button>
                   </li>
                 ))}
@@ -811,6 +842,25 @@ export default function PreviewBuild({
                     Supprimer
                   </button>
                 </div>
+                <label className="build-prop">
+                  <span>
+                    Au clic
+                    <small>Interaction codée au Build ; essaie-la en mode Tester.</small>
+                  </span>
+                  <select
+                    value={current.link ?? ''}
+                    onChange={(e) => save(setLink(plan, current.id, e.target.value || undefined))}
+                  >
+                    <option value="">Rien</option>
+                    {pages
+                      .filter((x) => x.id !== page.id)
+                      .map((x) => (
+                        <option key={x.id} value={x.id}>
+                          Aller à « {x.name} »
+                        </option>
+                      ))}
+                  </select>
+                </label>
                 {(currentSpecs ?? []).map((s) => (
                   <PropControl
                     key={s.name}
