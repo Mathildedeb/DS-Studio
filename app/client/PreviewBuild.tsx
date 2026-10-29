@@ -6,10 +6,21 @@ import type { PropSpec } from '../shared/props.js';
 import {
   addInstance,
   duplicateInstance,
+  findNode,
+  flatten,
+  isContainer,
+  labelOf,
   moveInstance,
   removeInstance,
+  renameNode,
+  setLayout,
   setLink,
   setProp,
+  unwrapNode,
+  wrapNodes,
+  type Instance,
+  type Layout,
+  type Node,
   type PagePlan,
 } from '../shared/pagePlan.js';
 import type { CodeProposal } from '../server/code.js';
@@ -109,6 +120,12 @@ export default function PreviewBuild({
   const [past, setPast] = useState<PagePlan[]>([]);
   const [future, setFuture] = useState<PagePlan[]>([]);
   const [selected, setSelected] = useState<string>();
+  // Autres calques sélectionnés (⇧ clic dans les calques), pour grouper.
+  const [multi, setMulti] = useState<string[]>([]);
+  const [collapsed, setCollapsed] = useState<string[]>([]);
+  const [renaming, setRenaming] = useState<string>();
+  const [hint, setHint] = useState('');
+  const [dropOn, setDropOn] = useState<{ id: string; where: 'before' | 'after' | 'inside' }>();
   const [inspected, setInspected] = useState<string>();
   const [rects, setRects] = useState<Rect[]>([]);
   const [dropIndex, setDropIndex] = useState<number>();
@@ -221,10 +238,12 @@ export default function PreviewBuild({
     });
   }, [chatChange?.n]);
 
+  // Composants de la page, à tous les niveaux de l'arbre.
+  const components = flatten(plan)
+    .map((f) => f.node)
+    .filter((n): n is Instance => !isContainer(n));
   // Maquettes : variantes puis rendu Figma de la combinaison choisie.
-  const figmaIds = [
-    ...plan.instances.flatMap((i) => (i.figma && !i.file ? [i.figma] : [])),
-  ];
+  const figmaIds = components.flatMap((i) => (i.figma && !i.file ? [i.figma] : []));
   const library: Item[] = panelSelection.flatMap((group) =>
     group.names.map((name) => {
       const c = code ? codedFor(name, code.components, code.map) : undefined;
@@ -271,7 +290,7 @@ export default function PreviewBuild({
       .catch(() => undefined);
   };
   useEffect(() => {
-    for (const i of plan.instances) {
+    for (const i of components) {
       const id = imageOf(i);
       if (id) fetchImage(id);
     }
@@ -279,22 +298,27 @@ export default function PreviewBuild({
     if (shown) fetchImage(shown);
   }, [plan, variants, inspected, draft]);
 
+  // Arbre envoyé au relais, chaque maquette avec son rendu Figma.
+  const withImages = (nodes: Node[]): Node[] =>
+    nodes.map((n) => {
+      if (isContainer(n)) return { ...n, children: withImages(n.children) };
+      const id = imageOf(n);
+      return id && images[id] ? ({ ...n, image: images[id] } as Node) : n;
+    });
   // Plan, sélection, safe areas et mode envoyés au relais à chaque changement.
   const send = () =>
     frame.current?.contentWindow?.postMessage(
       {
         type: 'ds-studio:page',
-        instances: plan.instances.map((i) => {
-          const id = imageOf(i);
-          return id && images[id] ? { ...i, image: images[id] } : i;
-        }),
+        instances: withImages(plan.instances),
         selected,
+        multi,
         insets: { top: device?.top ?? 0, bottom: device?.bottom ?? 0 },
         interactive: testing,
       },
       origin,
     );
-  useEffect(send, [plan, selected, images, variants, testing, device?.id]);
+  useEffect(send, [plan, selected, multi, images, variants, testing, device?.id]);
   // La fiche montre le composant rendu comme dans la page, une variante à la fois.
   const sendSample = () => {
     if (!item) return;
@@ -313,13 +337,15 @@ export default function PreviewBuild({
   useEffect(sendSample, [inspected, draft, images, variants]);
   useEffect(() => setDraft({}), [inspected]);
 
-  const current = plan.instances.find((i) => i.id === selected);
+  const found = selected ? findNode(plan, selected) : undefined;
+  const current = found?.node;
+  const currentComp = current && !isContainer(current) ? current : undefined;
   useEffect(() => {
     onFocus({
       page: 'preview',
       kind: current ? 'component' : 'page',
-      name: current ? current.component : page.name,
-      path: current ? [page.name, current.component] : [page.name],
+      name: current ? labelOf(current) : page.name,
+      path: current ? [page.name, labelOf(current)] : [page.name],
       source: 'build',
       value: page.id,
       ...(current ? { selector: current.id } : {}),
@@ -327,7 +353,7 @@ export default function PreviewBuild({
     });
   }, [page.id, page.name, current?.id, screen.width]);
   // Propriétés du composant, lues dans son code (une fois par fichier).
-  const needFile = current?.file ?? (item?.coded ? item.entry.file : undefined);
+  const needFile = currentComp?.file ?? (item?.coded ? item.entry.file : undefined);
   useEffect(() => {
     if (!needFile || specs[needFile]) return;
     request<PropSpec[]>(`component-props?file=${encodeURIComponent(needFile)}`)
@@ -337,15 +363,19 @@ export default function PreviewBuild({
   const specsOf = (e: Entry) =>
     e.file ? specs[e.file] : e.figma ? variants[e.figma]?.props : [];
 
-  const add = (e: Entry, at = plan.instances.length, props: Record<string, Value> = {}) => {
-    const { plan: next, id } = addInstance(plan, at, { ...e, props });
+  // Ajout : dans l'Auto Layout ou le Groupe sélectionné, sinon à la fin de la page.
+  const add = (e: Entry, at?: number, props: Record<string, Value> = {}, parent?: string | null) => {
+    const into = parent !== undefined ? parent : current && isContainer(current) ? current.id : null;
+    const where = into ? findNode(plan, into)?.node : undefined;
+    const end = where && isContainer(where) ? where.children.length : plan.instances.length;
+    const { plan: next, id } = addInstance(plan, at ?? end, { ...e, props }, into);
     save(next, id);
     setInspected(undefined);
   };
   const move = (by: number) => {
-    if (!current) return;
-    const at = plan.instances.indexOf(current) + by;
-    if (at < 0 || at >= plan.instances.length) return;
+    if (!current || !found) return;
+    const at = found.index + by;
+    if (at < 0 || at >= found.siblings.length) return;
     save(moveInstance(plan, current.id, at));
   };
   const duplicate = () => {
@@ -354,6 +384,33 @@ export default function PreviewBuild({
     save(next, id);
   };
   const remove = () => current && save(removeInstance(plan, current.id), '');
+  // Grouper (⌘G) ou mettre en Auto Layout (⇧A) la sélection ; dégrouper (⇧⌘G).
+  const wrap = (kind: 'group' | 'autolayout') => {
+    const ids = [selected, ...multi].filter((x): x is string => !!x);
+    const done = wrapNodes(plan, ids, kind);
+    if (done.error) return setHint(done.error);
+    setHint('');
+    setMulti([]);
+    save(done.plan, done.id);
+  };
+  const unwrap = () => {
+    if (!current || !isContainer(current)) return;
+    const first = current.children[0]?.id ?? '';
+    save(unwrapNode(plan, current.id), first);
+  };
+  const layout = (patch: Partial<Layout>) => current && save(setLayout(plan, current.id, patch));
+  // Un Groupe devient un Auto Layout (ou l'inverse) sans perdre ses calques.
+  const convert = () => {
+    if (!current || !isContainer(current) || !found) return;
+    const ids = current.children.map((c) => c.id);
+    let next = unwrapNode(plan, current.id);
+    const done = ids.length
+      ? wrapNodes(next, ids, current.type === 'group' ? 'autolayout' : 'group')
+      : { plan: next, id: undefined };
+    next = done.plan;
+    if (done.id && current.name) next = renameNode(next, done.id, current.name);
+    save(next, done.id ?? '');
+  };
 
   // Raccourcis clavier, dans l'éditeur comme dans la page du projet.
   const shortcut = (k: { key: string; meta: boolean; shift: boolean; alt: boolean }) => {
@@ -361,11 +418,15 @@ export default function PreviewBuild({
     if (k.meta && key === 'z') (k.shift ? redo : undo)();
     else if (k.meta && key === 'y') redo();
     else if (k.meta && key === 'd') duplicate();
+    else if (k.meta && k.shift && key === 'g') unwrap();
+    else if (k.meta && key === 'g') wrap('group');
+    else if (!k.meta && k.shift && key === 'a') wrap('autolayout');
     else if (key === 'delete' || key === 'backspace') remove();
     else if (k.alt && key === 'arrowup') move(-1);
     else if (k.alt && key === 'arrowdown') move(1);
     else if (key === 'escape') {
       setSelected(undefined);
+      setMulti([]);
       setInspected(undefined);
     }
     else if (key === '/') search.current?.focus();
@@ -395,7 +456,12 @@ export default function PreviewBuild({
       }
       if (d?.type === 'ds-studio:ready') send();
       if (d?.type === 'ds-studio:select') {
-        setSelected(d.id);
+        if (d.shift && selected && d.id !== selected)
+          setMulti((m) => (m.includes(d.id) ? m.filter((x) => x !== d.id) : [...m, d.id]));
+        else {
+          setSelected(d.id);
+          setMulti([]);
+        }
         setInspected(undefined);
         if (narrow) setRight(true);
       }
@@ -458,19 +524,22 @@ export default function PreviewBuild({
   useEffect(() => {
     if (!code) return;
     let changed = false;
-    const instances = plan.instances.map((i) => {
-      const c = !i.file && codedFor(i.component, code.components, code.map);
-      if (!c) return i;
-      changed = true;
-      const { figma: _, ...rest } = i;
-      return { ...rest, component: c.name, file: c.file };
-    });
+    const upgrade = (nodes: Node[]): Node[] =>
+      nodes.map((i) => {
+        if (isContainer(i)) return { ...i, children: upgrade(i.children) };
+        const c = !i.file && codedFor(i.component, code.components, code.map);
+        if (!c) return i;
+        changed = true;
+        const { figma: _, ...rest } = i;
+        return { ...rest, component: c.name, file: c.file };
+      });
+    const instances = upgrade(plan.instances);
     if (changed) {
       setPlan({ instances });
       void write({ instances });
     }
   }, [code, plan]);
-  const toBuild = plan.instances.filter((i) => !i.file);
+  const toBuild = components.filter((i) => !i.file);
   const toCode = [...new Set(toBuild.map((i) => i.component))];
   // Build en deux temps, pour des réponses courtes et vérifiables : d'abord
   // les composants encore en maquette, puis la page qui les assemble.
@@ -478,7 +547,7 @@ export default function PreviewBuild({
     onBuild(
       toCode.length
         ? `Build, étape 1/2 de la page « ${page.name} » : code UNIQUEMENT ces composants du DS, encore en maquette, fidèles à Figma et avec mes tokens, chacun dans son dossier src/components/<niveau>/<Nom>/ avec son CSS et une interface <Nom>Props pour ses variantes : ${toCode.join(', ')}. Ne touche à aucune page : la page sera codée à l'étape 2.`
-        : `Build, étape 2/2 : code la vraie page React « ${page.name} » avec les composants du DS, dans l'ordre et avec les props du plan ci-dessous, en réutilisant les composants codés (file) sans les recoder. La page vit à la route ${page.path} du projet : rends-la accessible à cette adresse sans casser l'existant. Les interactions « au_clic_aller_a » ouvrent la route indiquée : code cette navigation.`,
+        : `Build, étape 2/2 : code la vraie page React « ${page.name} » avec les composants du DS, en suivant l'arbre des calques ci-dessous : chaque Auto Layout est une boîte flex (direction, gap, padding, align, justify, wrap, width/height : hug = ajusté au contenu, fill = extensible, nombre = fixe en px), chaque Groupe une simple boîte qui regroupe ; garde l'ordre et les props, et réutilise les composants codés (file) sans les recoder. La page vit à la route ${page.path} du projet : rends-la accessible à cette adresse sans casser l'existant. Les interactions « au_clic_aller_a » ouvrent la route indiquée : code cette navigation.`,
       {
         page: 'preview',
         kind: 'page',
@@ -514,13 +583,28 @@ export default function PreviewBuild({
       </div>
     );
 
+  // Calque replié dans les calques : ses enfants sont masqués.
+  const hidden = (parent: string | null): boolean => {
+    let p = parent;
+    while (p) {
+      if (collapsed.includes(p)) return true;
+      p = findNode(plan, p)?.parent?.id ?? null;
+    }
+    return false;
+  };
+  // Dépôt dans les calques : avant, après, ou dedans (au milieu d'un Groupe ou d'un Auto Layout).
+  const dropWhere = (e: React.DragEvent, box: boolean): 'before' | 'after' | 'inside' => {
+    const r = e.currentTarget.getBoundingClientRect();
+    const y = (e.clientY - r.top) / r.height;
+    return box && y > 0.3 && y < 0.7 ? 'inside' : y < 0.5 ? 'before' : 'after';
+  };
   const q = query.trim().toLowerCase();
   const levels = panelSelection.map((g) => g.level);
   const columns = narrow
     ? 'minmax(0, 1fr)'
     : `${left ? `${widths[0]}px 6px` : ''} minmax(0, 1fr) ${right ? `6px ${widths[1]}px` : ''}`;
   const detailSpecs = item ? specsOf(item.entry) : undefined;
-  const currentSpecs = current ? specsOf(current) : undefined;
+  const currentSpecs = currentComp ? specsOf(currentComp) : undefined;
 
   return (
     <div className="build" data-narrow={narrow || undefined}>
@@ -674,36 +758,112 @@ export default function PreviewBuild({
               {!plan.instances.length && (
                 <p className="build-empty">Page vide : glisse un composant ou clique sur +.</p>
               )}
-              <ol className="build-layers">
-                {plan.instances.map((i, index) => (
-                  <li
-                    key={i.id}
-                    draggable
-                    onDragStart={(e) => e.dataTransfer.setData('text/ds-layer', i.id)}
-                    onDragOver={(e) => e.preventDefault()}
-                    onDrop={(e) => {
-                      const id = e.dataTransfer.getData('text/ds-layer');
-                      if (id) save(moveInstance(plan, id, index));
-                    }}
-                  >
-                    <button
-                      type="button"
-                      aria-pressed={i.id === selected}
-                      onClick={() => {
-                        setSelected(i.id);
-                        setInspected(undefined);
-                      }}
-                    >
-                      <span aria-hidden="true">⋮⋮</span> {i.component}
-                      {i.link && (
-                        <small className="build-link">
-                          → {pages.find((x) => x.id === i.link)?.name ?? 'page'}
-                        </small>
-                      )}
-                    </button>
-                  </li>
-                ))}
+              <ol className="build-layers" aria-label="Calques">
+                {flatten(plan)
+                  .filter((f) => !hidden(f.parent))
+                  .map(({ node: n, depth }) => {
+                    const box = isContainer(n);
+                    const open = box && !collapsed.includes(n.id);
+                    const isSel = n.id === selected || multi.includes(n.id);
+                    return (
+                      <li
+                        key={n.id}
+                        className={dropOn?.id === n.id ? `build-drop-${dropOn.where}` : undefined}
+                        draggable={renaming !== n.id}
+                        onDragStart={(e) => {
+                          e.stopPropagation();
+                          e.dataTransfer.setData('text/ds-layer', n.id);
+                        }}
+                        onDragOver={(e) => {
+                          e.preventDefault();
+                          setDropOn({ id: n.id, where: dropWhere(e, box) });
+                        }}
+                        onDragLeave={() => setDropOn(undefined)}
+                        onDrop={(e) => {
+                          e.preventDefault();
+                          const where = dropWhere(e, box);
+                          setDropOn(undefined);
+                          const moved = e.dataTransfer.getData('text/ds-layer');
+                          const added = e.dataTransfer.getData('text/ds-component');
+                          const at = findNode(plan, n.id)!;
+                          const parent = where === 'inside' ? n.id : (at.parent?.id ?? null);
+                          const index =
+                            where === 'inside' ? (box ? n.children.length : 0) : at.index + (where === 'after' ? 1 : 0);
+                          if (moved && moved !== n.id) {
+                            const from = findNode(plan, moved);
+                            // Même parent, plus bas : l'index se décale d'un cran.
+                            const shift = from && (from.parent?.id ?? null) === parent && from.index < index ? 1 : 0;
+                            save(moveInstance(plan, moved, index - shift, parent));
+                          } else if (added) add(JSON.parse(added) as Entry, index, {}, parent);
+                        }}
+                      >
+                        <div
+                          className="build-layer"
+                          style={{ paddingLeft: 4 + depth * 14 }}
+                          aria-selected={isSel}
+                        >
+                          {box ? (
+                            <button
+                              type="button"
+                              className="build-twist"
+                              aria-label={open ? 'Réduire' : 'Développer'}
+                              aria-expanded={open}
+                              onClick={() =>
+                                setCollapsed((c) => (open ? [...c, n.id] : c.filter((x) => x !== n.id)))
+                              }
+                            >
+                              {open ? '▾' : '▸'}
+                            </button>
+                          ) : (
+                            <span className="build-twist" />
+                          )}
+                          <span className="build-kind" aria-hidden="true" title={kindLabel(n)}>
+                            {!box ? '◇' : n.type === 'group' ? '▢' : n.layout.direction === 'row' ? '⇥' : '⤓'}
+                          </span>
+                          {renaming === n.id ? (
+                            <input
+                              autoFocus
+                              className="build-rename"
+                              defaultValue={labelOf(n)}
+                              aria-label="Nom du calque"
+                              onBlur={(e) => {
+                                setRenaming(undefined);
+                                if (e.target.value.trim() !== labelOf(n)) save(renameNode(plan, n.id, e.target.value));
+                              }}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') e.currentTarget.blur();
+                                if (e.key === 'Escape') setRenaming(undefined);
+                              }}
+                            />
+                          ) : (
+                            <button
+                              type="button"
+                              className="build-layer-name"
+                              aria-pressed={isSel}
+                              title={`${labelOf(n)} · ${kindLabel(n)} · double-clic pour renommer`}
+                              onClick={(e) => {
+                                setInspected(undefined);
+                                if (e.shiftKey && selected && n.id !== selected)
+                                  setMulti((m) => (m.includes(n.id) ? m.filter((x) => x !== n.id) : [...m, n.id]));
+                                else {
+                                  setSelected(n.id);
+                                  setMulti([]);
+                                }
+                              }}
+                              onDoubleClick={() => setRenaming(n.id)}
+                            >
+                              <span className="build-layer-label">{labelOf(n)}</span>
+                              {n.link && (
+                                <small className="build-link">→ {pages.find((x) => x.id === n.link)?.name ?? 'page'}</small>
+                              )}
+                            </button>
+                          )}
+                        </div>
+                      </li>
+                    );
+                  })}
               </ol>
+              {hint && <p className="build-empty">{hint}</p>}
             </section>
           </aside>
         )}
@@ -824,15 +984,32 @@ export default function PreviewBuild({
                 ›
               </button>
             </div>
-            {current ? (
+            {multi.length > 0 ? (
               <>
-                <p className="build-title">{current.component}</p>
-                <p className="build-file">{current.file ?? 'Maquette Figma · codée au Build'}</p>
+                <p className="build-title">{multi.length + 1} calques sélectionnés</p>
                 <div className="build-actions">
-                  <button type="button" onClick={() => move(-1)} disabled={plan.instances[0] === current} title="Monter (⌥↑)" aria-label="Monter">
+                  <button type="button" onClick={() => wrap('group')} title="Grouper (⌘G)">
+                    Grouper
+                  </button>
+                  <button type="button" onClick={() => wrap('autolayout')} title="Auto Layout (⇧A)">
+                    Auto Layout
+                  </button>
+                </div>
+                {hint && <p className="build-empty">{hint}</p>}
+              </>
+            ) : current ? (
+              <>
+                <p className="build-title">{labelOf(current)}</p>
+                <p className="build-file">
+                  {isContainer(current)
+                    ? `${kindLabel(current)} · ${current.children.length} calque(s)`
+                    : (current.file ?? 'Maquette Figma · codée au Build')}
+                </p>
+                <div className="build-actions">
+                  <button type="button" onClick={() => move(-1)} disabled={!found || found.index === 0} title="Monter (⌥↑)" aria-label="Monter">
                     ↑
                   </button>
-                  <button type="button" onClick={() => move(1)} disabled={plan.instances.at(-1) === current} title="Descendre (⌥↓)" aria-label="Descendre">
+                  <button type="button" onClick={() => move(1)} disabled={!found || found.index === found.siblings.length - 1} title="Descendre (⌥↓)" aria-label="Descendre">
                     ↓
                   </button>
                   <button type="button" onClick={duplicate} title="Dupliquer (⌘D)">
@@ -842,6 +1019,31 @@ export default function PreviewBuild({
                     Supprimer
                   </button>
                 </div>
+                {isContainer(current) ? (
+                  <div className="build-actions">
+                    <button type="button" onClick={convert}>
+                      {current.type === 'group' ? 'Transformer en Auto Layout' : 'Transformer en Groupe'}
+                    </button>
+                    <button type="button" onClick={unwrap} title="Dégrouper (⇧⌘G)">
+                      Dégrouper
+                    </button>
+                  </div>
+                ) : (
+                  <div className="build-actions">
+                    <button type="button" onClick={() => wrap('group')} title="Grouper (⌘G)">
+                      Grouper
+                    </button>
+                    <button type="button" onClick={() => wrap('autolayout')} title="Auto Layout (⇧A)">
+                      Auto Layout
+                    </button>
+                  </div>
+                )}
+                {isContainer(current) && current.type === 'autolayout' && (
+                  <LayoutControls layout={current.layout} onChange={layout} />
+                )}
+                {isContainer(current) && current.type === 'group' && (
+                  <p className="build-empty">Un Groupe organise des calques, sans disposition : pour régler espacements et alignement, transforme-le en Auto Layout.</p>
+                )}
                 <label className="build-prop">
                   <span>
                     Au clic
@@ -861,23 +1063,24 @@ export default function PreviewBuild({
                       ))}
                   </select>
                 </label>
-                {(currentSpecs ?? []).map((s) => (
-                  <PropControl
-                    key={s.name}
-                    spec={s}
-                    value={current.props[s.name]}
-                    onChange={(v) => save(setProp(plan, current.id, s.name, v))}
-                  />
-                ))}
-                {currentSpecs?.length === 0 && (
+                {currentComp &&
+                  (currentSpecs ?? []).map((s) => (
+                    <PropControl
+                      key={s.name}
+                      spec={s}
+                      value={currentComp.props[s.name]}
+                      onChange={(v) => save(setProp(plan, currentComp.id, s.name, v))}
+                    />
+                  ))}
+                {currentComp && currentSpecs?.length === 0 && (
                   <p className="build-empty">Aucune propriété modifiable pour ce composant.</p>
                 )}
               </>
             ) : (
               <p className="build-empty">
-                Sélectionne un composant dans la page ou les calques.
+                Sélectionne un calque dans la page ou les calques ; ⇧ clic pour en sélectionner plusieurs.
                 <br />
-                <kbd>⌘Z</kbd> annuler · <kbd>⌘D</kbd> dupliquer · <kbd>⌫</kbd> supprimer · <kbd>⌥↑↓</kbd> déplacer · <kbd>/</kbd> rechercher
+                <kbd>⌘G</kbd> grouper · <kbd>⇧A</kbd> Auto Layout · <kbd>⇧⌘G</kbd> dégrouper · <kbd>⌘Z</kbd> annuler · <kbd>⌘D</kbd> dupliquer · <kbd>⌫</kbd> supprimer · <kbd>⌥↑↓</kbd> déplacer · <kbd>/</kbd> rechercher
               </p>
             )}
           </aside>
@@ -952,5 +1155,120 @@ function PropControl({
         }
       />
     </label>
+  );
+}
+
+const kindLabel = (n: Node) =>
+  !isContainer(n) ? 'Composant' : n.type === 'group' ? 'Groupe' : 'Auto Layout';
+
+// Disposition d'un Auto Layout : direction, espacements, alignement,
+// dimensions. Chaque réglage change le canvas tout de suite.
+function LayoutControls({ layout, onChange }: { layout: Layout; onChange: (p: Partial<Layout>) => void }) {
+  const num = (v: string) => Math.max(0, Math.min(400, Math.round(Number(v) || 0)));
+  const sameSides = layout.padding.every((p) => p === layout.padding[0]);
+  const size = (axis: 'width' | 'height') => (
+    <label className="build-prop">
+      <span>{axis === 'width' ? 'Largeur' : 'Hauteur'}</span>
+      <select
+        value={typeof layout[axis] === 'number' ? 'fixed' : (layout[axis] as string)}
+        onChange={(e) =>
+          onChange({ [axis]: e.target.value === 'fixed' ? (axis === 'width' ? 320 : 200) : e.target.value } as Partial<Layout>)
+        }
+      >
+        <option value="hug">Ajustée au contenu</option>
+        <option value="fill">Extensible</option>
+        <option value="fixed">Fixe</option>
+      </select>
+      {typeof layout[axis] === 'number' && (
+        <input
+          type="number"
+          min={1}
+          max={4000}
+          value={layout[axis] as number}
+          aria-label={`${axis === 'width' ? 'Largeur' : 'Hauteur'} fixe en px`}
+          onChange={(e) => onChange({ [axis]: Math.max(1, Math.min(4000, Math.round(Number(e.target.value) || 1))) } as Partial<Layout>)}
+        />
+      )}
+    </label>
+  );
+  return (
+    <div className="build-layout">
+      <h4>Disposition</h4>
+      <div className="build-segment" role="group" aria-label="Direction">
+        <button type="button" aria-pressed={layout.direction === 'column'} onClick={() => onChange({ direction: 'column' })} title="Vertical">
+          ⤓ Vertical
+        </button>
+        <button type="button" aria-pressed={layout.direction === 'row'} onClick={() => onChange({ direction: 'row' })} title="Horizontal">
+          ⇥ Horizontal
+        </button>
+      </div>
+      <label className="build-check build-prop">
+        <input type="checkbox" checked={layout.wrap} onChange={(e) => onChange({ wrap: e.target.checked })} />
+        <span>Retour à la ligne</span>
+      </label>
+      <h4>Espacements</h4>
+      <label className="build-prop">
+        <span>Entre les éléments (px)</span>
+        <input type="number" min={0} max={400} value={layout.gap} onChange={(e) => onChange({ gap: num(e.target.value) })} />
+      </label>
+      {sameSides ? (
+        <label className="build-prop">
+          <span>Intérieurs (px)</span>
+          <input
+            type="number"
+            min={0}
+            max={400}
+            value={layout.padding[0]}
+            onChange={(e) => {
+              const v = num(e.target.value);
+              onChange({ padding: [v, v, v, v] });
+            }}
+          />
+        </label>
+      ) : null}
+      <details open={!sameSides}>
+        <summary>Intérieurs par côté</summary>
+        <div className="build-sides">
+          {(['Haut', 'Droite', 'Bas', 'Gauche'] as const).map((side, i) => (
+            <label key={side} className="build-prop">
+              <span>{side}</span>
+              <input
+                type="number"
+                min={0}
+                max={400}
+                value={layout.padding[i]}
+                onChange={(e) => {
+                  const next = [...layout.padding] as Layout['padding'];
+                  next[i] = num(e.target.value);
+                  onChange({ padding: next });
+                }}
+              />
+            </label>
+          ))}
+        </div>
+      </details>
+      <h4>Alignement</h4>
+      <label className="build-prop">
+        <span>{layout.direction === 'row' ? 'Vertical' : 'Horizontal'}</span>
+        <select value={layout.align} onChange={(e) => onChange({ align: e.target.value as Layout['align'] })}>
+          <option value="start">{layout.direction === 'row' ? 'En haut' : 'À gauche'}</option>
+          <option value="center">Au centre</option>
+          <option value="end">{layout.direction === 'row' ? 'En bas' : 'À droite'}</option>
+          <option value="stretch">Étirer</option>
+        </select>
+      </label>
+      <label className="build-prop">
+        <span>Distribution</span>
+        <select value={layout.justify} onChange={(e) => onChange({ justify: e.target.value as Layout['justify'] })}>
+          <option value="start">Au début</option>
+          <option value="center">Au centre</option>
+          <option value="end">À la fin</option>
+          <option value="space-between">Répartie</option>
+        </select>
+      </label>
+      <h4>Dimensions</h4>
+      {size('width')}
+      {size('height')}
+    </div>
   );
 }

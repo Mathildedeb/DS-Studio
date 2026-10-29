@@ -1,89 +1,280 @@
 import { z } from 'zod';
 
-// Plan d'une page de la Preview : la liste ordonnée des instances de
-// composants du DS, chacune avec ses propres valeurs de propriétés. La Preview
-// et le chat modifient ce même plan ; il ne touche jamais au code du projet
-// (le Build, étape séparée, génère les vraies pages). Un composant du DS pas
-// encore codé entre dans la page comme maquette Figma : il sera codé au Build.
+// Plan d'une page de la Preview : l'arbre de ses calques. Un calque est un
+// composant du DS (avec ses propres valeurs de propriétés), un Groupe (qui
+// organise des calques) ou un Auto Layout (qui les dispose : direction,
+// espacements, alignement, dimensions). La Preview et le chat modifient ce
+// même plan ; il ne touche jamais au code du projet (le Build, étape séparée,
+// génère les vraies pages). Un composant du DS pas encore codé entre dans la
+// page comme maquette Figma : il sera codé au Build. Les pages d'avant l'arbre
+// (une liste de composants) sont déjà des arbres valides : rien à convertir.
 const value = z.union([z.string().max(500), z.number().finite(), z.boolean()]);
+const id = z.string().regex(/^[a-z0-9-]{1,40}$/);
+const name = z.string().trim().min(1).max(60);
+// Interaction : au clic, ouvre cette page de la Preview (codée au Build).
+const link = z.string().regex(/^[a-z0-9-]{1,40}$/);
+
 export const instanceSchema = z
   .object({
-    id: z.string().regex(/^[a-z0-9-]{1,40}$/),
+    id,
+    // Nom donné dans les calques ; sinon celui du composant.
+    name: name.optional(),
     // Nom du composant et fichier qui le code : l'instance reste liée au DS.
     component: z.string().regex(/^[\p{L}\d][\p{L}\d .,%+/&-]{0,79}$/u),
     file: z.string().max(300).regex(/^src\/[\w./-]+\.(tsx|jsx)$/).optional(),
     // Pas encore codé : son composant Figma, rendu en maquette jusqu'au Build.
     figma: z.string().max(200).regex(/^I?\d+[:-]\d+(;\d+[:-]\d+)*$/).optional(),
-    // Interaction : au clic, ouvre cette page de la Preview (codée au Build).
-    link: z.string().regex(/^[a-z0-9-]{1,40}$/).optional(),
+    link: link.optional(),
     // Propriétés de code, ou variantes Figma (« Size », « style »…) d'une maquette.
     props: z.record(z.string().regex(/^[\p{L}\w .#-]{1,60}$/u), value),
   })
   .strict();
-export const planSchema = z
-  .object({ instances: z.array(instanceSchema).max(200) })
+
+// Disposition d'un Auto Layout, comme dans Figma.
+const size = z.union([z.enum(['hug', 'fill']), z.number().int().min(1).max(4000)]);
+export const layoutSchema = z
+  .object({
+    direction: z.enum(['row', 'column']),
+    gap: z.number().int().min(0).max(400),
+    // Espacements intérieurs : haut, droite, bas, gauche.
+    padding: z.tuple([0, 1, 2, 3].map(() => z.number().int().min(0).max(400)) as [z.ZodNumber, z.ZodNumber, z.ZodNumber, z.ZodNumber]),
+    // Alignement sur l'axe secondaire, distribution sur l'axe principal.
+    align: z.enum(['start', 'center', 'end', 'stretch']),
+    justify: z.enum(['start', 'center', 'end', 'space-between']),
+    wrap: z.boolean(),
+    width: size,
+    height: size,
+  })
   .strict();
+export type Layout = z.infer<typeof layoutSchema>;
+export const defaultLayout: Layout = {
+  direction: 'column',
+  gap: 16,
+  padding: [0, 0, 0, 0],
+  align: 'start',
+  justify: 'start',
+  wrap: false,
+  width: 'fill',
+  height: 'hug',
+};
+
 export type Instance = z.infer<typeof instanceSchema>;
-export type PagePlan = z.infer<typeof planSchema>;
+export type Group = { id: string; type: 'group'; name?: string; link?: string; children: Node[] };
+export type AutoLayout = {
+  id: string;
+  type: 'autolayout';
+  name?: string;
+  link?: string;
+  layout: Layout;
+  children: Node[];
+};
+export type Container = Group | AutoLayout;
+export type Node = Instance | Container;
+
+const nodeSchema: z.ZodType<Node> = z.lazy(() =>
+  z.union([
+    instanceSchema,
+    z
+      .object({
+        id,
+        type: z.literal('group'),
+        name: name.optional(),
+        link: link.optional(),
+        children: z.array(nodeSchema).max(200),
+      })
+      .strict(),
+    z
+      .object({
+        id,
+        type: z.literal('autolayout'),
+        name: name.optional(),
+        link: link.optional(),
+        layout: layoutSchema,
+        children: z.array(nodeSchema).max(200),
+      })
+      .strict(),
+  ]),
+) as z.ZodType<Node>;
+export const planSchema = z
+  .object({ instances: z.array(nodeSchema).max(200) })
+  .strict()
+  .refine((p) => count(p.instances) <= 400, '400 calques au maximum');
+export type PagePlan = { instances: Node[] };
+
+export const isContainer = (n: Node): n is Container => 'type' in n;
+const count = (nodes: Node[]): number =>
+  nodes.reduce((sum, n) => sum + 1 + (isContainer(n) ? count(n.children) : 0), 0);
+export const labelOf = (n: Node) =>
+  n.name ?? (isContainer(n) ? (n.type === 'group' ? 'Groupe' : 'Auto Layout') : n.component);
 
 const newId = () => Math.random().toString(36).slice(2, 10);
+
+// Où est un calque : son parent (null = la page), ses voisins et sa place.
+export function findNode(
+  plan: PagePlan,
+  target: string,
+): { node: Node; parent: Container | null; siblings: Node[]; index: number } | undefined {
+  const visit = (nodes: Node[], parent: Container | null): ReturnType<typeof findNode> => {
+    for (const [index, node] of nodes.entries()) {
+      if (node.id === target) return { node, parent, siblings: nodes, index };
+      if (isContainer(node)) {
+        const found = visit(node.children, node);
+        if (found) return found;
+      }
+    }
+    return undefined;
+  };
+  return visit(plan.instances, null);
+}
+// Calques à plat, dans l'ordre d'affichage, avec leur profondeur.
+export const flatten = (plan: PagePlan) => {
+  const out: { node: Node; depth: number; parent: string | null }[] = [];
+  const visit = (nodes: Node[], depth: number, parent: string | null) => {
+    for (const node of nodes) {
+      out.push({ node, depth, parent });
+      if (isContainer(node)) visit(node.children, depth + 1, node.id);
+    }
+  };
+  visit(plan.instances, 0, null);
+  return out;
+};
+const contains = (node: Node, target: string): boolean =>
+  node.id === target || (isContainer(node) && node.children.some((c) => contains(c, target)));
+
+// Change un calque ; null le retire de l'arbre.
+const update = (nodes: Node[], target: string, fn: (n: Node) => Node | null): Node[] =>
+  nodes.flatMap((n) => {
+    if (n.id === target) {
+      const next = fn(n);
+      return next ? [next] : [];
+    }
+    return isContainer(n) ? [{ ...n, children: update(n.children, target, fn) }] : [n];
+  });
+// Place un calque dans un conteneur (null = la page), à l'index donné.
+const insert = (nodes: Node[], parent: string | null, at: number, node: Node): Node[] => {
+  const place = (list: Node[]) => {
+    const copy = [...list];
+    copy.splice(Math.max(0, Math.min(at, copy.length)), 0, node);
+    return copy;
+  };
+  if (parent === null) return place(nodes);
+  return update(nodes, parent, (n) => (isContainer(n) ? { ...n, children: place(n.children) } : n));
+};
 
 export const addInstance = (
   plan: PagePlan,
   at: number,
   instance: Omit<Instance, 'id'>,
+  parent: string | null = null,
 ): { plan: PagePlan; id: string } => {
-  const id = newId();
-  const instances = [...plan.instances];
-  instances.splice(Math.max(0, Math.min(at, instances.length)), 0, { id, ...instance });
-  return { plan: { instances }, id };
+  const nid = newId();
+  const target = parent && findNode(plan, parent)?.node;
+  const into = target && isContainer(target) ? parent : null;
+  return { plan: { instances: insert(plan.instances, into, at, { id: nid, ...instance }) }, id: nid };
 };
-export const moveInstance = (plan: PagePlan, id: string, to: number): PagePlan => {
-  const from = plan.instances.findIndex((i) => i.id === id);
-  if (from < 0) return plan;
-  const instances = [...plan.instances];
-  const [moved] = instances.splice(from, 1);
-  instances.splice(Math.max(0, Math.min(to, instances.length)), 0, moved);
-  return { instances };
-};
-export const duplicateInstance = (
+// Déplace un calque à l'index donné, dans le même parent ou dans un autre
+// conteneur (jamais dans lui-même ni dans un de ses enfants).
+export const moveInstance = (
   plan: PagePlan,
-  id: string,
-): { plan: PagePlan; id?: string } => {
-  const at = plan.instances.findIndex((i) => i.id === id);
-  if (at < 0) return { plan };
-  const copy = { ...plan.instances[at], id: newId(), props: { ...plan.instances[at].props } };
-  const instances = [...plan.instances];
-  instances.splice(at + 1, 0, copy);
-  return { plan: { instances }, id: copy.id };
+  target: string,
+  to: number,
+  parent?: string | null,
+): PagePlan => {
+  const found = findNode(plan, target);
+  if (!found) return plan;
+  const into = parent === undefined ? (found.parent?.id ?? null) : parent;
+  if (into !== null) {
+    const dest = findNode(plan, into)?.node;
+    if (!dest || !isContainer(dest) || contains(found.node, into)) return plan;
+  }
+  const without = update(plan.instances, target, () => null);
+  return { instances: insert(without, into, to, found.node) };
 };
-export const removeInstance = (plan: PagePlan, id: string): PagePlan => ({
-  instances: plan.instances.filter((i) => i.id !== id),
+const copyOf = (node: Node): Node =>
+  isContainer(node)
+    ? { ...node, id: newId(), children: node.children.map(copyOf) }
+    : { ...node, id: newId(), props: { ...node.props } };
+export const duplicateInstance = (plan: PagePlan, target: string): { plan: PagePlan; id?: string } => {
+  const found = findNode(plan, target);
+  if (!found) return { plan };
+  const copy = copyOf(found.node);
+  return {
+    plan: { instances: insert(plan.instances, found.parent?.id ?? null, found.index + 1, copy) },
+    id: copy.id,
+  };
+};
+export const removeInstance = (plan: PagePlan, target: string): PagePlan => ({
+  instances: update(plan.instances, target, () => null),
 });
 // Une seule instance change : les autres instances du composant gardent leurs valeurs.
 export const setProp = (
   plan: PagePlan,
-  id: string,
-  name: string,
+  target: string,
+  prop: string,
   next: string | number | boolean | undefined,
 ): PagePlan => ({
-  instances: plan.instances.map((i) => {
-    if (i.id !== id) return i;
-    const props = { ...i.props };
-    if (next === undefined) delete props[name];
-    else props[name] = next;
-    return { ...i, props };
+  instances: update(plan.instances, target, (n) => {
+    if (isContainer(n)) return n;
+    const props = { ...n.props };
+    if (next === undefined) delete props[prop];
+    else props[prop] = next;
+    return { ...n, props };
   }),
 });
-
-// Interaction d'une instance : la page ouverte au clic, ou aucune.
-export const setLink = (plan: PagePlan, id: string, page: string | undefined): PagePlan => ({
-  instances: plan.instances.map((i) => {
-    if (i.id !== id) return i;
-    const { link: _, ...rest } = i;
-    return page ? { ...rest, link: page } : rest;
+// Interaction d'un calque : la page ouverte au clic, ou aucune.
+export const setLink = (plan: PagePlan, target: string, page: string | undefined): PagePlan => ({
+  instances: update(plan.instances, target, (n) => {
+    const { link: _, ...rest } = n;
+    return (page ? { ...rest, link: page } : rest) as Node;
   }),
 });
+// Renommer un calque ; vide = son nom par défaut.
+export const renameNode = (plan: PagePlan, target: string, next: string): PagePlan => ({
+  instances: update(plan.instances, target, (n) => {
+    const { name: _, ...rest } = n;
+    const clean = next.trim().slice(0, 60);
+    return (clean ? { ...rest, name: clean } : rest) as Node;
+  }),
+});
+export const setLayout = (plan: PagePlan, target: string, patch: Partial<Layout>): PagePlan => ({
+  instances: update(plan.instances, target, (n) =>
+    isContainer(n) && n.type === 'autolayout' ? { ...n, layout: { ...n.layout, ...patch } } : n,
+  ),
+});
+// Grouper (⌘G) ou mettre en Auto Layout (⇧A) des calques voisins : ils
+// entrent dans le nouveau conteneur, à la place du premier.
+export function wrapNodes(
+  plan: PagePlan,
+  ids: string[],
+  kind: 'group' | 'autolayout',
+  layout: Partial<Layout> = {},
+): { plan: PagePlan; id?: string; error?: string } {
+  const found = ids.map((x) => findNode(plan, x)).filter((f) => !!f);
+  if (!found.length) return { plan, error: 'Aucun calque sélectionné.' };
+  const parent = found[0].parent?.id ?? null;
+  if (found.some((f) => (f.parent?.id ?? null) !== parent))
+    return { plan, error: 'Sélectionne des calques du même niveau pour les grouper.' };
+  const ordered = [...found].sort((a, b) => a.index - b.index);
+  const cid = newId();
+  const children = ordered.map((f) => f.node);
+  const container: Container =
+    kind === 'group'
+      ? { id: cid, type: 'group', children }
+      : { id: cid, type: 'autolayout', layout: { ...defaultLayout, ...layout }, children };
+  let instances = plan.instances;
+  for (const f of ordered) instances = update(instances, f.node.id, () => null);
+  return { plan: { instances: insert(instances, parent, ordered[0].index, container) }, id: cid };
+}
+// Dégrouper : les enfants prennent la place du conteneur.
+export const unwrapNode = (plan: PagePlan, target: string): PagePlan => {
+  const found = findNode(plan, target);
+  if (!found || !isContainer(found.node)) return plan;
+  let instances = update(plan.instances, target, () => null);
+  found.node.children.forEach((child, i) => {
+    instances = insert(instances, found.parent?.id ?? null, found.index + i, child);
+  });
+  return { instances };
+};
 
 // Opérations du chat sur le plan : même modèle que les actions faites à la
 // main dans la Preview. Chaque composant doit être dans le DS (codé, ou en
@@ -94,47 +285,62 @@ type Specs = {
   kind: 'enum' | 'boolean' | 'string' | 'number';
   options?: string[];
 }[];
+const ref = z.string().max(40);
 export const opSchema = z.discriminatedUnion('op', [
   z
     .object({
       op: z.literal('add'),
       component: z.string().max(80),
       props: z.record(z.string().max(60), value).optional(),
-      // Position : avant l'instance indiquée, sinon à la fin.
-      before: z.string().max(40).optional(),
+      // Position : avant le calque indiqué, sinon à la fin (de parent, s'il est donné).
+      before: ref.optional(),
+      parent: ref.optional(),
     })
     .strict(),
   z
     .object({
       op: z.literal('set'),
-      id: z.string().max(40),
+      id: ref,
       props: z.record(z.string().max(60), value.nullable()),
     })
     .strict(),
-  z.object({ op: z.literal('move'), id: z.string().max(40), to: z.number().int().min(0) }).strict(),
-  z.object({ op: z.literal('duplicate'), id: z.string().max(40) }).strict(),
-  // Au clic sur l'instance, aller à une page (nom ou id) ; null retire le lien.
   z
-    .object({ op: z.literal('link'), id: z.string().max(40), page: z.string().max(40).nullable() })
+    .object({ op: z.literal('move'), id: ref, to: z.number().int().min(0), parent: ref.nullable().optional() })
     .strict(),
+  z.object({ op: z.literal('duplicate'), id: ref }).strict(),
+  // Au clic sur le calque, aller à une page (nom ou id) ; null retire le lien.
+  z.object({ op: z.literal('link'), id: ref, page: z.string().max(40).nullable() }).strict(),
   // Nouvelle page de la Preview, vide, à construire ensuite.
   z.object({ op: z.literal('page'), name: z.string().trim().min(1).max(40) }).strict(),
-  z.object({ op: z.literal('remove'), id: z.string().max(40) }).strict(),
+  z.object({ op: z.literal('remove'), id: ref }).strict(),
+  z.object({ op: z.literal('rename'), id: ref, name: z.string().max(60) }).strict(),
+  // Grouper ou mettre en Auto Layout des calques voisins ; dégrouper.
+  z
+    .object({
+      op: z.literal('wrap'),
+      ids: z.array(ref).min(1).max(50),
+      kind: z.enum(['group', 'autolayout']),
+      name: z.string().max(60).optional(),
+      layout: layoutSchema.partial().optional(),
+    })
+    .strict(),
+  z.object({ op: z.literal('unwrap'), id: ref }).strict(),
+  z.object({ op: z.literal('layout'), id: ref, layout: layoutSchema.partial() }).strict(),
 ]);
 export type PageOp = z.infer<typeof opSchema>;
 
 // Identifiant et route d'une nouvelle page : « Mon profil » → mon-profil-x1y2, /mon-profil.
-const slugOf = (name: string) =>
-  name
+const slugOf = (text: string) =>
+  text
     .toLowerCase()
     .normalize('NFD')
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-|-$/g, '')
     .slice(0, 30) || 'page';
-export const newPage = (name: string) => ({
-  id: `${slugOf(name)}-${Math.random().toString(36).slice(2, 6)}`,
-  name: name.trim().slice(0, 40),
-  path: `/${slugOf(name)}`,
+export const newPage = (text: string) => ({
+  id: `${slugOf(text)}-${Math.random().toString(36).slice(2, 6)}`,
+  name: text.trim().slice(0, 40),
+  path: `/${slugOf(text)}`,
 });
 type Page = { id: string; name: string; path?: string };
 
@@ -146,16 +352,16 @@ export function applyOps(
 ) {
   const notes: string[] = [];
   const created: Page[] = [];
-  const findPage = (ref: string) => {
+  const findPage = (key: string) => {
     const all = [...pages, ...created];
-    const key = ref.trim().toLowerCase();
-    return all.find((p) => p.id === ref) ?? all.find((p) => p.name.toLowerCase() === key);
+    const k = key.trim().toLowerCase();
+    return all.find((p) => p.id === key) ?? all.find((p) => p.name.toLowerCase() === k);
   };
   const checked = (component: string, props: Record<string, unknown>) => {
     const specs = catalog[component]?.specs ?? [];
     const out: Record<string, string | number | boolean | null> = {};
-    for (const [name, v] of Object.entries(props)) {
-      const spec = specs.find((s) => s.name === name);
+    for (const [prop, v] of Object.entries(props)) {
+      const spec = specs.find((s) => s.name === prop);
       const ok =
         spec &&
         (v === null ||
@@ -163,8 +369,8 @@ export function applyOps(
           (spec.kind === 'boolean' && typeof v === 'boolean') ||
           (spec.kind === 'string' && typeof v === 'string') ||
           (spec.kind === 'number' && typeof v === 'number'));
-      if (ok) out[name] = v as string | number | boolean | null;
-      else notes.push(`${component} : « ${name} = ${String(v)} » n’existe pas dans le DS, ignoré.`);
+      if (ok) out[prop] = v as string | number | boolean | null;
+      else notes.push(`${component} : « ${prop} = ${String(v)} » n’existe pas dans le DS, ignoré.`);
     }
     return out;
   };
@@ -176,9 +382,15 @@ export function applyOps(
       else created.push(newPage(op.name));
       continue;
     }
-    const target = 'id' in op ? plan.instances.find((i) => i.id === op.id) : undefined;
+    if (op.op === 'wrap') {
+      const done = wrapNodes(plan, op.ids, op.kind, op.layout ?? {});
+      if (done.error) notes.push(done.error);
+      else plan = op.name ? renameNode(done.plan, done.id!, op.name) : done.plan;
+      continue;
+    }
+    const target = 'id' in op ? findNode(plan, op.id)?.node : undefined;
     if ('id' in op && !target) {
-      notes.push(`Instance ${op.id} introuvable, ignorée.`);
+      notes.push(`Calque ${op.id} introuvable, ignoré.`);
       continue;
     }
     if (op.op === 'add') {
@@ -190,29 +402,52 @@ export function applyOps(
       const props = Object.fromEntries(
         Object.entries(checked(op.component, op.props ?? {})).filter(([, v]) => v !== null),
       ) as Record<string, string | number | boolean>;
-      const at = op.before
-        ? Math.max(0, plan.instances.findIndex((i) => i.id === op.before))
-        : plan.instances.length;
-      plan = addInstance(plan, at, {
-        component: op.component,
-        ...(entry.file ? { file: entry.file } : {}),
-        ...(entry.figma ? { figma: entry.figma } : {}),
-        props,
-      }).plan;
+      const before = op.before ? findNode(plan, op.before) : undefined;
+      const parentNode = op.parent ? findNode(plan, op.parent)?.node : undefined;
+      const parent = before
+        ? (before.parent?.id ?? null)
+        : parentNode && isContainer(parentNode)
+          ? parentNode.id
+          : null;
+      const at = before
+        ? before.index
+        : parentNode && isContainer(parentNode)
+          ? parentNode.children.length
+          : plan.instances.length;
+      plan = addInstance(
+        plan,
+        at,
+        {
+          component: op.component,
+          ...(entry.file ? { file: entry.file } : {}),
+          ...(entry.figma ? { figma: entry.figma } : {}),
+          props,
+        },
+        parent,
+      ).plan;
     } else if (op.op === 'set') {
-      for (const [name, v] of Object.entries(checked(target!.component, op.props)))
-        plan = setProp(plan, target!.id, name, v === null ? undefined : v);
-    } else if (op.op === 'move') plan = moveInstance(plan, target!.id, op.to);
+      if (isContainer(target!)) {
+        notes.push(`${labelOf(target!)} n’a pas de propriétés de composant.`);
+        continue;
+      }
+      for (const [prop, v] of Object.entries(checked(target!.component, op.props)))
+        plan = setProp(plan, target!.id, prop, v === null ? undefined : v);
+    } else if (op.op === 'move') plan = moveInstance(plan, target!.id, op.to, op.parent);
     else if (op.op === 'duplicate') plan = duplicateInstance(plan, target!.id).plan;
-    else if (op.op === 'link') {
+    else if (op.op === 'rename') plan = renameNode(plan, target!.id, op.name);
+    else if (op.op === 'unwrap') plan = unwrapNode(plan, target!.id);
+    else if (op.op === 'layout') {
+      if (!isContainer(target!) || target!.type !== 'autolayout')
+        notes.push(`${labelOf(target!)} n’est pas un Auto Layout.`);
+      else plan = setLayout(plan, target!.id, op.layout);
+    } else if (op.op === 'link') {
       const to = op.page === null ? undefined : findPage(op.page);
       if (op.page !== null && !to) {
         notes.push(`Page « ${op.page} » introuvable : lien ignoré.`);
         continue;
       }
       plan = setLink(plan, target!.id, to?.id);
-    }
-    else plan = removeInstance(plan, target!.id);
+    } else plan = removeInstance(plan, target!.id);
   }
   return { plan, notes, pages: created };
 }

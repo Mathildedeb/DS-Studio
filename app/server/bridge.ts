@@ -6,7 +6,7 @@
 export const bridgeHtml = 'ds-studio.html';
 export const bridgeEntry = 'src/ds-studio/canvas.tsx';
 // Marque de version du relais : un relais plus ancien est proposé en mise à jour.
-export const bridgeMark = 'Relais DS-Studio v4';
+export const bridgeMark = 'Relais DS-Studio v5';
 
 // Même <head> que index.html (polices…), avec le relais comme script.
 export function bridgeFiles(indexHtml: string, mainSource: string) {
@@ -23,7 +23,7 @@ export function bridgeFiles(indexHtml: string, mainSource: string) {
   const canvas = `// ${bridgeMark} (développement seulement) : affiche le plan de page de la
 // Preview avec les vrais composants du projet, et les composants du DS pas
 // encore codés en maquette Figma (codés au Build). Généré par DS-Studio.
-import { StrictMode, useEffect, useState, type ComponentType } from 'react'
+import { StrictMode, useEffect, useState, type ComponentType, type MouseEvent as ClickEvent, type ReactElement } from 'react'
 import { createRoot } from 'react-dom/client'
 ${styles}
 
@@ -38,6 +38,21 @@ type Instance = {
   // Maquette Figma (rendu PNG à l'échelle 2), tant que le composant n'est pas codé.
   image?: string
 }
+type Size = 'hug' | 'fill' | number
+type Layout = {
+  direction: 'row' | 'column'
+  gap: number
+  padding: [number, number, number, number]
+  align: 'start' | 'center' | 'end' | 'stretch'
+  justify: 'start' | 'center' | 'end' | 'space-between'
+  wrap: boolean
+  width: Size
+  height: Size
+}
+// Calque : un composant, un Groupe (organise) ou un Auto Layout (dispose).
+type Container = { id: string; type: 'group' | 'autolayout'; link?: string; layout?: Layout; children: Node[] }
+type Node = Instance | Container
+const isContainer = (n: Node): n is Container => 'type' in n
 
 // Tous les composants du projet : chaque instance utilise le vrai composant.
 const modules = import.meta.glob('../components/**/*.{tsx,jsx}', { eager: true }) as Record<
@@ -50,10 +65,13 @@ const byFile = Object.fromEntries(
     module.default,
   ]),
 )
+const flex = { start: 'flex-start', center: 'center', end: 'flex-end', stretch: 'stretch', 'space-between': 'space-between' }
+const dimension = (v: Size) => (v === 'fill' ? '100%' : v === 'hug' ? 'fit-content' : \`\${v}px\`)
 
 function Canvas() {
-  const [instances, setInstances] = useState<Instance[]>([])
+  const [instances, setInstances] = useState<Node[]>([])
   const [selected, setSelected] = useState<string>()
+  const [multi, setMulti] = useState<string[]>([])
   // Safe areas de l'appareil (status bar, barre d'accueil) et mode Tester :
   // sans sélection, les composants réagissent comme dans l'application.
   const [insets, setInsets] = useState({ top: 0, bottom: 0 })
@@ -63,6 +81,7 @@ function Canvas() {
       if (event.data?.type !== 'ds-studio:page') return
       setInstances(event.data.instances)
       setSelected(event.data.selected)
+      setMulti(event.data.multi ?? [])
       setInsets(event.data.insets ?? { top: 0, bottom: 0 })
       setInteractive(!!event.data.interactive)
     }
@@ -82,14 +101,118 @@ function Canvas() {
       removeEventListener('keydown', onKey)
     }
   }, [])
-  // Position de chaque instance, pour placer un composant glissé.
+  // Position des calques de premier niveau, pour placer un composant glissé.
   useEffect(() => {
-    const rects = [...document.querySelectorAll<HTMLElement>('[data-ds-id]')].map((el) => {
+    const rects = [...document.querySelectorAll<HTMLElement>('[data-ds-root]')].map((el) => {
       const r = el.getBoundingClientRect()
       return { id: el.dataset.dsId, top: r.top, bottom: r.bottom }
     })
     parent.postMessage({ type: 'ds-studio:rects', rects }, '*')
   })
+  const mark = (id: string) =>
+    interactive
+      ? undefined
+      : id === selected
+        ? '2px solid #8A38F5'
+        : multi.includes(id)
+          ? '2px dashed #8A38F5'
+          : undefined
+  const select = (id: string, event: ClickEvent) =>
+    parent.postMessage({ type: 'ds-studio:select', id, shift: event.shiftKey }, '*')
+
+  const render = (node: Node, root: boolean): ReactElement => {
+    if (isContainer(node)) {
+      const l = node.layout
+      const width = l ? l.width : 'fill'
+      return (
+        <div
+          key={node.id}
+          data-ds-id={node.id}
+          data-ds-root={root || undefined}
+          onClick={(event) => {
+            event.stopPropagation()
+            if (interactive) {
+              if (node.link) parent.postMessage({ type: 'ds-studio:navigate', page: node.link }, '*')
+              return
+            }
+            select(node.id, event)
+          }}
+          style={{
+            boxSizing: 'border-box',
+            ...(root ? { justifySelf: width === 'fill' ? 'stretch' : 'start' } : {}),
+            ...(l
+              ? {
+                  display: 'flex',
+                  flexDirection: l.direction,
+                  flexWrap: l.wrap ? 'wrap' : 'nowrap',
+                  gap: l.gap,
+                  padding: l.padding.map((p) => p + 'px').join(' '),
+                  alignItems: flex[l.align],
+                  justifyContent: flex[l.justify],
+                  width: dimension(l.width),
+                  height: l.height === 'hug' ? 'auto' : dimension(l.height),
+                }
+              : { display: 'grid', justifyItems: 'start' }),
+            cursor: interactive ? (node.link ? 'pointer' : undefined) : 'pointer',
+            outline: mark(node.id) ?? (interactive ? undefined : '1px dashed rgba(138, 56, 245, 0.3)'),
+            outlineOffset: 2,
+          }}
+        >
+          {node.children.map((child) => render(child, false))}
+        </div>
+      )
+    }
+    const Component = node.file ? byFile[node.file] : undefined
+    return (
+      <div
+        key={node.id}
+        data-ds-id={node.id}
+        data-ds-root={root || undefined}
+        onClickCapture={(event) => {
+          if (interactive) {
+            if (node.link) parent.postMessage({ type: 'ds-studio:navigate', page: node.link }, '*')
+            return
+          }
+          event.preventDefault()
+          event.stopPropagation()
+          select(node.id, event)
+        }}
+        style={{
+          ...(root ? { justifySelf: 'start' } : {}),
+          cursor: interactive ? undefined : 'pointer',
+          outline: mark(node.id),
+          outlineOffset: 4,
+          borderRadius: 4,
+        }}
+      >
+        {Component ? (
+          <Component {...node.props} />
+        ) : node.image ? (
+          <img
+            src={node.image}
+            alt={node.component + ' (maquette Figma)'}
+            onLoad={(event) => {
+              const img = event.currentTarget
+              img.width = img.naturalWidth / 2
+            }}
+            style={{ display: 'block', maxWidth: '100%', height: 'auto' }}
+          />
+        ) : (
+          <p
+            style={{
+              margin: 0,
+              padding: '12px 16px',
+              border: '1px dashed currentColor',
+              borderRadius: 4,
+              opacity: 0.7,
+            }}
+          >
+            {node.file ? 'Composant introuvable : ' + node.file : node.component + ' · maquette'}
+          </p>
+        )}
+      </div>
+    )
+  }
   return (
     <main
       style={{
@@ -101,57 +224,7 @@ function Canvas() {
         boxSizing: 'border-box',
       }}
     >
-      {instances.map((instance) => {
-        const Component = instance.file ? byFile[instance.file] : undefined
-        return (
-          <div
-            key={instance.id}
-            data-ds-id={instance.id}
-            onClickCapture={(event) => {
-              if (interactive) {
-                if (instance.link) parent.postMessage({ type: 'ds-studio:navigate', page: instance.link }, '*')
-                return
-              }
-              event.preventDefault()
-              event.stopPropagation()
-              parent.postMessage({ type: 'ds-studio:select', id: instance.id }, '*')
-            }}
-            style={{
-              justifySelf: 'start',
-              cursor: interactive ? undefined : 'pointer',
-              outline: !interactive && instance.id === selected ? '2px solid #8A38F5' : undefined,
-              outlineOffset: 4,
-              borderRadius: 4,
-            }}
-          >
-            {Component ? (
-              <Component {...instance.props} />
-            ) : instance.image ? (
-              <img
-                src={instance.image}
-                alt={instance.component + ' (maquette Figma)'}
-                onLoad={(event) => {
-                  const img = event.currentTarget
-                  img.width = img.naturalWidth / 2
-                }}
-                style={{ display: 'block', maxWidth: '100%', height: 'auto' }}
-              />
-            ) : (
-              <p
-                style={{
-                  margin: 0,
-                  padding: '12px 16px',
-                  border: '1px dashed currentColor',
-                  borderRadius: 4,
-                  opacity: 0.7,
-                }}
-              >
-                {instance.file ? 'Composant introuvable : ' + instance.file : instance.component + ' · maquette'}
-              </p>
-            )}
-          </div>
-        )
-      })}
+      {instances.map((node) => render(node, true))}
       {!instances.length && (
         <p style={{ opacity: 0.6, textAlign: 'center', marginTop: 48 }}>
           Glisse un composant du panneau ici.

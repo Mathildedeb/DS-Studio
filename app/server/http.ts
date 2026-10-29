@@ -21,7 +21,7 @@ import { readProjectTokens, writeProjectTokens } from './projectTokens.js';
 import { BATCH, PublishCounter, gitStatus, projectPullRequest, publish } from './gitops.js';
 import { runTokensScript, type TokensScript } from './npm.js';
 import { codedFor } from '../shared/components.js';
-import { applyOps, planSchema } from '../shared/pagePlan.js';
+import { applyOps, isContainer, planSchema, type Node } from '../shared/pagePlan.js';
 import {
   compareComponents,
   figmaComponentSchema,
@@ -1179,14 +1179,26 @@ export async function createStudioServer(options: {
                 .catch(() => ({ instances: [] }));
               const { pages } = await dashboard.readPreview(store.directory);
               const routeOf = (id: string) => pages.find((p) => p.id === id)?.path ?? `/${id}`;
-              request += `\n\nPlan de la page (ordre d'affichage) :\n${JSON.stringify(
-                plan.instances.map(({ component, file, figma, props, link }) => ({
-                  component,
-                  ...(file ? { file } : { figma_id: figma, a_coder: true }),
-                  props,
-                  ...(link ? { au_clic_aller_a: routeOf(link) } : {}),
-                })),
-              )}\nPages du proto (nom → route) : ${JSON.stringify(
+              // Arbre des calques : composants, Groupes et Auto Layout imbriqués.
+              const tree = (nodes: Node[]): unknown[] =>
+                nodes.map((n) => {
+                  const go = n.link ? { au_clic_aller_a: routeOf(n.link) } : {};
+                  if (isContainer(n))
+                    return {
+                      [n.type === 'group' ? 'groupe' : 'auto_layout']: n.name ?? true,
+                      ...(n.type === 'autolayout' ? { layout: n.layout } : {}),
+                      ...go,
+                      enfants: tree(n.children),
+                    };
+                  return {
+                    component: n.component,
+                    ...(n.name ? { nom: n.name } : {}),
+                    ...(n.file ? { file: n.file } : { figma_id: n.figma, a_coder: true }),
+                    props: n.props,
+                    ...go,
+                  };
+                });
+              request += `\n\nArbre des calques de la page (ordre d'affichage) :\n${JSON.stringify(tree(plan.instances))}\nPages du proto (nom → route) : ${JSON.stringify(
                 pages.map((p) => ({ nom: p.name, route: p.path ?? `/${p.id}` })),
               )}`;
             }
