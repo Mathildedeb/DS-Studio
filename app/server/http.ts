@@ -18,7 +18,7 @@ import { ConnectionStore, inspectFolder, pickFolder } from './connection.js';
 import { DevServer } from './devserver.js';
 import { atomicWrite, readPrivate } from './files.js';
 import { readProjectTokens, writeProjectTokens } from './projectTokens.js';
-import { BATCH, PublishCounter, gitStatus, publish } from './gitops.js';
+import { BATCH, PublishCounter, gitStatus, projectPullRequest, publish } from './gitops.js';
 import { runTokensScript, type TokensScript } from './npm.js';
 import { codedFor } from '../shared/components.js';
 import { applyOps, planSchema } from '../shared/pagePlan.js';
@@ -584,6 +584,10 @@ export async function createStudioServer(options: {
               git: await (async () => {
                 const project = (await connection.status()).project;
                 return project ? gitStatus(project.folder).catch(() => null) : null;
+              })(),
+              pr: await (async () => {
+                const project = (await connection.status()).project;
+                return project ? projectPullRequest(project.folder) : null;
               })(),
             });
           }

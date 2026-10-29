@@ -140,6 +140,28 @@ const openPullRequest = (folder: string, branch: string) =>
     ),
   );
 
+// Pull Request ouverte du projet (branche en cours, sinon la plus récente
+// des branches design/…), lue par gh pour la relier dans DS-Studio.
+export const projectPullRequest = (folder: string) =>
+  new Promise<{ number: number; url: string; title: string; state: string } | null>((done) =>
+    execFile(
+      'gh',
+      ['pr', 'list', '--state', 'open', '--limit', '20', '--json', 'number,url,title,state,headRefName'],
+      { cwd: folder, timeout: 20_000 },
+      async (error, stdout) => {
+        if (error) return done(null);
+        try {
+          const prs = JSON.parse(stdout) as { number: number; url: string; title: string; state: string; headRefName: string }[];
+          const branch = await run(folder, ['branch', '--show-current']).catch(() => '');
+          const pr = prs.find((p) => p.headRefName === branch) ?? prs.find((p) => p.headRefName.startsWith('design/'));
+          done(pr ? { number: pr.number, url: pr.url, title: pr.title, state: pr.state } : null);
+        } catch {
+          done(null);
+        }
+      },
+    ),
+  );
+
 export async function publish(folder: string, message: string) {
   const status = await gitStatus(folder);
   const risky = status.files.filter((f) => sensitive.test(f.path));

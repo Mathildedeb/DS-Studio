@@ -13,6 +13,7 @@ type Status = {
   queue: FigmaOp[];
   results: { op: FigmaOp; ok: boolean; reason: string; at: string }[];
   git: { branch?: string; files: unknown[]; ahead?: number } | null;
+  pr: { number: number; url: string; title: string } | null;
 };
 
 const ago = (ms: number) => {
@@ -79,6 +80,18 @@ export default function SyncPanel({
           : 'Aucune lecture Figma encore : ouvre le plugin.'}
         {status.git &&
           ` · Git : ${status.git.branch ?? '?'}${status.git.files.length ? `, ${status.git.files.length} fichier(s) à publier` : ''}`}
+      </p>
+      <p className="sync-meta">
+        {status.pr ? (
+          <>
+            PR du projet :{' '}
+            <a href={status.pr.url} target="_blank" rel="noreferrer">
+              #{status.pr.number} · {status.pr.title} ↗
+            </a>
+          </>
+        ) : (
+          'Aucune Pull Request ouverte dans le projet.'
+        )}
       </p>
       {error && <p className="sync-error">{error}</p>}
       {!status.items.length && status.snapshotAt && (
