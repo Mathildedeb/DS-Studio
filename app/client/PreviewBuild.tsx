@@ -90,7 +90,8 @@ const store = (key: string, value: unknown) => {
     // Navigation privée : préférences non gardées.
   }
 };
-const narrowQuery = '(max-width: 900px)';
+const narrowQuery = '(max-width: 899px)';
+const mediumQuery = '(min-width: 900px) and (max-width: 1279px)';
 
 // Mode « Construire » de la Preview : bibliothèque du DS à gauche, page
 // rendue par le relais du projet au centre (dans un vrai viewport d'iPhone),
@@ -186,6 +187,34 @@ export default function PreviewBuild({
   const [right, setRight] = useState(() => !matchMedia(narrowQuery).matches && stored('right', true));
   const [widths, setWidths] = useState<[number, number]>(() => stored('widths', [240, 260]));
   const frame = useRef<HTMLIFrameElement>(null);
+  // Hauteur de l'espace de travail : ce qui reste de l'écran sous la barre,
+  // pour que les panneaux et le canvas défilent seuls, pas la page.
+  const body = useRef<HTMLDivElement>(null);
+  const [fitted, setFitted] = useState(600);
+  useEffect(() => {
+    const fit = () => {
+      const el = body.current;
+      if (!el) return;
+      const top = el.getBoundingClientRect().top + scrollY;
+      setFitted(Math.max(460, Math.round(innerHeight - top - 12)));
+    };
+    fit();
+    addEventListener('resize', fit);
+    const observer = new ResizeObserver(fit);
+    observer.observe(document.body);
+    return () => {
+      removeEventListener('resize', fit);
+      observer.disconnect();
+    };
+  }, []);
+  // Largeur moyenne (900 à 1279 px) : panneaux plus étroits, toujours visibles.
+  const [medium, setMedium] = useState(() => matchMedia(mediumQuery).matches);
+  useEffect(() => {
+    const media = matchMedia(mediumQuery);
+    const change = () => setMedium(media.matches);
+    media.addEventListener('change', change);
+    return () => media.removeEventListener('change', change);
+  }, []);
   // Aperçu de la fiche : le même relais que la page, avec une seule instance.
   const sample = useRef<HTMLIFrameElement>(null);
   const [draft, setDraft] = useState<Record<string, Value>>({});
@@ -691,9 +720,10 @@ export default function PreviewBuild({
         }
       }
   const levels = panelSelection.map((g) => g.level);
+  const shown: [number, number] = medium ? [Math.min(widths[0], 208), Math.min(widths[1], 232)] : widths;
   const columns = narrow
     ? 'minmax(0, 1fr)'
-    : `${left ? `${widths[0]}px 6px` : ''} minmax(0, 1fr) ${right ? `6px ${widths[1]}px` : ''}`;
+    : `${left ? `${shown[0]}px 6px` : ''} minmax(0, 1fr) ${right ? `6px ${shown[1]}px` : ''}`;
   const detailSpecs = item ? specsOf(item.entry) : undefined;
   const currentSpecs = currentComp ? specsOf(currentComp) : undefined;
 
@@ -764,7 +794,11 @@ export default function PreviewBuild({
         </button>
       </div>
 
-      <div className="build-body" style={{ gridTemplateColumns: columns }}>
+      <div
+        ref={body}
+        className="build-body"
+        style={{ gridTemplateColumns: columns, ['--build-h' as string]: `${fitted}px` }}
+      >
         {left && (
           <aside id="build-library" className="build-side build-left" aria-label="Calques et composants">
             <div className="build-side-head build-tabs">

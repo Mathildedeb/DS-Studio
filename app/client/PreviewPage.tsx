@@ -122,6 +122,15 @@ export default function PreviewPage({
     setRoute('/');
   };
 
+  // Construire : la page de travail se resserre pour laisser la place au canvas.
+  const building = !!project && mode === 'build' && dev.state === 'running';
+  useEffect(() => {
+    if (!building) return;
+    document.documentElement.dataset.building = '';
+    return () => {
+      delete document.documentElement.dataset.building;
+    };
+  }, [building]);
   return (
     <section className="panel mobile-panel" aria-labelledby="preview-title">
       <div className="preview-bar">
@@ -358,7 +367,10 @@ export default function PreviewPage({
       )}
 
       {project && (
-        <div className="project-run" role="status">
+        <div
+          className={building ? 'project-run project-run-compact' : 'project-run'}
+          role="status"
+        >
           <span>
             Projet <strong>{project.name}</strong> ·{' '}
             {dev.state === 'running'

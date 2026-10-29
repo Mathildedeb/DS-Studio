@@ -3534,3 +3534,80 @@ h2[id] {
   font-size: 13px;
   font-weight: 600;
 }
+
+/* Page de travail en mode Construire : titre sur une ligne, barres denses,
+   espace de travail à la hauteur exacte de l'écran. Rien n'est retiré. */
+[data-building] .intro {
+  padding: 10px 24px 8px;
+}
+[data-building] .intro h1 {
+  margin: 0;
+  font-size: 18px;
+  letter-spacing: -0.3px;
+}
+[data-building] .intro p {
+  display: none;
+}
+[data-building] .preview-bar {
+  gap: 6px 18px;
+  padding: 6px 12px;
+}
+[data-building] .preview-group {
+  gap: 4px;
+}
+[data-building] .preview-chip,
+[data-building] .preview-add,
+[data-building] .preview-remove {
+  padding: 3px 10px;
+  font-size: 12px;
+}
+.project-run-compact {
+  gap: 4px 10px;
+  padding: 4px 12px;
+  font-size: 12px;
+}
+.project-run-compact button,
+.project-run-compact a {
+  padding: 2px 8px;
+  font-size: 12px;
+  min-height: 0;
+}
+.project-run-compact details {
+  flex-basis: auto;
+}
+.project-run-compact details[open] {
+  flex-basis: 100%;
+}
+[data-building] .viewport-device {
+  padding: 8px;
+}
+[data-building] .build {
+  gap: 6px;
+}
+[data-building] .build-toolbar {
+  gap: 4px;
+  padding: 4px;
+}
+[data-building] .build-tool,
+[data-building] .build-segment button,
+[data-building] .build-device select,
+[data-building] .build-toolbar .studio-primary {
+  min-height: 28px;
+  padding: 2px 9px;
+  font-size: 12px;
+}
+.build-body .build-side {
+  height: var(--build-h, max(480px, calc(100dvh - 300px)));
+}
+.build-body .build-stage {
+  height: var(--build-h, auto);
+  box-sizing: border-box;
+  overflow: hidden;
+}
+.build-body .device-box {
+  height: calc(var(--build-h, 600px) - 16px);
+}
+.build[data-narrow] .build-side {
+  height: auto;
+  max-height: var(--build-h);
+}
