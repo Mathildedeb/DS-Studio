@@ -549,10 +549,13 @@ export default function App() {
         branch: string;
         commit: string;
         pushed: boolean;
+        pr?: { url?: string; error?: string };
       }>('git/publish', { message: commitMessage });
-      const text = done.pushed
-        ? `Publié : commit ${done.commit} poussé sur la branche ${done.branch}.`
-        : `Commit ${done.commit} fait sur ${done.branch} (pas de dépôt distant).`;
+      const text = !done.pushed
+        ? `Commit ${done.commit} fait sur ${done.branch} (pas de dépôt distant).`
+        : done.pr?.url
+          ? `Publié : branche ${done.branch} poussée, Pull Request ouverte : ${done.pr.url}`
+          : `Publié : commit ${done.commit} poussé sur la branche ${done.branch}. Pull Request à ouvrir sur GitHub${done.pr?.error ? ` (gh : ${done.pr.error})` : ''}.`;
       setPublishCard((p) => p && { ...p, busy: false, done: text });
       setChat((c) => [...c, { role: 'assistant', text }]);
       setConnection(await request<ConnectionStatus>('connection'));
@@ -562,9 +565,10 @@ export default function App() {
       );
     }
   }
-  async function sendMessage() {
-    if (!state || !message.trim() || thinking) return;
-    const text = message;
+  // Build : texte et focus fournis par la Preview, sans passer par le champ.
+  async function sendMessage(asked?: string, askedFocus?: Focus) {
+    const text = asked ?? message;
+    if (!state || !text.trim() || thinking) return;
     // « push », « publie » : pas besoin de Clodo, on montre ce qui partira.
     if (
       /^\s*(push|pousse|publie|publish)\b/i.test(text) &&
@@ -575,7 +579,7 @@ export default function App() {
       await offerPublish(true);
       return;
     }
-    setMessage('');
+    if (asked === undefined) setMessage('');
     setThinking(true);
     clearError();
     // Les checklists restent dans l'atelier : seule la conversation part.
@@ -594,7 +598,11 @@ export default function App() {
         proposal: CodeProposal | null;
         tokenProposal: Proposal | null;
         page?: string | null;
-      }>('code', { message: text, history: previous, focus }, abort.signal);
+      }>(
+        'code',
+        { message: text, history: previous, focus: askedFocus ?? focus },
+        abort.signal,
+      );
       // Mode Construire : le chat a modifié le plan de cette page.
       if (reply.page)
         setChatPage((c) => ({ page: reply.page!, n: (c?.n ?? 0) + 1 }));
@@ -1190,7 +1198,12 @@ export default function App() {
               onError={setError}
               onFocus={setPreviewFocus}
               code={projectCode}
+              figma={figmaList}
               onAsk={askClodo}
+              onBuild={(text, buildFocus) => {
+                setClodoOpen(true);
+                void sendMessage(text, buildFocus);
+              }}
               onCodeProposal={setCodeProposal}
               chatChange={chatPage}
             />

@@ -123,6 +123,45 @@ const branchExists = (folder: string, branch: string) =>
     () => false,
   );
 
+// Pull Request ouverte par gh (GitHub CLI) s'il est installé et connecté ;
+// sinon la branche est poussée et la PR reste à ouvrir sur GitHub.
+const openPullRequest = (folder: string, branch: string) =>
+  new Promise<{ url?: string; error?: string }>((done) =>
+    execFile(
+      'gh',
+      ['pr', 'create', '--head', branch, '--fill'],
+      { cwd: folder, timeout: 60_000 },
+      (error, stdout, stderr) =>
+        done(
+          error
+            ? { error: (stderr || error.message).trim().split('\n').at(-1)?.slice(0, 200) }
+            : { url: stdout.trim().split('\n').find((l) => l.startsWith('https://')) },
+        ),
+    ),
+  );
+
+// Pull Request ouverte du projet (branche en cours, sinon la plus récente
+// des branches design/…), lue par gh pour la relier dans DS-Studio.
+export const projectPullRequest = (folder: string) =>
+  new Promise<{ number: number; url: string; title: string; state: string } | null>((done) =>
+    execFile(
+      'gh',
+      ['pr', 'list', '--state', 'open', '--limit', '20', '--json', 'number,url,title,state,headRefName'],
+      { cwd: folder, timeout: 20_000 },
+      async (error, stdout) => {
+        if (error) return done(null);
+        try {
+          const prs = JSON.parse(stdout) as { number: number; url: string; title: string; state: string; headRefName: string }[];
+          const branch = await run(folder, ['branch', '--show-current']).catch(() => '');
+          const pr = prs.find((p) => p.headRefName === branch) ?? prs.find((p) => p.headRefName.startsWith('design/'));
+          done(pr ? { number: pr.number, url: pr.url, title: pr.title, state: pr.state } : null);
+        } catch {
+          done(null);
+        }
+      },
+    ),
+  );
+
 export async function publish(folder: string, message: string) {
   const status = await gitStatus(folder);
   const risky = status.files.filter((f) => sensitive.test(f.path));
@@ -175,5 +214,6 @@ export async function publish(folder: string, message: string) {
     branch,
     commit: await run(folder, ['rev-parse', '--short', 'HEAD']),
     pushed: true,
+    pr: await openPullRequest(folder, branch),
   };
 }

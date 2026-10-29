@@ -18,19 +18,27 @@ import { ConnectionStore, inspectFolder, pickFolder } from './connection.js';
 import { DevServer } from './devserver.js';
 import { atomicWrite, readPrivate } from './files.js';
 import { readProjectTokens, writeProjectTokens } from './projectTokens.js';
-import { BATCH, PublishCounter, gitStatus, publish } from './gitops.js';
+import { BATCH, PublishCounter, gitStatus, projectPullRequest, publish } from './gitops.js';
 import { runTokensScript, type TokensScript } from './npm.js';
 import { codedFor } from '../shared/components.js';
 import { applyOps, planSchema } from '../shared/pagePlan.js';
+import {
+  compareComponents,
+  figmaComponentSchema,
+  type FigmaComponentProps,
+  type FigmaOp,
+  type Ledger,
+} from '../shared/componentSync.js';
 import { panelSelection } from '../shared/panel.js';
 import { readProps, type PropSpec } from '../shared/props.js';
 import { proposePage } from '../../connectors/agents/pageBuilder.js';
-import { bridgeEntry, bridgeFiles, bridgeHtml } from './bridge.js';
+import { bridgeEntry, bridgeFiles, bridgeHtml, bridgeMark } from './bridge.js';
 import {
   figmaComponents,
   figmaImage,
   figmaNode,
   figmaVariables,
+  figmaVariants,
   variablesToTokens,
 } from '../../connectors/figma/library.js';
 import { unvalidatedAdapter } from '../../connectors/agents/unvalidated.js';
@@ -128,6 +136,18 @@ export async function createStudioServer(options: {
   const claudeCli = new ClaudeAdapter();
   const ask: Ask = options.ask ?? ((...a) => claudeCli.ask(...a));
   const figma = options.figma ?? new FigmaReader(undefined);
+  // Variantes Figma lues une fois par composant (panneau et chat de la Preview).
+  const variantCache = new Map<string, ReturnType<typeof figmaVariants>>();
+  const variantsOf = async (id: string) => {
+    const fileUrl = await figmaUrl();
+    const key = `${fileUrl} ${id}`;
+    if (!variantCache.has(key)) {
+      const read = figmaVariants(figma, fileUrl, id);
+      read.catch(() => variantCache.delete(key));
+      variantCache.set(key, read);
+    }
+    return variantCache.get(key)!;
+  };
   const csrf = randomBytes(32).toString('hex');
   // Code d'appairage du plugin Figma : affiché dans DS-Studio, collé dans le
   // plugin, gardé sur ce poste ; on peut le renouveler pour couper l'accès.
@@ -149,6 +169,12 @@ export async function createStudioServer(options: {
     return sent.length === expected.length && timingSafeEqual(sent, expected);
   };
   let busy = false;
+  // Étapes de la demande IA en cours, lues par le chat pendant qu'il attend.
+  let progress: { at: number; text: string }[] = [];
+  const started = { at: 0 };
+  const step = (text: string) => {
+    progress = [...progress, { at: Math.round((Date.now() - started.at) / 1000), text: text.slice(0, 200) }].slice(-30);
+  };
   const active = new Set<AbortController>();
   // Arrêt en cours : le port est fermé mais une connexion keep-alive du
   // navigateur peut encore arriver ici. Sans adresse, le contrôle d'hôte
@@ -171,6 +197,24 @@ export async function createStudioServer(options: {
   // Dernière validation de chaque DS : code et interface du projet mis à jour ?
   const circuits = new WeakMap<Store, Circuit>();
   const syncFile = () => path.join(store.directory, 'figma-sync.json');
+  // Composants : ce que le plugin a vu, les variantes à créer dans Figma, le
+  // résultat de chacune et le registre de synchro, gardés avec le DS du projet.
+  type ComponentSync = {
+    snapshot?: { at: string; components: FigmaComponentProps[] };
+    queue: FigmaOp[];
+    results: { op: FigmaOp; ok: boolean; reason: string; at: string }[];
+    ledger: Ledger;
+  };
+  const componentFile = () => path.join(store.directory, 'component-sync.json');
+  const readComponentSync = async (): Promise<ComponentSync> => {
+    try {
+      return { queue: [], results: [], ledger: {}, ...JSON.parse(await readPrivate(componentFile(), 2_000_000)) };
+    } catch {
+      return { queue: [], results: [], ledger: {} };
+    }
+  };
+  const saveComponentSync = (data: ComponentSync) =>
+    atomicWrite(componentFile(), JSON.stringify(data) + '\n');
   const readSync = async () => {
     try {
       return JSON.parse(await readPrivate(syncFile(), 200_000));
@@ -272,7 +316,7 @@ export async function createStudioServer(options: {
       // (POST report). Aucune route du plugin n'écrit de token.
       const pluginRoute = req.url?.split('?')[0] ?? '';
       if (
-        ['/api/plugin/sync', '/api/plugin/import', '/api/plugin/report'].includes(
+        ['/api/plugin/sync', '/api/plugin/import', '/api/plugin/report', '/api/plugin/components'].includes(
           pluginRoute,
         ) &&
         (req.headers.host === `127.0.0.1:${port}` ||
@@ -302,9 +346,35 @@ export async function createStudioServer(options: {
             figmaFileKey: expected,
             revision: state.revision,
             tokens: state.tokens,
+            componentOps: (await readComponentSync()).queue,
           });
         }
         const body = await pluginBody(req);
+        // Variantes vues dans Figma, et résultat des créations demandées.
+        if (pluginRoute === '/api/plugin/components') {
+          const b = z
+            .object({
+              components: z.array(figmaComponentSchema).max(300),
+              results: z
+                .array(
+                  z.object({ id: z.string().max(60), ok: z.boolean(), reason: z.string().max(300) }).strict(),
+                )
+                .max(100),
+            })
+            .strict()
+            .parse(body);
+          const data = await readComponentSync();
+          const at = new Date().toISOString();
+          for (const r of b.results) {
+            const op = data.queue.find((o) => o.id === r.id);
+            if (!op) continue;
+            data.queue = data.queue.filter((o) => o.id !== r.id);
+            data.results = [{ op, ok: r.ok, reason: r.reason, at }, ...data.results].slice(0, 50);
+          }
+          data.snapshot = { at, components: b.components };
+          await saveComponentSync(data);
+          return send(200, { ok: true });
+        }
         if (pluginRoute === '/api/plugin/import') {
           const b = z
             .object({
@@ -461,6 +531,11 @@ export async function createStudioServer(options: {
                 url.searchParams.get('id') ?? '',
               ),
             );
+          if (url.pathname === '/api/figma/variants')
+            return send(
+              200,
+              await variantsOf(url.searchParams.get('id') ?? ''),
+            );
           if (url.pathname === '/api/figma/variables') {
             const read = await figmaVariables(figma, await figmaUrl());
             return send(200, { ...read, ...variablesToTokens(read.items) });
@@ -474,6 +549,50 @@ export async function createStudioServer(options: {
             res.writeHead(200, { 'Content-Type': 'image/png' });
             return res.end(png);
           }
+          // Espace Synchro : composants Figma ↔ code, écarts, file d'attente.
+          if (url.pathname === '/api/component-sync') {
+            const scope = await workspace();
+            const data = await readComponentSync();
+            const pairs = [];
+            if (scope.project && data.snapshot) {
+              const coded = await scope.code.components();
+              const map = await scope.code.componentMap();
+              for (const figmaC of data.snapshot.components) {
+                const c = codedFor(figmaC.name, coded, map);
+                if (!c || !figmaC.props.length) continue;
+                pairs.push({
+                  figma: figmaC,
+                  file: c.file,
+                  specs: readProps(await scope.code.source(c.file).catch(() => ''), c.name),
+                });
+              }
+            }
+            const summary = compareComponents(pairs, data.ledger);
+            if (JSON.stringify(summary.ledger) !== JSON.stringify(data.ledger))
+              await saveComponentSync({ ...data, ledger: summary.ledger });
+            const queued = new Set(data.queue.map((o) => `${o.component} ${o.property} ${o.value}`));
+            return send(200, {
+              pluginSeenAt: pluginSeenAt || null,
+              snapshotAt: data.snapshot?.at ?? null,
+              figmaComponents: data.snapshot?.components.length ?? 0,
+              matched: pairs.length,
+              items: summary.items.map((i) => ({ ...i, queued: queued.has(`${i.figmaId} ${i.property} ${i.value}`) })),
+              synced: summary.synced,
+              unsupported: summary.unsupported,
+              queue: data.queue,
+              results: data.results.slice(0, 10),
+              git: await (async () => {
+                const project = (await connection.status()).project;
+                return project ? gitStatus(project.folder).catch(() => null) : null;
+              })(),
+              pr: await (async () => {
+                const project = (await connection.status()).project;
+                return project ? projectPullRequest(project.folder) : null;
+              })(),
+            });
+          }
+          if (url.pathname === '/api/code/progress')
+            return send(200, { busy, steps: progress });
           if (url.pathname === '/api/clodo')
             return send(200, await dashboard.readClodo());
           if (url.pathname === '/api/preview')
@@ -568,8 +687,14 @@ export async function createStudioServer(options: {
                 .stat(path.join(project.folder, ...f.split('/')))
                 .then((s) => s.isFile())
                 .catch(() => false));
+            const installed = (await has(bridgeHtml)) && (await has(bridgeEntry));
             return send(200, {
-              installed: (await has(bridgeHtml)) && (await has(bridgeEntry)),
+              installed,
+              current:
+                installed &&
+                (
+                  await fs.readFile(path.join(project!.folder, ...bridgeEntry.split('/')), 'utf8')
+                ).includes(bridgeMark),
             });
           }
           // Liens d'alias du DS ouvert, pour les conseils avant validation.
@@ -763,6 +888,22 @@ export async function createStudioServer(options: {
         }
         // Code : Clodo propose, l'étudiante valide le diff, le serveur écrit.
         // Annuler la dernière modification du chat sur une page.
+        // Créer dans Figma une valeur de variante qui n'existe que dans le code.
+        if (url.pathname === '/api/component-sync/send') {
+          const b = z
+            .object({
+              component: z.string().max(200),
+              property: z.string().max(80),
+              value: z.string().max(80),
+            })
+            .strict()
+            .parse(body);
+          const data = await readComponentSync();
+          if (!data.queue.some((o) => o.component === b.component && o.property === b.property && o.value === b.value))
+            data.queue.push({ id: Math.random().toString(36).slice(2, 10), ...b });
+          await saveComponentSync(data);
+          return send(200, { queue: data.queue });
+        }
         if (url.pathname === '/api/page-plan/undo') {
           const b = z
             .object({ page: z.string().regex(/^[\w-]{1,60}$/) })
@@ -794,12 +935,14 @@ export async function createStudioServer(options: {
           if (!scope.project) throw new StudioError('Ouvrez d’abord un projet.', 409);
           const read = (f: string) => scope.code.source(f).catch(() => '');
           const files = bridgeFiles(await read('index.html'), await read('src/main.tsx'));
-          return send(
-            200,
-            await scope.code.propose(
-              files.map((f) => ({ file: f.file, search: '', replace: f.content })),
-            ),
-          );
+          // Relais déjà là mais ancien : remplacé en entier, toujours par diff.
+          const edits = [];
+          for (const f of files) {
+            const before = await read(f.file);
+            if (before === f.content) continue;
+            edits.push({ file: f.file, search: before, replace: f.content });
+          }
+          return send(200, await scope.code.propose(edits));
         }
         if (url.pathname === '/api/figma-import/dismiss') {
           figmaImport = undefined;
@@ -934,6 +1077,8 @@ export async function createStudioServer(options: {
           if (busy)
             throw new StudioError('Une demande IA est déjà en cours.', 429);
           busy = true;
+          progress = [];
+          started.at = Date.now();
           const controller = new AbortController();
           active.add(controller);
           const cancel = () => controller.abort();
@@ -942,11 +1087,15 @@ export async function createStudioServer(options: {
             const scope = await workspace();
             // Mode Construire : Clodo modifie le plan de la page, pas le code.
             if (b.focus?.source === 'build' && scope.project) {
+              step('Je lis tes composants : code et variantes Figma…');
               const page = z.string().regex(/^[\w-]{1,60}$/).parse(String(b.focus.value));
               const coded = (await scope.code.components()).filter((c) =>
                 c.file.startsWith('src/components/'),
               );
-              const catalog: Record<string, { file: string; specs: PropSpec[] }> = {};
+              const catalog: Record<
+                string,
+                { file?: string; figma?: string; specs: PropSpec[] }
+              > = {};
               for (const c of coded)
                 if (!catalog[c.name])
                   catalog[c.name] = {
@@ -957,27 +1106,54 @@ export async function createStudioServer(options: {
               const uncoded = panelSelection
                 .flatMap((g) => g.names)
                 .filter((n) => !codedFor(n, coded, map));
+              // Pas encore codés : ajoutés en maquette Figma avec leurs variantes.
+              const figmaList =
+                figma.hasToken && (await figmaUrl())
+                  ? await figmaComponents(figma, await figmaUrl()).catch(() => [])
+                  : [];
+              await Promise.all(
+                uncoded.map(async (name) => {
+                  const found = figmaList.find((c) => c.name === name);
+                  catalog[name] = {
+                    ...(found ? { figma: found.id } : {}),
+                    specs: found
+                      ? ((await variantsOf(found.id).catch(() => null))?.props ?? [])
+                      : [],
+                  };
+                }),
+              );
               const file = path.join(store.directory, 'pages', `${page}.json`);
               const plan = await readPrivate(file, 500_000)
                 .then((raw) => planSchema.parse(JSON.parse(raw)))
                 .catch(() => ({ instances: [] }));
+              step('Je lis la page et ses pages voisines…');
+              const preview = await dashboard.readPreview(store.directory);
+              step('Je prépare les changements de la page…');
               const reply = await proposePage(
                 ask,
                 {
                   request: b.message,
                   history: b.history,
                   plan,
+                  pages: preview.pages.map(({ id, name }) => ({ id, name })),
                   selected: b.focus.selector,
-                  components: Object.entries(catalog).map(([name, c]) => ({
-                    name,
-                    file: c.file,
-                    props: c.specs,
-                  })),
-                  uncoded,
+                  components: Object.entries(catalog)
+                    .filter(([, c]) => c.file)
+                    .map(([name, c]) => ({ name, file: c.file!, props: c.specs })),
+                  uncoded: Object.entries(catalog)
+                    .filter(([, c]) => !c.file)
+                    .map(([name, c]) => ({ name, props: c.specs })),
                 },
                 controller.signal,
               );
-              const done = applyOps(plan, reply.ops, catalog);
+              const done = applyOps(plan, reply.ops, catalog, preview.pages);
+              step(`J’applique ${reply.ops.length} opération(s) sur la page`);
+              // Pages créées par le chat : ajoutées à la Preview, vides.
+              if (done.pages.length)
+                await dashboard.savePreview(
+                  { ...preview, pages: [...preview.pages, ...done.pages] },
+                  store.directory,
+                );
               const changed = JSON.stringify(done.plan) !== JSON.stringify(plan);
               if (changed) {
                 await fs.mkdir(path.dirname(file), { recursive: true, mode: 0o700 });
@@ -989,13 +1165,35 @@ export async function createStudioServer(options: {
                 message: [reply.message, ...done.notes].join('\n'),
                 proposal: null,
                 tokenProposal: null,
-                page: changed ? page : null,
+                page: changed || done.pages.length ? page : null,
               });
+            }
+            // Build : le plan de la page part avec la demande, Clodo code la
+            // page et les composants encore en maquette, proposés en diff.
+            let request = b.message;
+            if (b.focus?.source === 'page-build' && scope.project) {
+              step('Build : je lis le plan de la page…');
+              const page = z.string().regex(/^[\w-]{1,60}$/).parse(String(b.focus.value));
+              const plan = await readPrivate(path.join(store.directory, 'pages', `${page}.json`), 500_000)
+                .then((raw) => planSchema.parse(JSON.parse(raw)))
+                .catch(() => ({ instances: [] }));
+              const { pages } = await dashboard.readPreview(store.directory);
+              const routeOf = (id: string) => pages.find((p) => p.id === id)?.path ?? `/${id}`;
+              request += `\n\nPlan de la page (ordre d'affichage) :\n${JSON.stringify(
+                plan.instances.map(({ component, file, figma, props, link }) => ({
+                  component,
+                  ...(file ? { file } : { figma_id: figma, a_coder: true }),
+                  props,
+                  ...(link ? { au_clic_aller_a: routeOf(link) } : {}),
+                })),
+              )}\nPages du proto (nom → route) : ${JSON.stringify(
+                pages.map((p) => ({ nom: p.name, route: p.path ?? `/${p.id}` })),
+              )}`;
             }
             const { changes, ...reply } = await proposeCode(
               ask,
               scope.code,
-              b.message,
+              request,
               b.history,
               controller.signal,
               b.focus,
@@ -1022,6 +1220,7 @@ export async function createStudioServer(options: {
                     node: async (id) => figmaNode(figma, await figmaUrl(), id),
                   }
                 : undefined,
+              step,
             );
             // Clodo a choisi des tokens : même diff et même validation qu'à la main.
             const tokenProposal = changes?.length

@@ -250,8 +250,35 @@ function figmaValue(type, value) {
   return type === 'color' ? fromHex(value) : value;
 }
 
+// Composants : nom d'une variante avec une valeur changée,
+// « style=filled, Size=small » + style=ghost → « style=ghost, Size=small ».
+function variantName(name, property, value) {
+  return name
+    .split(',')
+    .map((part) => {
+      const [k, ...rest] = part.split('=');
+      const key = k.trim();
+      return key === property && rest.length ? key + '=' + value : key + '=' + rest.join('=').trim();
+    })
+    .join(', ');
+}
+// Propriétés d'un composant, telles que DS-Studio les compare au code.
+// Figma suffixe les propriétés texte ou booléennes d'un id (« label#12:3 »).
+function componentProps(definitions) {
+  return Object.entries(definitions || {})
+    .slice(0, 40)
+    .map(([key, d]) => {
+      const p = { name: key.split('#')[0].slice(0, 80), type: d.type };
+      if (d.type === 'VARIANT') p.options = (d.variantOptions || []).slice(0, 60).map((o) => String(o).slice(0, 80));
+      if (typeof d.defaultValue === 'string' || typeof d.defaultValue === 'boolean')
+        p.default = typeof d.defaultValue === 'string' ? d.defaultValue.slice(0, 200) : d.defaultValue;
+      return p;
+    })
+    .filter((p) => ['VARIANT', 'BOOLEAN', 'TEXT', 'INSTANCE_SWAP'].includes(p.type));
+}
+
 if (typeof module !== 'undefined')
-  module.exports = { segment, tokenKey, keyed, collect, placeFor, plan, toHex, fromHex };
+  module.exports = { segment, tokenKey, keyed, collect, placeFor, plan, toHex, fromHex, variantName, componentProps };
 
 if (typeof figma !== 'undefined') {
   figma.showUI(__html__, { width: 400, height: 600, themeColors: true });
@@ -383,6 +410,65 @@ if (typeof figma !== 'undefined') {
     return [...found.values()];
   };
 
+  // Composants du fichier, chacun avec un identifiant DS-Studio stable, écrit
+  // une seule fois sur le composant : renommer ou déplacer ne le perd pas.
+  const stableId = (node) => {
+    const known = node.getSharedPluginData('ds_studio', 'id');
+    if (known) return known;
+    node.setSharedPluginData('ds_studio', 'id', node.id);
+    return node.id;
+  };
+  const readComponents = async () => {
+    await figma.loadAllPagesAsync();
+    const out = [];
+    for (const page of figma.root.children) {
+      for (const node of page.findAllWithCriteria({ types: ['COMPONENT_SET', 'COMPONENT'] })) {
+        if (node.type === 'COMPONENT' && node.parent && node.parent.type === 'COMPONENT_SET') continue;
+        let definitions = {};
+        try {
+          definitions = node.componentPropertyDefinitions;
+        } catch (e) {
+          // Composant en erreur dans Figma (variantes en double…) : signalé vide.
+        }
+        out.push({ node, data: { id: stableId(node), name: node.name.slice(0, 200), page: page.name.slice(0, 200), props: componentProps(definitions) } });
+        if (out.length >= 300) return out;
+      }
+    }
+    return out;
+  };
+  // Nouvelle valeur de variante demandée par DS-Studio : la variante par
+  // défaut est copiée dans le même ensemble, sous le nouveau nom ; ses
+  // calques, styles et variables liés suivent. Rien n'est jamais supprimé.
+  const applyComponentOps = async (ops, components) => {
+    const results = [];
+    for (const op of ops) {
+      const found = components.find((c) => c.data.id === op.component);
+      const set = found && found.node;
+      const prop = found && found.data.props.find((p) => p.name === op.property && p.type === 'VARIANT');
+      if (!set || set.type !== 'COMPONENT_SET' || !prop) {
+        results.push({ id: op.id, ok: false, reason: !set ? 'composant introuvable dans Figma' : 'propriété de variante introuvable' });
+        continue;
+      }
+      if ((prop.options || []).includes(op.value)) {
+        results.push({ id: op.id, ok: true, reason: 'déjà présente' });
+        continue;
+      }
+      const source = set.defaultVariant || set.children[0];
+      const copy = source.clone();
+      set.appendChild(copy);
+      copy.name = variantName(source.name, op.property, op.value);
+      copy.setSharedPluginData('ds_studio', 'origin', 'ds-studio');
+      if (set.layoutMode === 'NONE' || !set.layoutMode) {
+        const right = Math.max(...set.children.filter((c) => c !== copy).map((c) => c.x + c.width));
+        copy.x = right + 24;
+        copy.y = source.y;
+        set.resizeWithoutConstraints(Math.max(set.width, copy.x + copy.width + 24), set.height);
+      }
+      results.push({ id: op.id, ok: true, reason: 'variante « ' + copy.name + ' » créée' });
+    }
+    return results;
+  };
+
   figma.ui.onmessage = async (msg) => {
     try {
       if (msg.type === 'load-settings') {
@@ -437,6 +523,13 @@ if (typeof figma !== 'undefined') {
           warning,
           plan: p,
         });
+      }
+      if (msg.type === 'components') {
+        checkFile(msg.fileKey);
+        let components = await readComponents();
+        const results = msg.ops && msg.ops.length ? await applyComponentOps(msg.ops, components) : [];
+        if (results.some((r) => r.ok && r.reason !== 'déjà présente')) components = await readComponents();
+        return figma.ui.postMessage({ type: 'components', components: components.map((c) => c.data), results });
       }
       if (msg.type === 'apply') {
         const report = await applyChanges(

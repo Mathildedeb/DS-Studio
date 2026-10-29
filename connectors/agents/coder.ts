@@ -61,8 +61,31 @@ const editsSchema = z.object({
   message: z.string().max(8000),
   edits: z.array(codeEditSchema).max(maxEdits),
 });
-const json = (text: string) =>
-  JSON.parse(text.replace(/^\s*```(?:json)?\s*/, '').replace(/\s*```\s*$/, ''));
+// Réponse JSON de Claude Code, même entourée d'une phrase ou d'un bloc ```json.
+const json = (text: string) => {
+  const bare = text.replace(/^\s*```(?:json)?\s*/, '').replace(/\s*```\s*$/, '');
+  try {
+    return JSON.parse(bare);
+  } catch (e) {
+    const start = text.indexOf('{');
+    const end = text.lastIndexOf('}');
+    if (start < 0 || end <= start) throw e;
+    return JSON.parse(text.slice(start, end + 1));
+  }
+};
+// Pourquoi une réponse est refusée, en clair : JSON coupé, trop de
+// modifications, champ manquant…
+const unreadable = (e: unknown, raw: string) => {
+  if (e instanceof SyntaxError)
+    return raw.trim().endsWith('}')
+      ? 'Réponse Claude Code illisible (JSON invalide). Aucune modification.'
+      : `Réponse Claude Code coupée avant la fin (${raw.length} caractères) : demande trop longue pour une seule fois. Aucune modification.`;
+  const issue = (e as z.ZodError).issues?.[0];
+  const where = issue?.path.join('.') || 'réponse';
+  return issue?.code === 'too_big'
+    ? `Réponse Claude Code trop grande (${where}) : découpe la demande. Aucune modification.`
+    : `Réponse Claude Code incomplète (${where} : ${issue?.message ?? 'format inattendu'}). Aucune modification.`;
+};
 
 export async function proposeCode(
   ask: Ask,
@@ -75,12 +98,15 @@ export async function proposeCode(
   // Projet ouvert : son nom ; sinon Clodo travaille sur l'interface de DS-Studio.
   project?: string,
   figma?: FigmaSource,
+  // Étapes lisibles du travail en cours, montrées dans le chat.
+  step: (text: string) => void = () => undefined,
 ) {
   const where = project
     ? `Tu travailles dans le projet « ${project} » de l'étudiante (son dépôt Git) : les fichiers listés sont son code, et rien d'autre. Si la liste est vide ou ne contient pas ce qu'il faut, tu peux créer des fichiers.`
     : `Tu travailles sur l'interface de DS-Studio : les composants du DS sont dans app/client/DesignSystem.tsx et leurs styles dans app/client/styles.css.`;
   const brain = await clodoBrain();
   const catalogue = await code.catalogue();
+  step(`Je cherche les fichiers concernés parmi ${catalogue.length}…`);
   let selection: z.infer<typeof selectionSchema>;
   try {
     selection = selectionSchema.parse(
@@ -128,7 +154,9 @@ export async function proposeCode(
         selection.message ?? 'Je ne vois aucun fichier à modifier pour ça.',
       proposal: null,
     };
+  step(`Je lis ${files.length} fichier(s) : ${files.slice(0, 4).join(', ')}${files.length > 4 ? '…' : ''}`);
   const { files: contents, missing } = await code.contents(files);
+  if (missing.length) step(`À créer : ${missing.slice(0, 4).join(', ')}${missing.length > 4 ? '…' : ''}`);
   // Composants Figma demandés (et celui sélectionné à l'écran), lus par le serveur.
   const figmaIds = [
     ...new Set([
@@ -139,13 +167,16 @@ export async function proposeCode(
     ]),
   ].slice(0, maxFigma);
   const figmaNodes: Record<string, unknown> = {};
+  if (figma && figmaIds.length) step(`Je lis ${figmaIds.length} composant(s) dans Figma…`);
   for (const id of figma ? figmaIds : [])
     figmaNodes[id] = await figma!.node(id).catch(() => 'illisible');
+  step('J’écris le code… (le plus long)');
   let answer: z.infer<typeof editsSchema>;
+  let raw = '';
   try {
     answer = editsSchema.parse(
       json(
-        await ask(
+        (raw = await ask(
           brain + editPrompt(where, !!project),
           JSON.stringify({
             request,
@@ -159,14 +190,14 @@ export async function proposeCode(
           signal,
           // Écrire un écran complet prend plus longtemps qu'une réponse de chat.
           420_000,
-        ),
+        )),
       ),
     );
   } catch (e) {
-    if (e instanceof z.ZodError || e instanceof SyntaxError)
-      throw new Error('Réponse Claude Code illisible. Aucune modification.');
+    if (e instanceof z.ZodError || e instanceof SyntaxError) throw new Error(unreadable(e, raw));
     throw e;
   }
+  step(`Je prépare le diff : ${answer.edits.length} modification(s)`);
   return {
     message: answer.message,
     proposal: answer.edits.length ? await code.propose(answer.edits) : null,

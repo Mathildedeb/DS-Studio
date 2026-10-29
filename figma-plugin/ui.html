@@ -32,6 +32,7 @@
   <div class="row"><button id="collect">Récupérer depuis Figma</button><button id="sync" class="primary">Voir les changements</button></div>
   <label><input type="checkbox" id="auto"> Synchronisation automatique : appliquer tout de suite chaque token validé dans DS-Studio, tant que ce plugin est ouvert</label>
   <p id="auto-status"></p>
+  <p id="components-status"></p>
 
   <div id="out"></div>
 
@@ -59,6 +60,9 @@ const tick = async () => {
     // Revérifié à chaque passage, même sans nouvelle révision : une
     // correction faite à la main dans Figma remonte aussi dans DS-Studio.
     parent.postMessage({ pluginMessage: { type: 'plan', auto: true, revision: body.revision, tokens: body.tokens, fileKey: body.figmaFileKey } }, '*');
+    // Composants : leurs variantes partent vers DS-Studio, et les variantes
+    // demandées par DS-Studio sont créées dans ce fichier.
+    parent.postMessage({ pluginMessage: { type: 'components', ops: body.componentOps || [], fileKey: body.figmaFileKey } }, '*');
   } catch (e) {
     $('auto-status').innerHTML = `<span class="error">${esc(e.message === 'Failed to fetch' ? 'DS-Studio injoignable, nouvel essai dans 4 s…' : e.message)}</span>`;
   }
@@ -160,6 +164,19 @@ onmessage = (event) => {
       .catch((e) => {
         out.innerHTML = `<p class="error">${esc(e.message === 'Failed to fetch' ? 'DS-Studio injoignable : est-il lancé sur cet ordinateur ?' : e.message)}</p>`;
       });
+  }
+  if (msg.type === 'components') {
+    const { server, code } = settings();
+    fetch(server + '/api/plugin/components', {
+      method: 'POST',
+      headers: { 'X-DS-Plugin': code, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ components: msg.components, results: msg.results }),
+    }).catch(() => undefined);
+    const made = msg.results.filter((r) => r.ok && r.reason !== 'déjà présente');
+    const failed = msg.results.filter((r) => !r.ok);
+    if (made.length || failed.length)
+      $('components-status').innerHTML = `${made.length ? `<span class="ok">${esc(made.map((r) => r.reason).join(' · '))}</span>` : ''}${failed.length ? `<br><span class="error">Non créé : ${esc(failed.map((r) => r.reason).join(' · '))}</span>` : ''}`;
+    return;
   }
   if (msg.type === 'auto') {
     // Les composants touchés valent pour la révision qui les a modifiés : un

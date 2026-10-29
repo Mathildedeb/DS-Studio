@@ -3,15 +3,21 @@ import { z } from 'zod';
 // Plan d'une page de la Preview : la liste ordonnée des instances de
 // composants du DS, chacune avec ses propres valeurs de propriétés. La Preview
 // et le chat modifient ce même plan ; il ne touche jamais au code du projet
-// (le Build, étape séparée, génère les vraies pages).
+// (le Build, étape séparée, génère les vraies pages). Un composant du DS pas
+// encore codé entre dans la page comme maquette Figma : il sera codé au Build.
 const value = z.union([z.string().max(500), z.number().finite(), z.boolean()]);
 export const instanceSchema = z
   .object({
     id: z.string().regex(/^[a-z0-9-]{1,40}$/),
     // Nom du composant et fichier qui le code : l'instance reste liée au DS.
-    component: z.string().regex(/^[A-Za-z]\w{0,79}$/),
-    file: z.string().max(300).regex(/^src\/[\w./-]+\.(tsx|jsx)$/),
-    props: z.record(z.string().regex(/^\w{1,60}$/), value),
+    component: z.string().regex(/^[\p{L}\d][\p{L}\d .,%+/&-]{0,79}$/u),
+    file: z.string().max(300).regex(/^src\/[\w./-]+\.(tsx|jsx)$/).optional(),
+    // Pas encore codé : son composant Figma, rendu en maquette jusqu'au Build.
+    figma: z.string().max(200).regex(/^I?\d+[:-]\d+(;\d+[:-]\d+)*$/).optional(),
+    // Interaction : au clic, ouvre cette page de la Preview (codée au Build).
+    link: z.string().regex(/^[a-z0-9-]{1,40}$/).optional(),
+    // Propriétés de code, ou variantes Figma (« Size », « style »…) d'une maquette.
+    props: z.record(z.string().regex(/^[\p{L}\w .#-]{1,60}$/u), value),
   })
   .strict();
 export const planSchema = z
@@ -70,10 +76,19 @@ export const setProp = (
   }),
 });
 
+// Interaction d'une instance : la page ouverte au clic, ou aucune.
+export const setLink = (plan: PagePlan, id: string, page: string | undefined): PagePlan => ({
+  instances: plan.instances.map((i) => {
+    if (i.id !== id) return i;
+    const { link: _, ...rest } = i;
+    return page ? { ...rest, link: page } : rest;
+  }),
+});
+
 // Opérations du chat sur le plan : même modèle que les actions faites à la
-// main dans la Preview. Chaque composant doit être codé dans le projet et
-// chaque valeur respecter le type réel de sa propriété ; le reste est écarté
-// avec une explication, jamais inventé.
+// main dans la Preview. Chaque composant doit être dans le DS (codé, ou en
+// maquette Figma) et chaque valeur respecter le type réel de sa propriété ;
+// le reste est écarté avec une explication, jamais inventé.
 type Specs = {
   name: string;
   kind: 'enum' | 'boolean' | 'string' | 'number';
@@ -98,16 +113,44 @@ export const opSchema = z.discriminatedUnion('op', [
     .strict(),
   z.object({ op: z.literal('move'), id: z.string().max(40), to: z.number().int().min(0) }).strict(),
   z.object({ op: z.literal('duplicate'), id: z.string().max(40) }).strict(),
+  // Au clic sur l'instance, aller à une page (nom ou id) ; null retire le lien.
+  z
+    .object({ op: z.literal('link'), id: z.string().max(40), page: z.string().max(40).nullable() })
+    .strict(),
+  // Nouvelle page de la Preview, vide, à construire ensuite.
+  z.object({ op: z.literal('page'), name: z.string().trim().min(1).max(40) }).strict(),
   z.object({ op: z.literal('remove'), id: z.string().max(40) }).strict(),
 ]);
 export type PageOp = z.infer<typeof opSchema>;
 
+// Identifiant et route d'une nouvelle page : « Mon profil » → mon-profil-x1y2, /mon-profil.
+const slugOf = (name: string) =>
+  name
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-|-$/g, '')
+    .slice(0, 30) || 'page';
+export const newPage = (name: string) => ({
+  id: `${slugOf(name)}-${Math.random().toString(36).slice(2, 6)}`,
+  name: name.trim().slice(0, 40),
+  path: `/${slugOf(name)}`,
+});
+type Page = { id: string; name: string; path?: string };
+
 export function applyOps(
   plan: PagePlan,
   ops: PageOp[],
-  catalog: Record<string, { file: string; specs: Specs }>,
+  catalog: Record<string, { file?: string; figma?: string; specs: Specs }>,
+  pages: Page[] = [],
 ) {
   const notes: string[] = [];
+  const created: Page[] = [];
+  const findPage = (ref: string) => {
+    const all = [...pages, ...created];
+    const key = ref.trim().toLowerCase();
+    return all.find((p) => p.id === ref) ?? all.find((p) => p.name.toLowerCase() === key);
+  };
   const checked = (component: string, props: Record<string, unknown>) => {
     const specs = catalog[component]?.specs ?? [];
     const out: Record<string, string | number | boolean | null> = {};
@@ -121,11 +164,18 @@ export function applyOps(
           (spec.kind === 'string' && typeof v === 'string') ||
           (spec.kind === 'number' && typeof v === 'number'));
       if (ok) out[name] = v as string | number | boolean | null;
-      else notes.push(`${component} : « ${name} = ${String(v)} » n’existe pas dans son code, ignoré.`);
+      else notes.push(`${component} : « ${name} = ${String(v)} » n’existe pas dans le DS, ignoré.`);
     }
     return out;
   };
   for (const op of ops) {
+    if (op.op === 'page') {
+      const existing = findPage(op.name);
+      if (existing) notes.push(`La page « ${existing.name} » existe déjà.`);
+      else if (pages.length + created.length >= 40) notes.push('40 pages au maximum.');
+      else created.push(newPage(op.name));
+      continue;
+    }
     const target = 'id' in op ? plan.instances.find((i) => i.id === op.id) : undefined;
     if ('id' in op && !target) {
       notes.push(`Instance ${op.id} introuvable, ignorée.`);
@@ -134,7 +184,7 @@ export function applyOps(
     if (op.op === 'add') {
       const entry = catalog[op.component];
       if (!entry) {
-        notes.push(`${op.component} n’est pas codé dans le projet : à coder d’abord.`);
+        notes.push(`${op.component} n’est pas dans le Design System, ignoré.`);
         continue;
       }
       const props = Object.fromEntries(
@@ -143,13 +193,26 @@ export function applyOps(
       const at = op.before
         ? Math.max(0, plan.instances.findIndex((i) => i.id === op.before))
         : plan.instances.length;
-      plan = addInstance(plan, at, { component: op.component, file: entry.file, props }).plan;
+      plan = addInstance(plan, at, {
+        component: op.component,
+        ...(entry.file ? { file: entry.file } : {}),
+        ...(entry.figma ? { figma: entry.figma } : {}),
+        props,
+      }).plan;
     } else if (op.op === 'set') {
       for (const [name, v] of Object.entries(checked(target!.component, op.props)))
         plan = setProp(plan, target!.id, name, v === null ? undefined : v);
     } else if (op.op === 'move') plan = moveInstance(plan, target!.id, op.to);
     else if (op.op === 'duplicate') plan = duplicateInstance(plan, target!.id).plan;
+    else if (op.op === 'link') {
+      const to = op.page === null ? undefined : findPage(op.page);
+      if (op.page !== null && !to) {
+        notes.push(`Page « ${op.page} » introuvable : lien ignoré.`);
+        continue;
+      }
+      plan = setLink(plan, target!.id, to?.id);
+    }
     else plan = removeInstance(plan, target!.id);
   }
-  return { plan, notes };
+  return { plan, notes, pages: created };
 }

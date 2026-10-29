@@ -112,9 +112,54 @@ test('chat sur la page : opérations validées contre les vrais composants', asy
   );
   // Rien d'inventé : chaque écart est expliqué.
   assert.deepEqual(notes, [
-    'Button : « couleur = rouge » n’existe pas dans son code, ignoré.',
-    'Header n’est pas codé dans le projet : à coder d’abord.',
-    'Avatar : « userType = zombie » n’existe pas dans son code, ignoré.',
+    'Button : « couleur = rouge » n’existe pas dans le DS, ignoré.',
+    'Header n’est pas dans le Design System, ignoré.',
+    'Avatar : « userType = zombie » n’existe pas dans le DS, ignoré.',
     'Instance inconnu introuvable, ignorée.',
   ]);
+});
+
+test('composant pas encore codé : ajouté en maquette Figma, avec ses variantes', async () => {
+  const { applyOps } = await import('../app/shared/pagePlan.js');
+  const catalog = {
+    'card.donut': {
+      figma: '12:34',
+      specs: [{ name: 'Size', kind: 'enum' as const, options: ['small', 'large'] }],
+    },
+  };
+  const { plan, notes } = applyOps(
+    { instances: [] },
+    [{ op: 'add', component: 'card.donut', props: { Size: 'large', couleur: 'rouge' } }],
+    catalog,
+  );
+  assert.deepEqual(
+    plan.instances.map(({ component, file, figma, props }) => ({ component, file, figma, props })),
+    [{ component: 'card.donut', file: undefined, figma: '12:34', props: { Size: 'large' } }],
+  );
+  assert.equal(notes.length, 1);
+  assert.doesNotThrow(() => planSchema.parse(plan));
+});
+
+test('chat : crée une page et lie un bouton vers elle, dans la même réponse', async () => {
+  const { applyOps } = await import('../app/shared/pagePlan.js');
+  const start = { instances: [{ id: 'b1', component: 'button', figma: '1:2', props: {} }] };
+  const { plan, pages, notes } = applyOps(
+    start,
+    [
+      { op: 'page', name: 'Mon profil' },
+      { op: 'link', id: 'b1', page: 'mon profil' },
+      { op: 'link', id: 'b1', page: 'Inconnue' },
+      { op: 'page', name: 'Découvrir' },
+    ],
+    { button: { figma: '1:2', specs: [] } },
+    [{ id: 'cards', name: 'Découvrir' }],
+  );
+  assert.equal(pages.length, 1);
+  assert.equal(pages[0].path, '/mon-profil');
+  assert.equal(plan.instances[0].link, pages[0].id);
+  assert.deepEqual(notes, [
+    'Page « Inconnue » introuvable : lien ignoré.',
+    'La page « Découvrir » existe déjà.',
+  ]);
+  assert.doesNotThrow(() => planSchema.parse(plan));
 });
