@@ -279,6 +279,18 @@ export async function figmaVariants(
             ) as Record<string, string>,
           }))
       : [{ id: str(doc.id, 200), values: {} }];
+  // Sans définitions dans la réponse, les noms des variantes les donnent
+  // (« style=filled, Size=small ») : valeurs vues, défaut = première variante.
+  if (!props.length && variants.length > 1)
+    for (const name of Object.keys(variants[0].values).slice(0, 20))
+      props.push({
+        name,
+        kind: 'enum',
+        options: [...new Set(variants.map((v) => v.values[name]).filter(Boolean))].slice(0, 40),
+        required: false,
+        default: variants[0].values[name],
+        doc: 'Variante Figma',
+      });
   return { props, variants };
 }
 

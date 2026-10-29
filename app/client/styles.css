@@ -2914,20 +2914,34 @@ h2[id] {
   font-size: 15px;
   font-weight: 700;
 }
-.build-preview {
-  display: grid;
-  place-items: center;
-  min-height: 120px;
-  padding: 12px;
+.build-flyout {
+  position: absolute;
+  top: 0;
+  z-index: 4;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 300px;
+  max-width: calc(100% - 16px);
+  height: max(480px, calc(100dvh - 300px));
+  overflow: auto;
+  padding: 10px;
+  border: 1px solid var(--studio-border-strong);
+  border-radius: 10px;
+  background: var(--studio-surface-alt);
+  box-shadow: 0 12px 32px #1b2e4a2e;
+  font-size: 13px;
+}
+.build[data-narrow] .build-flyout {
+  z-index: 6;
+}
+.build-sample {
+  flex: none;
+  width: 100%;
+  height: 200px;
   border: 1px solid var(--studio-border);
   border-radius: 8px;
-  background: var(--studio-well);
-  color: var(--studio-muted);
-}
-.build-preview img {
-  max-width: 100%;
-  max-height: 220px;
-  object-fit: contain;
+  background: #fff;
 }
 .build-specs {
   display: grid;

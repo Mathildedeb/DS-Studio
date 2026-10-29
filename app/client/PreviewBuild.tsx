@@ -30,6 +30,23 @@ const variantId = (v: Variants, props: Record<string, Value>) =>
     v.props.every((p) => x.values[p.name] === String(props[p.name] ?? p.default)),
   )?.id ?? v.variants[0]?.id;
 
+// Propriétés d'une maquette : les définitions Figma, sinon les noms des
+// variantes (« style=filled, Size=small ») ; défaut = première variante.
+const withProps = (v: Variants): Variants =>
+  v.props.length || v.variants.length < 2
+    ? v
+    : {
+        ...v,
+        props: Object.keys(v.variants[0].values).map((name) => ({
+          name,
+          kind: 'enum' as const,
+          options: [...new Set(v.variants.map((x) => x.values[name]).filter(Boolean))],
+          required: false,
+          default: v.variants[0].values[name],
+          doc: 'Variante Figma',
+        })),
+      };
+
 // Préférences d'affichage de l'éditeur, propres à ce poste.
 const stored = <T,>(key: string, fallback: T): T => {
   try {
@@ -102,6 +119,9 @@ export default function PreviewBuild({
   const [right, setRight] = useState(() => !matchMedia(narrowQuery).matches && stored('right', true));
   const [widths, setWidths] = useState<[number, number]>(() => stored('widths', [240, 260]));
   const frame = useRef<HTMLIFrameElement>(null);
+  // Aperçu de la fiche : le même relais que la page, avec une seule instance.
+  const sample = useRef<HTMLIFrameElement>(null);
+  const [draft, setDraft] = useState<Record<string, Value>>({});
   const search = useRef<HTMLInputElement>(null);
   const origin = new URL(devUrl).origin;
   const device = isPhone(width)
@@ -221,12 +241,12 @@ export default function PreviewBuild({
     for (const id of ids)
       if (!variants[id])
         request<Variants>(`figma/variants?id=${encodeURIComponent(id)}`)
-          .then((v) => setVariants((all) => ({ ...all, [id]: v })))
+          .then((v) => setVariants((all) => ({ ...all, [id]: withProps(v) })))
           .catch(() =>
             setVariants((all) => ({ ...all, [id]: { props: [], variants: [{ id, values: {} }] } })),
           );
   }, [plan, inspected]);
-  const imageOf = (i: PagePlan['instances'][number]) =>
+  const imageOf = (i: Entry & { props: Record<string, Value> }) =>
     i.figma && !i.file && variants[i.figma] ? variantId(variants[i.figma], i.props) : undefined;
   const fetchImage = (id: string) => {
     if (id in images) return;
@@ -249,8 +269,9 @@ export default function PreviewBuild({
       const id = imageOf(i);
       if (id) fetchImage(id);
     }
-    if (item?.figma) fetchImage(item.figma.id);
-  }, [plan, variants, inspected]);
+    const shown = item && imageOf({ ...item.entry, props: draft });
+    if (shown) fetchImage(shown);
+  }, [plan, variants, inspected, draft]);
 
   // Plan, sélection, safe areas et mode envoyés au relais à chaque changement.
   const send = () =>
@@ -268,6 +289,23 @@ export default function PreviewBuild({
       origin,
     );
   useEffect(send, [plan, selected, images, variants, testing, device?.id]);
+  // La fiche montre le composant rendu comme dans la page, une variante à la fois.
+  const sendSample = () => {
+    if (!item) return;
+    const one = { id: 'fiche', ...item.entry, props: draft };
+    const id = imageOf(one);
+    sample.current?.contentWindow?.postMessage(
+      {
+        type: 'ds-studio:page',
+        instances: [id && images[id] ? { ...one, image: images[id] } : one],
+        insets: { top: 0, bottom: 0 },
+        interactive: true,
+      },
+      origin,
+    );
+  };
+  useEffect(sendSample, [inspected, draft, images, variants]);
+  useEffect(() => setDraft({}), [inspected]);
 
   const current = plan.instances.find((i) => i.id === selected);
   useEffect(() => {
@@ -293,8 +331,8 @@ export default function PreviewBuild({
   const specsOf = (e: Entry) =>
     e.file ? specs[e.file] : e.figma ? variants[e.figma]?.props : [];
 
-  const add = (e: Entry, at = plan.instances.length) => {
-    const { plan: next, id } = addInstance(plan, at, { ...e, props: {} });
+  const add = (e: Entry, at = plan.instances.length, props: Record<string, Value> = {}) => {
+    const { plan: next, id } = addInstance(plan, at, { ...e, props });
     save(next, id);
     setInspected(undefined);
   };
@@ -320,7 +358,10 @@ export default function PreviewBuild({
     else if (key === 'delete' || key === 'backspace') remove();
     else if (k.alt && key === 'arrowup') move(-1);
     else if (k.alt && key === 'arrowdown') move(1);
-    else if (key === 'escape') setSelected(undefined);
+    else if (key === 'escape') {
+      setSelected(undefined);
+      setInspected(undefined);
+    }
     else if (key === '/') search.current?.focus();
     else return false;
     return true;
@@ -342,6 +383,10 @@ export default function PreviewBuild({
     const onMessage = (event: MessageEvent) => {
       if (event.origin !== origin) return;
       const d = event.data;
+      if (event.source === sample.current?.contentWindow) {
+        if (d?.type === 'ds-studio:ready') sendSample();
+        return;
+      }
       if (d?.type === 'ds-studio:ready') send();
       if (d?.type === 'ds-studio:select') {
         setSelected(d.id);
@@ -572,9 +617,8 @@ export default function PreviewBuild({
                               setDropIndex(undefined);
                             }}
                             onClick={() => {
-                              setInspected(x.name);
+                              setInspected(inspected === x.name ? undefined : x.name);
                               setSelected(undefined);
-                              setRight(true);
                             }}
                             title="Voir la fiche · glisser dans la page"
                           >
@@ -644,6 +688,52 @@ export default function PreviewBuild({
           />
         )}
 
+        {left && item && (
+          <aside
+            className="build-flyout"
+            style={{ left: narrow ? 0 : widths[0] + 4 }}
+            aria-label={`Fiche de ${item.name}`}
+          >
+            <div className="build-side-head">
+              <h3>{item.name}</h3>
+              <button type="button" className="build-close" onClick={() => setInspected(undefined)} aria-label="Fermer la fiche" title="Fermer (Échap)">
+                ×
+              </button>
+            </div>
+            <iframe
+              ref={sample}
+              className="build-sample"
+              title={`Aperçu de ${item.name}`}
+              src={`${devUrl}/ds-studio.html`}
+              onLoad={sendSample}
+            />
+            <p className="build-file">
+              {item.level} · {item.coded ? `codé · ${item.entry.file}` : 'pas encore codé : rendu Figma, codé au Build'}
+            </p>
+            {item.figma?.description && <p>{item.figma.description}</p>}
+            {(detailSpecs ?? []).map((s) => (
+              <PropControl
+                key={s.name}
+                spec={s}
+                value={draft[s.name]}
+                onChange={(v) =>
+                  setDraft((d) => {
+                    const next = { ...d };
+                    if (v === undefined) delete next[s.name];
+                    else next[s.name] = v;
+                    return next;
+                  })
+                }
+              />
+            ))}
+            {detailSpecs?.length === 0 && (
+              <p className="build-empty">Aucune propriété modifiable connue.</p>
+            )}
+            <button type="button" className="studio-primary" onClick={() => add(item.entry, plan.instances.length, draft)}>
+              Ajouter à la page
+            </button>
+          </aside>
+        )}
         <div className="build-stage">
           <DeviceFrame
             width={screen.width}
@@ -698,7 +788,7 @@ export default function PreviewBuild({
         {right && (
           <aside id="build-props" className="build-side build-right" aria-label="Propriétés">
             <div className="build-side-head">
-              <h3>{current ? 'Propriétés' : item ? 'Fiche du composant' : 'Propriétés'}</h3>
+              <h3>Propriétés</h3>
               <button type="button" className="build-close" onClick={() => setRight(false)} aria-label="Réduire les propriétés" title="Réduire">
                 ›
               </button>
@@ -733,45 +823,9 @@ export default function PreviewBuild({
                   <p className="build-empty">Aucune propriété modifiable pour ce composant.</p>
                 )}
               </>
-            ) : item ? (
-              <>
-                <div className="build-preview">
-                  {item.figma && images[item.figma.id] ? (
-                    <img src={images[item.figma.id]} alt={`Rendu Figma de ${item.name}`} />
-                  ) : (
-                    <span>{item.figma ? 'Rendu Figma…' : 'Pas de rendu Figma'}</span>
-                  )}
-                </div>
-                <p className="build-title">{item.name}</p>
-                <p className="build-file">
-                  {item.level} · {item.coded ? `codé · ${item.entry.file}` : 'maquette Figma, codée au Build'}
-                </p>
-                {item.figma?.description && <p>{item.figma.description}</p>}
-                {item.figma && item.figma.variants > 1 && (
-                  <p className="build-file">{item.figma.variants} variantes dans Figma</p>
-                )}
-                {detailSpecs?.length ? (
-                  <dl className="build-specs">
-                    {detailSpecs.map((s) => (
-                      <div key={s.name}>
-                        <dt>{s.name}</dt>
-                        <dd>
-                          {s.options?.join(' · ') ?? s.kind}
-                          {s.default !== undefined && ` (défaut ${String(s.default)})`}
-                        </dd>
-                      </div>
-                    ))}
-                  </dl>
-                ) : (
-                  <p className="build-empty">Aucune propriété modifiable connue.</p>
-                )}
-                <button type="button" className="studio-primary" onClick={() => add(item.entry)}>
-                  Ajouter à la page
-                </button>
-              </>
             ) : (
               <p className="build-empty">
-                Sélectionne un composant dans la page ou les calques, ou ouvre une fiche dans la bibliothèque.
+                Sélectionne un composant dans la page ou les calques.
                 <br />
                 <kbd>⌘Z</kbd> annuler · <kbd>⌘D</kbd> dupliquer · <kbd>⌫</kbd> supprimer · <kbd>⌥↑↓</kbd> déplacer · <kbd>/</kbd> rechercher
               </p>
