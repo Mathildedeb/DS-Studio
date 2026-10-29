@@ -1,3 +1,4 @@
+import type { FigmaComponent } from '../../connectors/figma/library.js';
 import { useEffect, useState } from 'react';
 import { request } from './api.js';
 import { defaultPreview, type PreviewConfig } from '../shared/dashboard.js';
@@ -7,6 +8,7 @@ import type { DevStatus } from '../server/devserver.js';
 import type { CodeProposal } from '../server/code.js';
 import type { CodeComponent } from '../shared/components.js';
 import PreviewBuild from './PreviewBuild.js';
+import DeviceFrame, { closestIPhone, isPhone } from './DeviceFrame.js';
 
 // Page Preview : un format (largeur × hauteur réelles) et une page du proto.
 // Formats et pages se créent ici et restent enregistrés sur ce poste. Avec un
@@ -36,7 +38,9 @@ export default function PreviewPage({
   onError,
   onFocus,
   code,
+  figma,
   onAsk,
+  onBuild,
   onCodeProposal,
   chatChange,
 }: {
@@ -45,7 +49,9 @@ export default function PreviewPage({
   onFocus: (focus: Focus) => void;
   // Mode « Construire » : composants codés du projet, chat et diff de code.
   code?: { components: CodeComponent[]; map: Record<string, string> };
+  figma?: FigmaComponent[];
   onAsk: (message: string) => void;
+  onBuild: (message: string, focus: Focus) => void;
   onCodeProposal: (p: CodeProposal) => void;
   chatChange?: { page: string; n: number };
 }) {
@@ -377,7 +383,11 @@ export default function PreviewPage({
           )}
         </div>
       )}
-      <div className="viewport-scroll">
+      <div
+        className={
+          project && dev.state === 'running' && dev.url ? 'viewport-device' : 'viewport-scroll'
+        }
+      >
         {!project ? (
           <iframe
             title="Aperçu responsive"
@@ -392,19 +402,26 @@ export default function PreviewPage({
             width={f.width}
             height={f.height}
             code={code}
-            onAsk={onAsk}
+            figma={figma}
+            onBuild={onBuild}
             onCodeProposal={onCodeProposal}
             onError={onError}
             onFocus={onFocus}
             chatChange={chatChange}
           />
         ) : dev.state === 'running' && dev.url ? (
-          <iframe
-            title="Aperçu responsive"
-            src={dev.url + path}
-            width={f.width}
-            height={f.height}
-          />
+          <DeviceFrame
+            width={isPhone(f.width) ? closestIPhone(f.width, f.height).width : f.width}
+            height={isPhone(f.width) ? closestIPhone(f.width, f.height).height : f.height}
+            device={isPhone(f.width) ? closestIPhone(f.width, f.height) : undefined}
+          >
+            <iframe
+              title="Aperçu responsive"
+              src={dev.url + path}
+              width={isPhone(f.width) ? closestIPhone(f.width, f.height).width : f.width}
+              height={isPhone(f.width) ? closestIPhone(f.width, f.height).height : f.height}
+            />
+          </DeviceFrame>
         ) : (
           <p className="project-idle">
             {dev.state === 'starting'
@@ -413,10 +430,11 @@ export default function PreviewPage({
           </p>
         )}
       </div>
-      <div className="panel-foot">
-        {f.name} · {f.width} × {f.height} px CSS
-        {project && ` · ${path}`} · aucun zoom appliqué · défilez si nécessaire
-      </div>
+      {!(project && dev.state === 'running') && (
+        <div className="panel-foot">
+          {f.name} · {f.width} × {f.height} px CSS · aucun zoom appliqué · défilez si nécessaire
+        </div>
+      )}
     </section>
   );
 }

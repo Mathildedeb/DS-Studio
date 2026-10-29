@@ -235,6 +235,53 @@ export async function figmaNode(
   return simplify(doc);
 }
 
+// Variantes d'un composant Figma pas encore codé : ses propriétés de variante
+// (valeurs autorisées, défaut) et l'identifiant de chaque combinaison, pour
+// que la maquette de la Preview change de rendu comme le vrai composant.
+export async function figmaVariants(
+  reader: FigmaReader,
+  fileUrl: string | undefined,
+  nodeId: string,
+) {
+  const id = figmaNodeId(nodeId);
+  if (!id) throw new StudioError('Identifiant Figma invalide.');
+  const body = obj(
+    await reader.api(
+      `/v1/files/${keyOf(fileUrl)}/nodes?ids=${encodeURIComponent(id)}&depth=1`,
+    ),
+  );
+  const doc = obj(obj(obj(body.nodes)[id]).document);
+  if (!doc.id) throw new StudioError('Figma : élément introuvable.', 404);
+  const props = Object.entries(obj(doc.componentPropertyDefinitions))
+    .map(([name, raw]): Record<string, unknown> & { name: string } => ({ ...obj(raw), name: str(name, 60) }))
+    .filter((p) => p.type === 'VARIANT')
+    .slice(0, 20)
+    .map((p) => ({
+      name: p.name,
+      kind: 'enum' as const,
+      options: arr(p.variantOptions).map((o) => str(o, 60)).slice(0, 40),
+      required: false,
+      default: str(p.defaultValue, 60),
+      doc: 'Variante Figma',
+    }));
+  const variants =
+    doc.type === 'COMPONENT_SET'
+      ? arr(doc.children)
+          .map(obj)
+          .slice(0, 200)
+          .map((v) => ({
+            id: str(v.id, 200),
+            values: Object.fromEntries(
+              str(v.name, 300)
+                .split(',')
+                .map((part) => part.split('=').map((x) => x.trim()))
+                .filter((kv) => kv.length === 2),
+            ) as Record<string, string>,
+          }))
+      : [{ id: str(doc.id, 200), values: {} }];
+  return { props, variants };
+}
+
 // Rendu PNG d'un nœud, relayé par le serveur : la page n'appelle jamais Figma.
 export async function figmaImage(
   reader: FigmaReader,

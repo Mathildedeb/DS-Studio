@@ -25,12 +25,13 @@ import { applyOps, planSchema } from '../shared/pagePlan.js';
 import { panelSelection } from '../shared/panel.js';
 import { readProps, type PropSpec } from '../shared/props.js';
 import { proposePage } from '../../connectors/agents/pageBuilder.js';
-import { bridgeEntry, bridgeFiles, bridgeHtml } from './bridge.js';
+import { bridgeEntry, bridgeFiles, bridgeHtml, bridgeMark } from './bridge.js';
 import {
   figmaComponents,
   figmaImage,
   figmaNode,
   figmaVariables,
+  figmaVariants,
   variablesToTokens,
 } from '../../connectors/figma/library.js';
 import { unvalidatedAdapter } from '../../connectors/agents/unvalidated.js';
@@ -128,6 +129,18 @@ export async function createStudioServer(options: {
   const claudeCli = new ClaudeAdapter();
   const ask: Ask = options.ask ?? ((...a) => claudeCli.ask(...a));
   const figma = options.figma ?? new FigmaReader(undefined);
+  // Variantes Figma lues une fois par composant (panneau et chat de la Preview).
+  const variantCache = new Map<string, ReturnType<typeof figmaVariants>>();
+  const variantsOf = async (id: string) => {
+    const fileUrl = await figmaUrl();
+    const key = `${fileUrl} ${id}`;
+    if (!variantCache.has(key)) {
+      const read = figmaVariants(figma, fileUrl, id);
+      read.catch(() => variantCache.delete(key));
+      variantCache.set(key, read);
+    }
+    return variantCache.get(key)!;
+  };
   const csrf = randomBytes(32).toString('hex');
   // Code d'appairage du plugin Figma : affiché dans DS-Studio, collé dans le
   // plugin, gardé sur ce poste ; on peut le renouveler pour couper l'accès.
@@ -461,6 +474,11 @@ export async function createStudioServer(options: {
                 url.searchParams.get('id') ?? '',
               ),
             );
+          if (url.pathname === '/api/figma/variants')
+            return send(
+              200,
+              await variantsOf(url.searchParams.get('id') ?? ''),
+            );
           if (url.pathname === '/api/figma/variables') {
             const read = await figmaVariables(figma, await figmaUrl());
             return send(200, { ...read, ...variablesToTokens(read.items) });
@@ -568,8 +586,14 @@ export async function createStudioServer(options: {
                 .stat(path.join(project.folder, ...f.split('/')))
                 .then((s) => s.isFile())
                 .catch(() => false));
+            const installed = (await has(bridgeHtml)) && (await has(bridgeEntry));
             return send(200, {
-              installed: (await has(bridgeHtml)) && (await has(bridgeEntry)),
+              installed,
+              current:
+                installed &&
+                (
+                  await fs.readFile(path.join(project!.folder, ...bridgeEntry.split('/')), 'utf8')
+                ).includes(bridgeMark),
             });
           }
           // Liens d'alias du DS ouvert, pour les conseils avant validation.
@@ -794,12 +818,14 @@ export async function createStudioServer(options: {
           if (!scope.project) throw new StudioError('Ouvrez d’abord un projet.', 409);
           const read = (f: string) => scope.code.source(f).catch(() => '');
           const files = bridgeFiles(await read('index.html'), await read('src/main.tsx'));
-          return send(
-            200,
-            await scope.code.propose(
-              files.map((f) => ({ file: f.file, search: '', replace: f.content })),
-            ),
-          );
+          // Relais déjà là mais ancien : remplacé en entier, toujours par diff.
+          const edits = [];
+          for (const f of files) {
+            const before = await read(f.file);
+            if (before === f.content) continue;
+            edits.push({ file: f.file, search: before, replace: f.content });
+          }
+          return send(200, await scope.code.propose(edits));
         }
         if (url.pathname === '/api/figma-import/dismiss') {
           figmaImport = undefined;
@@ -946,7 +972,10 @@ export async function createStudioServer(options: {
               const coded = (await scope.code.components()).filter((c) =>
                 c.file.startsWith('src/components/'),
               );
-              const catalog: Record<string, { file: string; specs: PropSpec[] }> = {};
+              const catalog: Record<
+                string,
+                { file?: string; figma?: string; specs: PropSpec[] }
+              > = {};
               for (const c of coded)
                 if (!catalog[c.name])
                   catalog[c.name] = {
@@ -957,6 +986,20 @@ export async function createStudioServer(options: {
               const uncoded = panelSelection
                 .flatMap((g) => g.names)
                 .filter((n) => !codedFor(n, coded, map));
+              // Pas encore codés : ajoutés en maquette Figma avec leurs variantes.
+              const figmaList =
+                figma.hasToken && (await figmaUrl())
+                  ? await figmaComponents(figma, await figmaUrl()).catch(() => [])
+                  : [];
+              for (const name of uncoded) {
+                const found = figmaList.find((c) => c.name === name);
+                catalog[name] = {
+                  ...(found ? { figma: found.id } : {}),
+                  specs: found
+                    ? ((await variantsOf(found.id).catch(() => null))?.props ?? [])
+                    : [],
+                };
+              }
               const file = path.join(store.directory, 'pages', `${page}.json`);
               const plan = await readPrivate(file, 500_000)
                 .then((raw) => planSchema.parse(JSON.parse(raw)))
@@ -968,12 +1011,12 @@ export async function createStudioServer(options: {
                   history: b.history,
                   plan,
                   selected: b.focus.selector,
-                  components: Object.entries(catalog).map(([name, c]) => ({
-                    name,
-                    file: c.file,
-                    props: c.specs,
-                  })),
-                  uncoded,
+                  components: Object.entries(catalog)
+                    .filter(([, c]) => c.file)
+                    .map(([name, c]) => ({ name, file: c.file!, props: c.specs })),
+                  uncoded: Object.entries(catalog)
+                    .filter(([, c]) => !c.file)
+                    .map(([name, c]) => ({ name, props: c.specs })),
                 },
                 controller.signal,
               );
@@ -992,10 +1035,26 @@ export async function createStudioServer(options: {
                 page: changed ? page : null,
               });
             }
+            // Build : le plan de la page part avec la demande, Clodo code la
+            // page et les composants encore en maquette, proposés en diff.
+            let request = b.message;
+            if (b.focus?.source === 'page-build' && scope.project) {
+              const page = z.string().regex(/^[\w-]{1,60}$/).parse(String(b.focus.value));
+              const plan = await readPrivate(path.join(store.directory, 'pages', `${page}.json`), 500_000)
+                .then((raw) => planSchema.parse(JSON.parse(raw)))
+                .catch(() => ({ instances: [] }));
+              request += `\n\nPlan de la page (ordre d'affichage) :\n${JSON.stringify(
+                plan.instances.map(({ component, file, figma, props }) => ({
+                  component,
+                  ...(file ? { file } : { figma_id: figma, a_coder: true }),
+                  props,
+                })),
+              )}`;
+            }
             const { changes, ...reply } = await proposeCode(
               ask,
               scope.code,
-              b.message,
+              request,
               b.history,
               controller.signal,
               b.focus,
