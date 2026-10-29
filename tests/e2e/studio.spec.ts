@@ -6,7 +6,7 @@ test('boucle centrale réelle : diff, validation, propagation, recharge, annulat
 }) => {
   await page.goto('/#design-system');
   await expect(
-    page.getByRole('heading', { name: 'Design System', level: 1 }),
+    page.getByRole('heading', { name: 'Bibliothèque', level: 1 }),
   ).toBeVisible();
   await expect(page.getByText(/^Figma non connecté/).first()).toBeVisible();
   // Le DS est vide de composants : la propagation se lit sur les variables
@@ -40,9 +40,9 @@ test('boucle centrale réelle : diff, validation, propagation, recharge, annulat
   await page.getByRole('button', { name: 'Proposer', exact: true }).click();
   await dialog.getByRole('button', { name: 'Valider et enregistrer' }).click();
   await expect(row('color.brand')).toContainText('#8A3B20');
-  await open('Preview');
+  await open('Pages');
   await expect.poll(() => cssVar('--color-brand')).toBe('#8A3B20');
-  await open('Design System');
+  await open('Bibliothèque');
   await page.reload();
   await expect(row('color.brand')).toContainText('#8A3B20');
   await page
@@ -58,7 +58,7 @@ test('boucle centrale réelle : diff, validation, propagation, recharge, annulat
   await dialog.getByRole('button', { name: 'Valider et enregistrer' }).click();
   await expect(row('color.brand')).toContainText('#3F3F46');
   await expect(row('space.md')).toContainText('22px');
-  await open('Preview');
+  await open('Pages');
   await expect.poll(() => cssVar('--color-brand')).toBe('#3F3F46');
   await expect.poll(() => cssVar('--space-md')).toBe('22px');
   await page.screenshot({ path: 'test-results/studio.png', fullPage: true });
@@ -147,7 +147,7 @@ test('export navigateur, import valide avec diff, fichier invalide sans écritur
 }) => {
   await page.goto('/#design-system');
   await expect(
-    page.getByRole('heading', { name: 'Tokens sémantiques' }),
+    page.getByRole('heading', { name: 'Styles partagés' }),
   ).toBeVisible();
   const before = await (await page.request.get('/api/state')).json();
   const download = page.waitForEvent('download');
@@ -294,7 +294,7 @@ test('V2 : capacité de session périmée simulée sans rejeu ambigu', async ({
   page,
 }) => {
   await page.goto('/#design-system');
-  await page.getByRole('heading', { name: 'Tokens sémantiques' }).waitFor();
+  await page.getByRole('heading', { name: 'Styles partagés' }).waitFor();
   const boot = await (await page.request.get('/api/bootstrap')).json();
   // Un seul refus certain avant mutation, comme une capacité périmée après restart.
   let requests = 0;
@@ -334,14 +334,14 @@ test('V2 : clavier, mobile 375 px et absence de stockage navigateur', async ({
   });
   await page.setViewportSize({ width: 375, height: 812 });
   await page.goto('/#design-system');
-  await page.getByRole('heading', { name: 'Tokens sémantiques' }).waitFor();
+  await page.getByRole('heading', { name: 'Styles partagés' }).waitFor();
   await page.keyboard.press('Tab');
   await expect(
     page.getByRole('link', { name: 'Aller aux tokens' }),
   ).toBeFocused();
   await page.keyboard.press('Enter');
   await expect(
-    page.getByRole('heading', { name: 'Design System', exact: true }),
+    page.getByRole('heading', { name: 'Bibliothèque', exact: true }),
   ).toBeFocused();
   await page.getByLabel('Valeur du token').fill('#114477');
   await page.getByRole('button', { name: 'Proposer', exact: true }).click();
@@ -403,4 +403,81 @@ test('Ouvrir un projet : dossier Git et lien Figma depuis l’en-tête', async (
   await expect(page.locator('.project-badge')).toContainText(name);
   await page.reload();
   await expect(page.locator('.project-badge')).toContainText(name);
+});
+
+test('UX : navigation, filtres de styles et synchro explicite', async ({
+  page,
+}) => {
+  await page.goto('/');
+  const nav = page.getByRole('navigation', { name: 'Vues' });
+  await expect(nav.getByRole('link')).toHaveText([
+    'Accueil',
+    'Bibliothèque',
+    'Pages',
+    'Synchro',
+  ]);
+  await page
+    .getByRole('link', { name: 'Bibliothèque →', exact: false })
+    .click();
+  await page.getByLabel('Famille de styles').selectOption('dimension');
+  await expect(page.locator('.token-table')).toContainText('space.md');
+  await expect(page.locator('.token-table')).not.toContainText('color.brand');
+  await nav.getByRole('link', { name: 'Synchro', exact: true }).click();
+  await expect(
+    page.getByRole('heading', { name: 'Synchro', exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByText(
+      'La synchronisation couvre les variantes prises en charge.',
+      { exact: false },
+    ),
+  ).toBeVisible();
+  await page.setViewportSize({ width: 320, height: 812 });
+  expect(
+    await page.locator('body').evaluate((el) => el.scrollWidth <= innerWidth),
+  ).toBe(true);
+});
+
+test('UX : retrait confirmé, annulation et échec de sauvegarde sans perte', async ({
+  page,
+}) => {
+  await page.goto('/#pages');
+  const formats = page.getByRole('group', { name: 'Format' });
+  await formats.getByRole('button', { name: /^Tablette/ }).click();
+  await formats
+    .getByRole('button', { name: 'Supprimer le format Tablette' })
+    .click();
+  await page.getByRole('button', { name: 'Conserver', exact: true }).click();
+  await expect(
+    formats.getByRole('button', { name: /^Tablette/ }),
+  ).toBeVisible();
+  await formats
+    .getByRole('button', { name: 'Supprimer le format Tablette' })
+    .click();
+  await page.getByRole('button', { name: 'Confirmer le retrait' }).click();
+  await expect(formats.getByRole('button', { name: /^Tablette/ })).toHaveCount(
+    0,
+  );
+  await page.getByRole('button', { name: 'Annuler le retrait' }).click();
+  await expect(
+    formats.getByRole('button', { name: /^Tablette/ }),
+  ).toBeVisible();
+  await page.route('**/api/preview', async (route) => {
+    if (route.request().method() === 'POST')
+      return route.fulfill({
+        status: 500,
+        contentType: 'application/json',
+        body: JSON.stringify({ error: 'Échec simulé' }),
+      });
+    return route.continue();
+  });
+  await formats.getByRole('button', { name: /^Tablette/ }).click();
+  await formats
+    .getByRole('button', { name: 'Supprimer le format Tablette' })
+    .click();
+  await page.getByRole('button', { name: 'Confirmer le retrait' }).click();
+  await expect(page.getByRole('alert')).toContainText('Échec simulé');
+  await expect(
+    formats.getByRole('button', { name: /^Tablette/ }),
+  ).toBeVisible();
 });

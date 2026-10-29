@@ -294,6 +294,31 @@ export default function Dashboard({
           </h1>
         </div>
       </div>
+      <section className="ux-start" aria-labelledby="ux-start-title">
+        <div>
+          <span className="eyebrow">TON ATELIER</span>
+          <h2 id="ux-start-title">Sur quoi veux-tu travailler ?</h2>
+          <p>
+            Retrouve tes styles, compose une page ou vérifie les écarts avec
+            Figma.
+          </p>
+        </div>
+        <div className="ux-start-links">
+          <a href="#design-system">
+            <strong>Bibliothèque →</strong>
+            <span>Styles et composants</span>
+          </a>
+          <a href="#pages">
+            <strong>Pages →</strong>
+            <span>Composer et tester</span>
+          </a>
+          <a href="#synchro">
+            <strong>Synchro →</strong>
+            <span>Figma, code et GitHub</span>
+          </a>
+        </div>
+      </section>
+      <h2 className="ux-follow-title">Suivi du projet</h2>
       <Board
         name="dashboard"
         label="tableau de bord"

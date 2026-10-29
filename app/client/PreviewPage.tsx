@@ -88,17 +88,36 @@ export default function PreviewPage({
   const [page, setPage] = useState('cards');
   const [adding, setAdding] = useState<'format' | 'page' | 'rename' | 'site'>();
   const [name, setName] = useState('');
+  const [removal, setRemoval] = useState<'page' | 'format'>();
+  const [removedConfig, setRemovedConfig] = useState<PreviewConfig>();
+  const [saveError, setSaveError] = useState('');
+  const [savingConfig, setSavingConfig] = useState(false);
+  const [configLoaded, setConfigLoaded] = useState(false);
   const [width, setWidth] = useState('390');
   const [height, setHeight] = useState('844');
   // Relu quand le chat a créé une page : elle apparaît dans la barre.
   useEffect(() => {
     request<PreviewConfig>('preview')
-      .then(setConfig)
-      .catch((e) => onError(e.message));
+      .then((next) => {
+        setConfig(next);
+        setConfigLoaded(true);
+      })
+      .catch((e) => setSaveError(e.message));
   }, [chatChange?.n]);
-  const save = (next: PreviewConfig) => {
-    setConfig(next);
-    request('preview', next).catch((e) => onError(e.message));
+  const save = (next: PreviewConfig, undoable = false) => {
+    setSavingConfig(true);
+    setSaveError('');
+    return request('preview', next)
+      .then(() => {
+        setConfig(next);
+        setRemovedConfig(undoable ? config : undefined);
+        return true;
+      })
+      .catch((e) => {
+        setSaveError(e.message);
+        return false;
+      })
+      .finally(() => setSavingConfig(false));
   };
   const f = config.formats.find((x) => x.id === format) ?? config.formats[0];
   const p = config.pages.find((x) => x.id === page) ?? config.pages[0];
@@ -133,7 +152,10 @@ export default function PreviewPage({
   }, [building]);
   return (
     <section className="panel mobile-panel" aria-labelledby="preview-title">
-      <div className="preview-bar">
+      <fieldset
+        className="preview-bar ux-controls"
+        disabled={savingConfig || !configLoaded}
+      >
         <div className="preview-group" role="group" aria-label="Format">
           <span className="preview-label">Format</span>
           {config.formats.map((x) => (
@@ -163,11 +185,7 @@ export default function PreviewPage({
               className="preview-remove"
               aria-label={`Supprimer le format ${f.name}`}
               title={`Supprimer le format ${f.name}`}
-              onClick={() => {
-                const rest = config.formats.filter((x) => x.id !== f.id);
-                save({ ...config, formats: rest });
-                setFormat(rest[0].id);
-              }}
+              onClick={() => setRemoval('format')}
             >
               ×
             </button>
@@ -182,7 +200,7 @@ export default function PreviewPage({
               aria-pressed={mode === 'view'}
               onClick={() => setMode('view')}
             >
-              Aperçu
+              Code réel
             </button>
             <button
               type="button"
@@ -190,7 +208,7 @@ export default function PreviewPage({
               aria-pressed={mode === 'build'}
               onClick={() => setMode('build')}
             >
-              Construire
+              Composer
             </button>
           </div>
         )}
@@ -236,18 +254,79 @@ export default function PreviewPage({
               className="preview-remove"
               aria-label={`Supprimer la page ${p.name}`}
               title={`Supprimer la page ${p.name}`}
-              onClick={() => {
-                const rest = config.pages.filter((x) => x.id !== p.id);
-                save({ ...config, pages: rest });
-                setPage(rest[0].id);
-              }}
+              onClick={() => setRemoval('page')}
             >
               ×
             </button>
           )}
         </div>
-      </div>
+      </fieldset>
 
+      {removal && (
+        <section className="ux-confirm" aria-label="Confirmer la suppression">
+          <strong>
+            Retirer{' '}
+            {removal === 'page'
+              ? `la page « ${p.name} »`
+              : `le format « ${f.name} »`}{' '}
+            de cet aperçu ?
+          </strong>
+          <p>Les fichiers de code ne seront pas supprimés.</p>
+          <button disabled={savingConfig} onClick={() => setRemoval(undefined)}>
+            Conserver
+          </button>
+          <button
+            disabled={savingConfig}
+            onClick={() => {
+              save(
+                removal === 'page'
+                  ? {
+                      ...config,
+                      pages: config.pages.filter((x) => x.id !== p.id),
+                    }
+                  : {
+                      ...config,
+                      formats: config.formats.filter((x) => x.id !== f.id),
+                    },
+                true,
+              );
+              setRemoval(undefined);
+            }}
+          >
+            Confirmer le retrait
+          </button>
+        </section>
+      )}
+      {removedConfig && (
+        <div className="ux-confirm">
+          <span>Tu peux rétablir la configuration précédente.</span>
+          <button
+            disabled={savingConfig}
+            onClick={() => {
+              void save(removedConfig).then((ok) => {
+                if (ok) setRemovedConfig(undefined);
+              });
+            }}
+          >
+            Annuler le retrait
+          </button>
+        </div>
+      )}
+      <p className="ux-save" role="status">
+        {saveError
+          ? ''
+          : !configLoaded
+            ? 'Chargement de la configuration…'
+            : savingConfig
+              ? 'Enregistrement…'
+              : 'Configuration de l’aperçu enregistrée sur cet ordinateur.'}
+      </p>
+      {saveError && (
+        <p className="error" role="alert">
+          Enregistrement impossible : {saveError}. La configuration précédente
+          est conservée.
+        </p>
+      )}
       {adding && (
         <form
           className="preview-form"
@@ -299,10 +378,10 @@ export default function PreviewPage({
             {adding === 'site'
               ? 'Lien du proto en ligne (vide pour le retirer)'
               : adding === 'format'
-              ? 'Nom du format'
-              : adding === 'page'
-                ? 'Nom de la page'
-                : 'Nouveau nom'}
+                ? 'Nom du format'
+                : adding === 'page'
+                  ? 'Nom de la page'
+                  : 'Nouveau nom'}
             <input
               autoFocus
               value={name}
@@ -358,7 +437,11 @@ export default function PreviewPage({
             </>
           )}
           <button className="studio-primary">
-            {adding === 'rename' ? 'Renommer' : adding === 'site' ? 'Enregistrer' : 'Ajouter'}
+            {adding === 'rename'
+              ? 'Renommer'
+              : adding === 'site'
+                ? 'Enregistrer'
+                : 'Ajouter'}
           </button>
           <button type="button" onClick={close}>
             Annuler
@@ -368,13 +451,15 @@ export default function PreviewPage({
 
       {project && (
         <div
-          className={building ? 'project-run project-run-compact' : 'project-run'}
+          className={
+            building ? 'project-run project-run-compact' : 'project-run'
+          }
           role="status"
         >
           <span>
             Projet <strong>{project.name}</strong> ·{' '}
             {dev.state === 'running'
-              ? `en ligne sur ${dev.url}`
+              ? `aperçu local actif · ${dev.url}`
               : dev.state === 'starting'
                 ? 'lancement…'
                 : dev.state === 'installing'
@@ -403,8 +488,13 @@ export default function PreviewPage({
             </button>
           )}
           {config.siteUrl ? (
-            <a className="preview-site" href={config.siteUrl} target="_blank" rel="noreferrer">
-              Voir en ligne ↗
+            <a
+              className="preview-site"
+              href={config.siteUrl}
+              target="_blank"
+              rel="noreferrer"
+            >
+              Ouvrir le lien partagé ↗
             </a>
           ) : null}
           <button
@@ -415,9 +505,9 @@ export default function PreviewPage({
               setAdding(adding === 'site' ? undefined : 'site');
             }}
             aria-expanded={adding === 'site'}
-            title="Lien du proto mis en ligne (Vercel, Netlify…)"
+            title="Ajouter un lien existant ne publie pas le projet"
           >
-            {config.siteUrl ? 'Modifier le lien' : '+ Lien en ligne'}
+            {config.siteUrl ? 'Modifier le lien' : '+ Lien partagé'}
           </button>
           {dev.logs.length > 0 && (
             <details>
@@ -429,7 +519,9 @@ export default function PreviewPage({
       )}
       <div
         className={
-          project && dev.state === 'running' && dev.url ? 'viewport-device' : 'viewport-scroll'
+          project && dev.state === 'running' && dev.url
+            ? 'viewport-device'
+            : 'viewport-scroll'
         }
       >
         {!project ? (
@@ -457,15 +549,33 @@ export default function PreviewPage({
           />
         ) : dev.state === 'running' && dev.url ? (
           <DeviceFrame
-            width={isPhone(f.width) ? closestIPhone(f.width, f.height).width : f.width}
-            height={isPhone(f.width) ? closestIPhone(f.width, f.height).height : f.height}
-            device={isPhone(f.width) ? closestIPhone(f.width, f.height) : undefined}
+            width={
+              isPhone(f.width)
+                ? closestIPhone(f.width, f.height).width
+                : f.width
+            }
+            height={
+              isPhone(f.width)
+                ? closestIPhone(f.width, f.height).height
+                : f.height
+            }
+            device={
+              isPhone(f.width) ? closestIPhone(f.width, f.height) : undefined
+            }
           >
             <iframe
               title="Aperçu responsive"
               src={dev.url + path}
-              width={isPhone(f.width) ? closestIPhone(f.width, f.height).width : f.width}
-              height={isPhone(f.width) ? closestIPhone(f.width, f.height).height : f.height}
+              width={
+                isPhone(f.width)
+                  ? closestIPhone(f.width, f.height).width
+                  : f.width
+              }
+              height={
+                isPhone(f.width)
+                  ? closestIPhone(f.width, f.height).height
+                  : f.height
+              }
             />
           </DeviceFrame>
         ) : (
@@ -478,7 +588,8 @@ export default function PreviewPage({
       </div>
       {!(project && dev.state === 'running') && (
         <div className="panel-foot">
-          {f.name} · {f.width} × {f.height} px CSS · aucun zoom appliqué · défilez si nécessaire
+          {f.name} · {f.width} × {f.height} px CSS · aucun zoom appliqué ·
+          défilez si nécessaire
         </div>
       )}
     </section>

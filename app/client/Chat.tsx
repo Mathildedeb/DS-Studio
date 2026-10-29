@@ -220,7 +220,7 @@ export default function Chat({
             <div>
               {build.question !== 'Build terminé.' && (
                 <button type="button" className="studio-primary" onClick={onBuildYes}>
-                  {build.question.startsWith('Tu la testes') ? 'C’est bon' : 'Oui'}
+                  {build.question.startsWith('Tu la testes') ? 'Valider le test' : 'Continuer cette étape'}
                 </button>
               )}
               {build.question.startsWith('Tu la testes') && build.route && (

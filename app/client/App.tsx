@@ -23,6 +23,8 @@ type BuildFlow = BuildRequest & {
   note?: string;
 };
 import OpenProject from './OpenProject.js';
+import SyncPanel from './SyncPanel.js';
+import ComponentLibrary from './ComponentLibrary.js';
 import FigmaPanel, { figmaLevel } from './FigmaPanel.js';
 import type { Level } from './dsRegistry.js';
 import type { FigmaComponent } from '../../connectors/figma/library.js';
@@ -93,14 +95,16 @@ function useDesignState() {
 // Le tableau de bord est l'accueil ; #design-system et #preview sont les deux
 // pages de travail. Les ancres internes (#ds-title…) et l'ancien #atelier
 // restent sur la page Design System.
-type View = 'dashboard' | 'ds' | 'preview';
+type View = 'dashboard' | 'ds' | 'preview' | 'sync';
 function useView() {
   const read = (): View =>
     location.hash === '' || location.hash === '#tableau-de-bord'
       ? 'dashboard'
-      : location.hash === '#preview'
-        ? 'preview'
-        : 'ds';
+      : location.hash === '#synchro'
+        ? 'sync'
+        : location.hash === '#preview' || location.hash === '#pages'
+          ? 'preview'
+          : 'ds';
   const [view, setView] = useState<View>(read);
   useEffect(() => {
     const onHash = () => {
@@ -183,6 +187,7 @@ export default function App() {
     value: string;
   }>({ key: '', type: 'color', value: '' });
   const [search, setSearch] = useState('');
+  const [tokenFamily, setTokenFamily] = useState('all');
   const [tab, setTab] = useState<Tab>('tokens');
   const [componentFocus, setComponentFocus] = useState<Focus>();
   const [previewFocus, setPreviewFocus] = useState<Focus>();
@@ -211,6 +216,50 @@ export default function App() {
   const [clodoOpen, setClodoOpen] = useState(false);
   const [connection, setConnection] = useState<ConnectionStatus>();
   const [opening, setOpening] = useState(false);
+  const conversationKey = connection
+    ? `ds-studio-conversation:${connection.saved.folder ?? 'atelier'}`
+    : undefined;
+  const [conversationLoaded, setConversationLoaded] = useState<string>();
+  const [conversationStorageError, setConversationStorageError] =
+    useState(false);
+  useEffect(() => {
+    if (!conversationKey) return;
+    let restored: ChatMessage[] = [];
+    try {
+      const raw = JSON.parse(localStorage.getItem(conversationKey) || '[]');
+      if (Array.isArray(raw))
+        restored = raw
+          .filter(
+            (m) =>
+              m &&
+              (m.role === 'user' || m.role === 'assistant') &&
+              typeof m.text === 'string',
+          )
+          .slice(-100)
+          .map((m) => ({ role: m.role, text: m.text.slice(0, 10000) }));
+    } catch {
+      setConversationStorageError(true);
+    }
+    setChat(restored);
+    setConversationLoaded(conversationKey);
+  }, [conversationKey]);
+  useEffect(() => {
+    if (!conversationKey || conversationLoaded !== conversationKey) return;
+    try {
+      localStorage.setItem(
+        conversationKey,
+        JSON.stringify(
+          chat
+            .slice(-100)
+            .map(({ role, text }) => ({ role, text: text.slice(0, 10000) })),
+        ),
+      );
+      setConversationStorageError(false);
+    } catch {
+      setConversationStorageError(true);
+    }
+  }, [chat, conversationKey, conversationLoaded]);
+
   // Build d'une page, piloté par le chat : il pose la question avant chaque
   // étape (composants en maquette, page, test, publication) et coche la
   // checklist au fil des diffs validés.
@@ -303,7 +352,10 @@ export default function App() {
   const advised = useRef<string>(undefined);
   // Un import ou une annulation reprend un état connu : pas d'avis.
   const advice =
-    proposal && state && proposal.source !== 'import' && proposal.source !== 'undo'
+    proposal &&
+    state &&
+    proposal.source !== 'import' &&
+    proposal.source !== 'undo'
       ? adviseChange(proposal.patches, state.tokens, aliases?.links)
       : [];
   useEffect(() => {
@@ -645,7 +697,10 @@ export default function App() {
       </main>
     );
   function startBuild(request: BuildRequest) {
-    setFlow({ ...request, stage: request.toCode.length ? 'components' : 'page' });
+    setFlow({
+      ...request,
+      stage: request.toCode.length ? 'components' : 'page',
+    });
     setClodoOpen(true);
   }
   // Le chat code l'étape en cours ; son diff passe ensuite par la validation.
@@ -660,18 +715,27 @@ export default function App() {
     setFlow(
       reply?.proposal
         ? { ...current, waiting: 'diff' }
-        : { ...current, waiting: undefined, note: 'Clodo n’a pas proposé de code : relis sa réponse, puis recommence.' },
+        : {
+            ...current,
+            waiting: undefined,
+            note: 'Clodo n’a pas proposé de code : relis sa réponse, puis recommence.',
+          },
     );
   }
   // Diff validé : étape suivante, ou vérification du code de la page.
   async function flowApplied(files: string[]) {
     if (!flow) return;
-    if (flow.stage === 'components') return setFlow({ ...flow, stage: 'page', waiting: undefined });
+    if (flow.stage === 'components')
+      return setFlow({ ...flow, stage: 'page', waiting: undefined });
     setFlow({ ...flow, waiting: 'check' });
-    const { checks } = await request<{ checks: { ok: boolean; text: string }[] }>('page-build/check', {
+    const { checks } = await request<{
+      checks: { ok: boolean; text: string }[];
+    }>('page-build/check', {
       page: flow.page.id,
       files,
-    }).catch(() => ({ checks: [{ ok: false, text: 'Vérification impossible' }] }));
+    }).catch(() => ({
+      checks: [{ ok: false, text: 'Vérification impossible' }],
+    }));
     setFlow({ ...flow, stage: 'test', waiting: undefined, checks });
   }
   const buildCard = flow && {
@@ -679,7 +743,12 @@ export default function App() {
     route: connection?.project && flow.page.path,
     steps: (
       [
-        ['components', flow.toCode.length ? `Composants en maquette (${flow.toCode.join(', ')})` : 'Composants : tous codés'],
+        [
+          'components',
+          flow.toCode.length
+            ? `Composants en maquette (${flow.toCode.join(', ')})`
+            : 'Composants : tous codés',
+        ],
         ['page', 'Page codée avec sa disposition et ses liens'],
         ['check', 'Code vérifié par rapport aux calques'],
         ['test', 'Testée sur l’iPhone'],
@@ -687,12 +756,21 @@ export default function App() {
       ] as const
     ).map(([id, label]) => {
       const order = ['components', 'page', 'check', 'test', 'publish', 'done'];
-      const at = order.indexOf(flow.stage === 'test' && !flow.checks ? 'check' : flow.stage);
+      const at = order.indexOf(
+        flow.stage === 'test' && !flow.checks ? 'check' : flow.stage,
+      );
       const mine = order.indexOf(id);
       const warn = id === 'check' && flow.checks?.some((c) => !c.ok);
       return {
         label,
-        state: (id === 'components' && !flow.toCode.length) || mine < at ? (warn ? 'warn' : 'done') : mine === at ? 'doing' : 'todo',
+        state:
+          (id === 'components' && !flow.toCode.length) || mine < at
+            ? warn
+              ? 'warn'
+              : 'done'
+            : mine === at
+              ? 'doing'
+              : 'todo',
       } as const;
     }),
     checks: flow.checks,
@@ -710,14 +788,15 @@ export default function App() {
               : flow.stage === 'page'
                 ? `Je code la page « ${flow.page.name} » avec sa disposition et ses liens ?`
                 : flow.stage === 'test'
-                  ? 'Tu la testes sur l’iPhone ? Ouvre la Preview en Aperçu, ou la page codée.'
+                  ? 'Tu la testes sur l’iPhone ? Ouvre Pages en mode Code réel, ou la page codée.'
                   : flow.stage === 'publish'
                     ? 'Je publie sur Git ?'
                     : 'Build terminé.',
   };
   const flowYes = () => {
     if (!flow) return;
-    if (flow.stage === 'components' || flow.stage === 'page') return void flowRun();
+    if (flow.stage === 'components' || flow.stage === 'page')
+      return void flowRun();
     if (flow.stage === 'test') return setFlow({ ...flow, stage: 'publish' });
     if (flow.stage === 'publish') {
       setFlow({ ...flow, stage: 'done' });
@@ -784,8 +863,10 @@ export default function App() {
           key === 'color.onBrand' ? draft : onBrand,
         )
       : undefined;
-  const matchingKeys = tokenKeys(state.tokens).filter((k) =>
-    k.toLowerCase().includes(search.trim().toLowerCase()),
+  const matchingKeys = tokenKeys(state.tokens).filter(
+    (k) =>
+      k.toLowerCase().includes(search.trim().toLowerCase()) &&
+      (tokenFamily === 'all' || state.tokens[k].$type === tokenFamily),
   );
   const feedback = (
     <div className="feedback" aria-live="polite">
@@ -863,19 +944,25 @@ export default function App() {
             href="#tableau-de-bord"
             aria-current={view === 'dashboard' ? 'page' : undefined}
           >
-            Tableau de bord
+            Accueil
           </a>
           <a
             href="#design-system"
             aria-current={view === 'ds' ? 'page' : undefined}
           >
-            Design System
+            Bibliothèque
           </a>
           <a
-            href="#preview"
+            href="#pages"
             aria-current={view === 'preview' ? 'page' : undefined}
           >
-            Preview
+            Pages
+          </a>
+          <a
+            href="#synchro"
+            aria-current={view === 'sync' ? 'page' : undefined}
+          >
+            Synchro
           </a>
         </nav>
         <div className="header-status">
@@ -889,7 +976,7 @@ export default function App() {
               ? `${connection.project.name}${connection.project.git?.branch ? ` · ${connection.project.git.branch}` : ''}`
               : 'Ouvrir un projet'}
           </button>
-          <span className="local-badge">● Local · V2</span>
+          <span className="local-badge">● Sur cet ordinateur</span>
           {figma?.file ? (
             <a
               className="figma-status connected"
@@ -939,12 +1026,41 @@ export default function App() {
             onError={setError}
           />
         </>
+      ) : view === 'sync' ? (
+        <>
+          <div className="intro">
+            <div>
+              <h1>Synchro</h1>
+              <p>
+                Vérifie les variantes Figma, le code local et les changements à
+                publier.
+              </p>
+            </div>
+          </div>
+          {feedback}
+          {history}
+          <main className="studio-main sync-workspace">
+            <p className="ux-note">
+              L’accès au fichier Figma et la présence du plugin sont deux états
+              distincts. La synchronisation couvre les variantes prises en
+              charge.
+            </p>
+            <SyncPanel active onAsk={askClodo} />
+            <a
+              className="ux-text-link"
+              href="#design-system"
+              onClick={() => setTab('figma')}
+            >
+              Configurer le plugin et consulter le fichier Figma →
+            </a>
+          </main>
+        </>
       ) : view === 'ds' ? (
         <>
           <div className="intro">
             <div>
               <h1 id="ds-title" tabIndex={-1}>
-                Design System
+                Bibliothèque
               </h1>
               <p>
                 {connection?.project?.name ?? 'Aucun projet ouvert'} · révision{' '}
@@ -1007,7 +1123,7 @@ export default function App() {
               >
                 <div className="ds-list">
                   <div className="editor-title">
-                    <h3>Tokens sémantiques</h3>
+                    <h3>Styles partagés</h3>
                     <span>{tokenKeys(state.tokens).length} tokens</span>
                   </div>
                   <button
@@ -1085,6 +1201,20 @@ export default function App() {
                       onChange={(e) => setSearch(e.target.value)}
                       placeholder="color, space, font…"
                     />
+                  </label>
+                  <label className="field token-filter">
+                    Famille de styles
+                    <select
+                      value={tokenFamily}
+                      onChange={(e) => setTokenFamily(e.target.value)}
+                    >
+                      <option value="all">Tous les styles</option>
+                      <option value="color">Couleurs</option>
+                      <option value="dimension">
+                        Dimensions et espacements
+                      </option>
+                      <option value="fontFamily">Polices</option>
+                    </select>
                   </label>
                   <p className="token-hint" role="status">
                     {matchingKeys.length} résultat(s).{' '}
@@ -1255,6 +1385,15 @@ export default function App() {
                   </div>
                 )}
               </div>
+              {tab === 'components' && (
+                <ComponentLibrary
+                  figma={figmaList}
+                  code={projectCode}
+                  error={figmaError}
+                  onFocus={setComponentFocus}
+                  onAsk={askClodo}
+                />
+              )}
               <ComponentWorkspace
                 tokens={state.tokens}
                 tab={tab}
@@ -1282,9 +1421,12 @@ export default function App() {
           <div className="intro">
             <div>
               <h1 id="preview-title" tabIndex={-1}>
-                Preview
+                Pages
               </h1>
-              <p>De vrais composants, à largeur réelle</p>
+              <p>
+                Compose ta page, puis vérifie son code. Chaque écriture de code
+                passe par ta validation.
+              </p>
             </div>
           </div>
           {feedback}
@@ -1306,11 +1448,16 @@ export default function App() {
       )}
       {view !== 'dashboard' && (
         <footer className="studio-footer">
-          <span>DS-Studio V2 · Fait pour être transformé.</span>
-          <span>JSON local → validation → composants partagés</span>
+          <span>Ton travail reste sur cet ordinateur.</span>
+          <span>Tu valides chaque changement avant son écriture.</span>
         </footer>
       )}
       <Clodo open={clodoOpen} onOpen={() => setClodoOpen(true)}>
+        <p className="ux-save" role="status">
+          {conversationStorageError
+            ? 'Conversation conservée pour cette session seulement : stockage local indisponible.'
+            : 'Conversation conservée sur cet ordinateur · 100 derniers messages. Les propositions de code doivent être redemandées après rechargement.'}
+        </p>
         {chatBox('claude', () => setClodoOpen(false))}
       </Clodo>
       <CodeReview
@@ -1320,7 +1467,11 @@ export default function App() {
         onCancel={() => {
           setCodeProposal(undefined);
           if (flow?.waiting === 'diff')
-            setFlow({ ...flow, waiting: undefined, note: 'Diff refusé : rien n’a été écrit. Je peux recommencer.' });
+            setFlow({
+              ...flow,
+              waiting: undefined,
+              note: 'Diff refusé : rien n’a été écrit. Je peux recommencer.',
+            });
         }}
         onApply={async () => {
           if (!codeProposal) return;
@@ -1364,7 +1515,10 @@ export default function App() {
           </p>
         )}
         {advice.length > 0 && (
-          <section className="diff-advice" aria-label="Avis de Clodo avant de valider">
+          <section
+            className="diff-advice"
+            aria-label="Avis de Clodo avant de valider"
+          >
             <strong>Avant de valider, l’avis de Clodo</strong>
             <ul>
               {advice.map((a) => (

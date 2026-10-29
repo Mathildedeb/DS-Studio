@@ -738,7 +738,7 @@ export default function PreviewBuild({
           onClick={() => setLeft(!left)}
           title="Afficher ou réduire la bibliothèque"
         >
-          ☰ Composants
+          ☰ Calques et composants
         </button>
         <div className="build-segment" role="group" aria-label="Mode">
           <button type="button" aria-pressed={!testing} onClick={() => setTesting(false)} title="Sélectionner et modifier">
@@ -780,7 +780,7 @@ export default function PreviewBuild({
           disabled={!plan.instances.length}
           title={toCode.length ? `D'abord les composants : ${toCode.join(', ')}` : 'Clodo code la page et sa navigation'}
         >
-          Build{toCode.length ? ` · ${toCode.length} à coder` : ''}
+          Préparer le code{toCode.length ? ` · ${toCode.length} à coder` : ''}
         </button>
         <button
           type="button"

@@ -110,7 +110,7 @@ export default function Clodo({
           aria-label="Ouvrir Clodo, l’assistant (glisser pour déplacer la bulle)"
           title="Clodo · cliquer pour ouvrir, glisser pour déplacer"
         >
-          <span aria-hidden="true">✳</span>
+          <span aria-hidden="true">✳</span> Clodo
         </button>
       )}
       {open && (
