@@ -38,6 +38,7 @@ export default function PreviewPage({
   code,
   onAsk,
   onCodeProposal,
+  chatChange,
 }: {
   project?: FolderInfo;
   onError: (message: string) => void;
@@ -46,6 +47,7 @@ export default function PreviewPage({
   code?: { components: CodeComponent[]; map: Record<string, string> };
   onAsk: (message: string) => void;
   onCodeProposal: (p: CodeProposal) => void;
+  chatChange?: { page: string; n: number };
 }) {
   // Aperçu du projet tel qu'il est codé, ou construction de la page avec
   // les composants du DS (plan de page, sans toucher au code).
@@ -96,6 +98,8 @@ export default function PreviewPage({
   const path = p.path ?? '/';
   // Clodo reçoit la page et le format affichés : « ici » = cette page.
   useEffect(() => {
+    // En mode Construire, la page de construction donne elle-même le focus.
+    if (mode === 'build' && dev.state === 'running') return;
     onFocus({
       page: 'preview',
       kind: 'page',
@@ -104,7 +108,7 @@ export default function PreviewPage({
       value: project ? path : p.id,
       props: { format: `${f.name} ${f.width}px` },
     });
-  }, [p.name, path, f.name, f.width, !!project]);
+  }, [p.name, path, f.name, f.width, !!project, mode, dev.state]);
   const close = () => {
     setAdding(undefined);
     setName('');
@@ -391,6 +395,8 @@ export default function PreviewPage({
             onAsk={onAsk}
             onCodeProposal={onCodeProposal}
             onError={onError}
+            onFocus={onFocus}
+            chatChange={chatChange}
           />
         ) : dev.state === 'running' && dev.url ? (
           <iframe

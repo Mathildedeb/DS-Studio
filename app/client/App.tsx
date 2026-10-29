@@ -195,6 +195,7 @@ export default function App() {
   const [lastCode, setLastCode] = useState<{ id: string; files: string[] }>();
   // Composants déjà codés dans le projet ouvert : relus à l'ouverture du
   // projet et après chaque modification de code (création, annulation).
+  const [chatPage, setChatPage] = useState<{ page: string; n: number }>();
   const [projectCode, setProjectCode] = useState<{
     components: CodeComponent[];
     map: Record<string, string>;
@@ -592,7 +593,11 @@ export default function App() {
         message: string;
         proposal: CodeProposal | null;
         tokenProposal: Proposal | null;
+        page?: string | null;
       }>('code', { message: text, history: previous, focus }, abort.signal);
+      // Mode Construire : le chat a modifié le plan de cette page.
+      if (reply.page)
+        setChatPage((c) => ({ page: reply.page!, n: (c?.n ?? 0) + 1 }));
       setChat((c) => [...c, { role: 'assistant', text: reply.message }]);
       if (reply.proposal) {
         setCodeError('');
@@ -1187,6 +1192,7 @@ export default function App() {
               code={projectCode}
               onAsk={askClodo}
               onCodeProposal={setCodeProposal}
+              chatChange={chatPage}
             />
           </main>
         </>

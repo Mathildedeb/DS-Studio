@@ -21,8 +21,10 @@ import { readProjectTokens, writeProjectTokens } from './projectTokens.js';
 import { BATCH, PublishCounter, gitStatus, publish } from './gitops.js';
 import { runTokensScript, type TokensScript } from './npm.js';
 import { codedFor } from '../shared/components.js';
-import { planSchema } from '../shared/pagePlan.js';
-import { readProps } from '../shared/props.js';
+import { applyOps, planSchema } from '../shared/pagePlan.js';
+import { panelSelection } from '../shared/panel.js';
+import { readProps, type PropSpec } from '../shared/props.js';
+import { proposePage } from '../../connectors/agents/pageBuilder.js';
 import { bridgeEntry, bridgeFiles, bridgeHtml } from './bridge.js';
 import {
   figmaComponents,
@@ -760,6 +762,20 @@ export async function createStudioServer(options: {
           return send(200, next);
         }
         // Code : Clodo propose, l'étudiante valide le diff, le serveur écrit.
+        // Annuler la dernière modification du chat sur une page.
+        if (url.pathname === '/api/page-plan/undo') {
+          const b = z
+            .object({ page: z.string().regex(/^[\w-]{1,60}$/) })
+            .strict()
+            .parse(body);
+          const file = path.join(store.directory, 'pages', `${b.page}.json`);
+          const prev = planSchema.parse(
+            JSON.parse(await readPrivate(file.replace(/\.json$/, '.prev.json'), 500_000)),
+          );
+          await atomicWrite(file, JSON.stringify(prev, null, 2) + '\n');
+          await fs.unlink(file.replace(/\.json$/, '.prev.json'));
+          return send(200, prev);
+        }
         if (url.pathname === '/api/page-plan') {
           const b = z
             .object({ page: z.string().regex(/^[\w-]{1,60}$/), plan: planSchema })
@@ -924,6 +940,58 @@ export async function createStudioServer(options: {
           res.once('close', cancel);
           try {
             const scope = await workspace();
+            // Mode Construire : Clodo modifie le plan de la page, pas le code.
+            if (b.focus?.source === 'build' && scope.project) {
+              const page = z.string().regex(/^[\w-]{1,60}$/).parse(String(b.focus.value));
+              const coded = (await scope.code.components()).filter((c) =>
+                c.file.startsWith('src/components/'),
+              );
+              const catalog: Record<string, { file: string; specs: PropSpec[] }> = {};
+              for (const c of coded)
+                if (!catalog[c.name])
+                  catalog[c.name] = {
+                    file: c.file,
+                    specs: readProps(await scope.code.source(c.file).catch(() => ''), c.name),
+                  };
+              const map = await scope.code.componentMap();
+              const uncoded = panelSelection
+                .flatMap((g) => g.names)
+                .filter((n) => !codedFor(n, coded, map));
+              const file = path.join(store.directory, 'pages', `${page}.json`);
+              const plan = await readPrivate(file, 500_000)
+                .then((raw) => planSchema.parse(JSON.parse(raw)))
+                .catch(() => ({ instances: [] }));
+              const reply = await proposePage(
+                ask,
+                {
+                  request: b.message,
+                  history: b.history,
+                  plan,
+                  selected: b.focus.selector,
+                  components: Object.entries(catalog).map(([name, c]) => ({
+                    name,
+                    file: c.file,
+                    props: c.specs,
+                  })),
+                  uncoded,
+                },
+                controller.signal,
+              );
+              const done = applyOps(plan, reply.ops, catalog);
+              const changed = JSON.stringify(done.plan) !== JSON.stringify(plan);
+              if (changed) {
+                await fs.mkdir(path.dirname(file), { recursive: true, mode: 0o700 });
+                // Copie avant le chat : « Annuler » la rétablit.
+                await atomicWrite(file.replace(/\.json$/, '.prev.json'), JSON.stringify(plan) + '\n');
+                await atomicWrite(file, JSON.stringify(done.plan, null, 2) + '\n');
+              }
+              return send(200, {
+                message: [reply.message, ...done.notes].join('\n'),
+                proposal: null,
+                tokenProposal: null,
+                page: changed ? page : null,
+              });
+            }
             const { changes, ...reply } = await proposeCode(
               ask,
               scope.code,

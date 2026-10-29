@@ -12,6 +12,7 @@ import {
   type PagePlan,
 } from '../shared/pagePlan.js';
 import type { CodeProposal } from '../server/code.js';
+import type { Focus } from '../shared/focus.js';
 
 type Value = string | number | boolean;
 type Rect = { id: string; top: number; bottom: number };
@@ -28,6 +29,8 @@ export default function PreviewBuild({
   onAsk,
   onCodeProposal,
   onError,
+  onFocus,
+  chatChange,
 }: {
   page: { id: string; name: string };
   devUrl: string;
@@ -37,7 +40,12 @@ export default function PreviewBuild({
   onAsk: (message: string) => void;
   onCodeProposal: (p: CodeProposal) => void;
   onError: (message: string) => void;
+  // Le chat reçoit la page et l'instance sélectionnée (« ce bouton »).
+  onFocus: (focus: Focus) => void;
+  // Plan modifié par le chat : la page se recharge, « Annuler » apparaît.
+  chatChange?: { page: string; n: number };
 }) {
+  const [canUndo, setCanUndo] = useState(false);
   const [bridge, setBridge] = useState<boolean>();
   const [plan, setPlan] = useState<PagePlan>({ instances: [] });
   const [selected, setSelected] = useState<string>();
@@ -66,6 +74,7 @@ export default function PreviewBuild({
   }, [page.id]);
   const save = (next: PagePlan, select?: string) => {
     setPlan(next);
+    setCanUndo(false);
     if (select !== undefined) setSelected(select);
     request('page-plan', { page: page.id, plan: next }).catch((e) =>
       onError(e.message),
@@ -89,6 +98,27 @@ export default function PreviewBuild({
     return () => removeEventListener('message', onMessage);
   });
   const current = plan.instances.find((i) => i.id === selected);
+  useEffect(() => {
+    onFocus({
+      page: 'preview',
+      kind: current ? 'component' : 'page',
+      name: current ? current.component : page.name,
+      path: current ? [page.name, current.component] : [page.name],
+      source: 'build',
+      value: page.id,
+      ...(current ? { selector: current.id } : {}),
+      props: { format: `${width}px` },
+    });
+  }, [page.id, page.name, current?.id, width]);
+  const reload = () =>
+    request<PagePlan>(`page-plan?page=${encodeURIComponent(page.id)}`)
+      .then(setPlan)
+      .catch((e) => onError(e.message));
+  useEffect(() => {
+    if (chatChange?.page !== page.id) return;
+    void reload();
+    setCanUndo(true);
+  }, [chatChange?.n]);
   // Propriétés du composant sélectionné, lues dans son code (une fois par fichier).
   useEffect(() => {
     if (!current || specs[current.file]) return;
@@ -180,6 +210,21 @@ export default function PreviewBuild({
         ))}
         <section>
           <h3>Calques · {page.name}</h3>
+          {canUndo && (
+            <button
+              type="button"
+              onClick={() =>
+                request<PagePlan>('page-plan/undo', { page: page.id })
+                  .then((p) => {
+                    setPlan(p);
+                    setCanUndo(false);
+                  })
+                  .catch((e) => onError(e.message))
+              }
+            >
+              ↶ Annuler la modification du chat
+            </button>
+          )}
           {!plan.instances.length && <p className="build-empty">Page vide.</p>}
           <ol className="build-layers">
             {plan.instances.map((i, index) => (
