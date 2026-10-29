@@ -1,3 +1,4 @@
+import path from 'node:path';
 import { test, expect } from '@playwright/test';
 
 test('boucle centrale réelle : diff, validation, propagation, recharge, annulation sélective', async ({
@@ -381,7 +382,8 @@ test('Ouvrir un projet : dossier Git et lien Figma depuis l’en-tête', async (
   page,
 }) => {
   const folder = process.cwd();
-  const name = folder.split('/').at(-1)!;
+  // Nom du dossier quel que soit le séparateur (« \\ » sous Windows).
+  const name = path.basename(folder);
   await page.goto('/#tableau-de-bord');
   await page.getByRole('button', { name: 'Ouvrir un projet' }).click();
   await expect(
