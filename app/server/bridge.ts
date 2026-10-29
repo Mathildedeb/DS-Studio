@@ -6,7 +6,7 @@
 export const bridgeHtml = 'ds-studio.html';
 export const bridgeEntry = 'src/ds-studio/canvas.tsx';
 // Marque de version du relais : un relais plus ancien est proposé en mise à jour.
-export const bridgeMark = 'Relais DS-Studio v5';
+export const bridgeMark = 'Relais DS-Studio v6';
 
 // Même <head> que index.html (polices…), avec le relais comme script.
 export function bridgeFiles(indexHtml: string, mainSource: string) {
@@ -28,6 +28,7 @@ import { createRoot } from 'react-dom/client'
 ${styles}
 
 type Value = string | number | boolean
+type Size = 'hug' | 'fill' | number
 type Instance = {
   id: string
   component: string
@@ -35,10 +36,10 @@ type Instance = {
   // Page ouverte au clic, en mode Tester.
   link?: string
   props: Record<string, Value>
+  size?: { width?: Size; height?: Size }
   // Maquette Figma (rendu PNG à l'échelle 2), tant que le composant n'est pas codé.
   image?: string
 }
-type Size = 'hug' | 'fill' | number
 type Layout = {
   direction: 'row' | 'column'
   gap: number
@@ -50,7 +51,18 @@ type Layout = {
   height: Size
 }
 // Calque : un composant, un Groupe (organise) ou un Auto Layout (dispose).
-type Container = { id: string; type: 'group' | 'autolayout'; link?: string; layout?: Layout; children: Node[] }
+type Device = 'mobile' | 'tablet' | 'desktop'
+type Container = {
+  id: string
+  type: 'group' | 'autolayout'
+  link?: string
+  layout?: Layout
+  // Réglages propres à un appareil, appliqués selon la largeur de l'écran.
+  adapt?: Partial<Record<Device, Partial<Layout>>>
+  size?: { width?: Size; height?: Size }
+  style?: { fill?: string; radius?: number }
+  children: Node[]
+}
 type Node = Instance | Container
 const isContainer = (n: Node): n is Container => 'type' in n
 
@@ -66,7 +78,23 @@ const byFile = Object.fromEntries(
   ]),
 )
 const flex = { start: 'flex-start', center: 'center', end: 'flex-end', stretch: 'stretch', 'space-between': 'space-between' }
-const dimension = (v: Size) => (v === 'fill' ? '100%' : v === 'hug' ? 'fit-content' : \`\${v}px\`)
+// Taille d'un calque selon la direction de son parent : « extensible »
+// prend la place restante sur l'axe principal, s'étire sur l'autre.
+const sized = (width: Size | undefined, height: Size | undefined, parent: 'row' | 'column' | 'page') => {
+  const style: Record<string, string | number> = {}
+  if (typeof width === 'number') style.width = width
+  if (typeof height === 'number') style.height = height
+  if (width === 'fill') {
+    if (parent === 'row') Object.assign(style, { flex: '1 1 0', minWidth: 0 })
+    else if (parent === 'page') style.justifySelf = 'stretch'
+    else style.alignSelf = 'stretch'
+  } else if (parent === 'page') style.justifySelf = 'start'
+  if (height === 'fill') {
+    if (parent === 'column') Object.assign(style, { flex: '1 1 0', minHeight: 0 })
+    else style.alignSelf = 'stretch'
+  }
+  return style
+}
 
 function Canvas() {
   const [instances, setInstances] = useState<Node[]>([])
@@ -76,6 +104,13 @@ function Canvas() {
   // sans sélection, les composants réagissent comme dans l'application.
   const [insets, setInsets] = useState({ top: 0, bottom: 0 })
   const [interactive, setInteractive] = useState(false)
+  const [device, setDevice] = useState<Device>('mobile')
+  useEffect(() => {
+    const pick = () => setDevice(innerWidth < 600 ? 'mobile' : innerWidth < 1024 ? 'tablet' : 'desktop')
+    pick()
+    addEventListener('resize', pick)
+    return () => removeEventListener('resize', pick)
+  }, [])
   useEffect(() => {
     const onMessage = (event: MessageEvent) => {
       if (event.data?.type !== 'ds-studio:page') return
@@ -120,10 +155,10 @@ function Canvas() {
   const select = (id: string, event: ClickEvent) =>
     parent.postMessage({ type: 'ds-studio:select', id, shift: event.shiftKey }, '*')
 
-  const render = (node: Node, root: boolean): ReactElement => {
+  const render = (node: Node, within: 'row' | 'column' | 'page'): ReactElement => {
+    const root = within === 'page'
     if (isContainer(node)) {
-      const l = node.layout
-      const width = l ? l.width : 'fill'
+      const l = node.layout ? { ...node.layout, ...(node.adapt?.[device] ?? {}) } : undefined
       return (
         <div
           key={node.id}
@@ -132,14 +167,13 @@ function Canvas() {
           onClick={(event) => {
             event.stopPropagation()
             if (interactive) {
-              if (node.link) parent.postMessage({ type: 'ds-studio:navigate', page: node.link }, '*')
+              if (node.link) window.parent.postMessage({ type: 'ds-studio:navigate', page: node.link }, '*')
               return
             }
             select(node.id, event)
           }}
           style={{
             boxSizing: 'border-box',
-            ...(root ? { justifySelf: width === 'fill' ? 'stretch' : 'start' } : {}),
             ...(l
               ? {
                   display: 'flex',
@@ -149,16 +183,17 @@ function Canvas() {
                   padding: l.padding.map((p) => p + 'px').join(' '),
                   alignItems: flex[l.align],
                   justifyContent: flex[l.justify],
-                  width: dimension(l.width),
-                  height: l.height === 'hug' ? 'auto' : dimension(l.height),
+                  ...sized(l.width, l.height, within),
                 }
-              : { display: 'grid', justifyItems: 'start' }),
+              : { display: 'grid', justifyItems: 'start', ...sized(node.size?.width, node.size?.height, within) }),
+            ...(node.style?.fill ? { background: \`var(\${node.style.fill})\` } : {}),
+            ...(node.style?.radius !== undefined ? { borderRadius: node.style.radius } : {}),
             cursor: interactive ? (node.link ? 'pointer' : undefined) : 'pointer',
             outline: mark(node.id) ?? (interactive ? undefined : '1px dashed rgba(138, 56, 245, 0.3)'),
             outlineOffset: 2,
           }}
         >
-          {node.children.map((child) => render(child, false))}
+          {node.children.map((child) => render(child, l ? l.direction : 'column'))}
         </div>
       )
     }
@@ -170,7 +205,7 @@ function Canvas() {
         data-ds-root={root || undefined}
         onClickCapture={(event) => {
           if (interactive) {
-            if (node.link) parent.postMessage({ type: 'ds-studio:navigate', page: node.link }, '*')
+            if (node.link) window.parent.postMessage({ type: 'ds-studio:navigate', page: node.link }, '*')
             return
           }
           event.preventDefault()
@@ -178,7 +213,7 @@ function Canvas() {
           select(node.id, event)
         }}
         style={{
-          ...(root ? { justifySelf: 'start' } : {}),
+          ...sized(node.size?.width, node.size?.height, within),
           cursor: interactive ? undefined : 'pointer',
           outline: mark(node.id),
           outlineOffset: 4,
@@ -224,7 +259,7 @@ function Canvas() {
         boxSizing: 'border-box',
       }}
     >
-      {instances.map((node) => render(node, true))}
+      {instances.map((node) => render(node, 'page'))}
       {!instances.length && (
         <p style={{ opacity: 0.6, textAlign: 'center', marginTop: 48 }}>
           Glisse un composant du panneau ici.

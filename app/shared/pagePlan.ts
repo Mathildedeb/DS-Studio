@@ -13,6 +13,18 @@ const id = z.string().regex(/^[a-z0-9-]{1,40}$/);
 const name = z.string().trim().min(1).max(60);
 // Interaction : au clic, ouvre cette page de la Preview (codée au Build).
 const link = z.string().regex(/^[a-z0-9-]{1,40}$/);
+// Dimensions d'un calque dans son Auto Layout : ajustée au contenu,
+// extensible (remplit la place) ou fixe en px.
+const sizeValue = z.union([z.enum(['hug', 'fill']), z.number().int().min(1).max(4000)]);
+const sizing = z.object({ width: sizeValue.optional(), height: sizeValue.optional() }).strict();
+// Styles d'un Groupe ou d'un Auto Layout : fond (une couleur de tes tokens,
+// par sa variable CSS) et arrondi.
+const styling = z
+  .object({
+    fill: z.string().regex(/^--[\w-]{1,80}$/).optional(),
+    radius: z.number().int().min(0).max(400).optional(),
+  })
+  .strict();
 
 export const instanceSchema = z
   .object({
@@ -25,13 +37,14 @@ export const instanceSchema = z
     // Pas encore codé : son composant Figma, rendu en maquette jusqu'au Build.
     figma: z.string().max(200).regex(/^I?\d+[:-]\d+(;\d+[:-]\d+)*$/).optional(),
     link: link.optional(),
+    size: sizing.optional(),
     // Propriétés de code, ou variantes Figma (« Size », « style »…) d'une maquette.
     props: z.record(z.string().regex(/^[\p{L}\w .#-]{1,60}$/u), value),
   })
   .strict();
 
 // Disposition d'un Auto Layout, comme dans Figma.
-const size = z.union([z.enum(['hug', 'fill']), z.number().int().min(1).max(4000)]);
+const size = sizeValue;
 export const layoutSchema = z
   .object({
     direction: z.enum(['row', 'column']),
@@ -47,6 +60,27 @@ export const layoutSchema = z
   })
   .strict();
 export type Layout = z.infer<typeof layoutSchema>;
+export type Size = z.infer<typeof sizeValue>;
+export type Sizing = z.infer<typeof sizing>;
+export type Styling = z.infer<typeof styling>;
+// Appareils de l'adaptation : un Auto Layout peut changer de disposition
+// selon la largeur (moins de 600 px, moins de 1024 px, au-delà).
+export const devices = ['mobile', 'tablet', 'desktop'] as const;
+export type Device = (typeof devices)[number];
+export const deviceOf = (width: number): Device => (width < 600 ? 'mobile' : width < 1024 ? 'tablet' : 'desktop');
+const adaptation = z
+  .object({
+    mobile: layoutSchema.partial().optional(),
+    tablet: layoutSchema.partial().optional(),
+    desktop: layoutSchema.partial().optional(),
+  })
+  .strict();
+export type Adaptation = Partial<Record<Device, Partial<Layout>>>;
+// Disposition réellement appliquée sur un appareil.
+export const layoutOn = (l: Layout, adapt: Adaptation | undefined, device: Device): Layout => ({
+  ...l,
+  ...(adapt?.[device] ?? {}),
+});
 export const defaultLayout: Layout = {
   direction: 'column',
   gap: 16,
@@ -59,13 +93,23 @@ export const defaultLayout: Layout = {
 };
 
 export type Instance = z.infer<typeof instanceSchema>;
-export type Group = { id: string; type: 'group'; name?: string; link?: string; children: Node[] };
+export type Group = {
+  id: string;
+  type: 'group';
+  name?: string;
+  link?: string;
+  size?: Sizing;
+  style?: Styling;
+  children: Node[];
+};
 export type AutoLayout = {
   id: string;
   type: 'autolayout';
   name?: string;
   link?: string;
   layout: Layout;
+  adapt?: Adaptation;
+  style?: Styling;
   children: Node[];
 };
 export type Container = Group | AutoLayout;
@@ -80,6 +124,8 @@ const nodeSchema: z.ZodType<Node> = z.lazy(() =>
         type: z.literal('group'),
         name: name.optional(),
         link: link.optional(),
+        size: sizing.optional(),
+        style: styling.optional(),
         children: z.array(nodeSchema).max(200),
       })
       .strict(),
@@ -90,6 +136,8 @@ const nodeSchema: z.ZodType<Node> = z.lazy(() =>
         name: name.optional(),
         link: link.optional(),
         layout: layoutSchema,
+        adapt: adaptation.optional(),
+        style: styling.optional(),
         children: z.array(nodeSchema).max(200),
       })
       .strict(),
@@ -236,10 +284,44 @@ export const renameNode = (plan: PagePlan, target: string, next: string): PagePl
     return (clean ? { ...rest, name: clean } : rest) as Node;
   }),
 });
-export const setLayout = (plan: PagePlan, target: string, patch: Partial<Layout>): PagePlan => ({
-  instances: update(plan.instances, target, (n) =>
-    isContainer(n) && n.type === 'autolayout' ? { ...n, layout: { ...n.layout, ...patch } } : n,
-  ),
+// Disposition d'un Auto Layout : la base, ou les réglages propres à un appareil.
+export const setLayout = (
+  plan: PagePlan,
+  target: string,
+  patch: Partial<Layout>,
+  device?: Device,
+): PagePlan => ({
+  instances: update(plan.instances, target, (n) => {
+    if (!isContainer(n) || n.type !== 'autolayout') return n;
+    if (!device) return { ...n, layout: { ...n.layout, ...patch } };
+    return { ...n, adapt: { ...n.adapt, [device]: { ...n.adapt?.[device], ...patch } } };
+  }),
+});
+// Ne plus utiliser de réglages propres sur cet appareil.
+export const clearAdapt = (plan: PagePlan, target: string, device: Device): PagePlan => ({
+  instances: update(plan.instances, target, (n) => {
+    if (!isContainer(n) || n.type !== 'autolayout' || !n.adapt) return n;
+    const { [device]: _, ...rest } = n.adapt;
+    const { adapt: __, ...node } = n;
+    return Object.keys(rest).length ? { ...n, adapt: rest } : node;
+  }),
+});
+// Dimensions d'un composant ou d'un Groupe dans son Auto Layout.
+export const setSize = (plan: PagePlan, target: string, patch: Sizing): PagePlan => ({
+  instances: update(plan.instances, target, (n) => {
+    if (isContainer(n) && n.type === 'autolayout')
+      return { ...n, layout: { ...n.layout, ...(patch as Partial<Layout>) } };
+    return { ...n, size: { ...(n as Instance | Group).size, ...patch } } as Node;
+  }),
+});
+export const setStyle = (plan: PagePlan, target: string, patch: Styling): PagePlan => ({
+  instances: update(plan.instances, target, (n) => {
+    if (!isContainer(n)) return n;
+    const next = { ...n.style, ...patch };
+    for (const k of Object.keys(next) as (keyof Styling)[]) if (next[k] === undefined) delete next[k];
+    const { style: _, ...rest } = n;
+    return (Object.keys(next).length ? { ...rest, style: next } : rest) as Node;
+  }),
 });
 // Grouper (⌘G) ou mettre en Auto Layout (⇧A) des calques voisins : ils
 // entrent dans le nouveau conteneur, à la place du premier.
@@ -325,7 +407,12 @@ export const opSchema = z.discriminatedUnion('op', [
     })
     .strict(),
   z.object({ op: z.literal('unwrap'), id: ref }).strict(),
-  z.object({ op: z.literal('layout'), id: ref, layout: layoutSchema.partial() }).strict(),
+  // Disposition d'un Auto Layout ; device : réglage propre à mobile, tablette ou desktop.
+  z
+    .object({ op: z.literal('layout'), id: ref, layout: layoutSchema.partial(), device: z.enum(devices).optional() })
+    .strict(),
+  z.object({ op: z.literal('size'), id: ref, size: sizing }).strict(),
+  z.object({ op: z.literal('style'), id: ref, style: styling }).strict(),
 ]);
 export type PageOp = z.infer<typeof opSchema>;
 
@@ -439,7 +526,11 @@ export function applyOps(
     else if (op.op === 'layout') {
       if (!isContainer(target!) || target!.type !== 'autolayout')
         notes.push(`${labelOf(target!)} n’est pas un Auto Layout.`);
-      else plan = setLayout(plan, target!.id, op.layout);
+      else plan = setLayout(plan, target!.id, op.layout, op.device);
+    } else if (op.op === 'size') plan = setSize(plan, target!.id, op.size);
+    else if (op.op === 'style') {
+      if (!isContainer(target!)) notes.push(`${labelOf(target!)} : fond et arrondi se règlent sur un Groupe ou un Auto Layout.`);
+      else plan = setStyle(plan, target!.id, op.style);
     } else if (op.op === 'link') {
       const to = op.page === null ? undefined : findPage(op.page);
       if (op.page !== null && !to) {

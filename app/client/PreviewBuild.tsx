@@ -13,7 +13,12 @@ import {
   moveInstance,
   removeInstance,
   renameNode,
+  clearAdapt,
+  deviceOf,
+  layoutOn,
   setLayout,
+  setSize,
+  setStyle,
   setLink,
   setProp,
   unwrapNode,
@@ -21,6 +26,8 @@ import {
   type Instance,
   type Layout,
   type Node,
+  type Size,
+  type Sizing,
   type PagePlan,
 } from '../shared/pagePlan.js';
 import type { CodeProposal } from '../server/code.js';
@@ -133,6 +140,27 @@ export default function PreviewBuild({
   };
   const [layerQuery, setLayerQuery] = useState('');
   const [menu, setMenu] = useState<{ id: string; x: number; y: number }>();
+  // Tokens du projet proposés dans les propriétés : couleurs (par leur
+  // variable CSS), espacements et arrondis (par leur valeur).
+  const [tokens, setTokens] = useState<Tokens>({ colors: [], spacing: [], radius: [] });
+  useEffect(() => {
+    request<{ tokens: Record<string, { $type?: string; $value?: unknown }> }>('project-tokens')
+      .then(({ tokens: all }) => {
+        const px = (re: RegExp) =>
+          [...new Set(Object.entries(all)
+            .filter(([k, t]) => t.$type === 'dimension' && re.test(k))
+            .map(([, t]) => parseFloat(String(t.$value)))
+            .filter((n) => Number.isFinite(n) && n >= 0 && n <= 400))].sort((a, b) => a - b);
+        setTokens({
+          colors: Object.entries(all)
+            .filter(([, t]) => t.$type === 'color' && typeof t.$value === 'string')
+            .map(([k, t]) => ({ key: k, css: `--${k.replaceAll('.', '-')}`, value: String(t.$value) })),
+          spacing: px(/spac/i),
+          radius: px(/radius/i),
+        });
+      })
+      .catch(() => undefined);
+  }, []);
   const [dropOn, setDropOn] = useState<{ id: string; where: 'before' | 'after' | 'inside' }>();
   const [inspected, setInspected] = useState<string>();
   const [rects, setRects] = useState<Rect[]>([]);
@@ -411,7 +439,11 @@ export default function PreviewBuild({
     const first = current.children[0]?.id ?? '';
     save(unwrapNode(plan, current.id), first);
   };
-  const layout = (patch: Partial<Layout>) => current && save(setLayout(plan, current.id, patch));
+  // Appareil affiché : l'Adaptation règle un Auto Layout pour lui seul.
+  const screenDevice = deviceOf(screen.width);
+  const adaptOn = !!current && isContainer(current) && current.type === 'autolayout' && !!current.adapt?.[screenDevice];
+  const layout = (patch: Partial<Layout>) =>
+    current && save(setLayout(plan, current.id, patch, adaptOn ? screenDevice : undefined));
   // Un Groupe devient un Auto Layout (ou l'inverse) sans perdre ses calques.
   const convert = () => {
     if (!current || !isContainer(current) || !found) return;
@@ -569,7 +601,7 @@ export default function PreviewBuild({
     onBuild(
       toCode.length
         ? `Build, étape 1/2 de la page « ${page.name} » : code UNIQUEMENT ces composants du DS, encore en maquette, fidèles à Figma et avec mes tokens, chacun dans son dossier src/components/<niveau>/<Nom>/ avec son CSS et une interface <Nom>Props pour ses variantes : ${toCode.join(', ')}. Ne touche à aucune page : la page sera codée à l'étape 2.`
-        : `Build, étape 2/2 : code la vraie page React « ${page.name} » avec les composants du DS, en suivant l'arbre des calques ci-dessous : chaque Auto Layout est une boîte flex (direction, gap, padding, align, justify, wrap, width/height : hug = ajusté au contenu, fill = extensible, nombre = fixe en px), chaque Groupe une simple boîte qui regroupe ; garde l'ordre et les props, et réutilise les composants codés (file) sans les recoder. La page vit à la route ${page.path} du projet : rends-la accessible à cette adresse sans casser l'existant. Les interactions « au_clic_aller_a » ouvrent la route indiquée : code cette navigation.`,
+        : `Build, étape 2/2 : code la vraie page React « ${page.name} » avec les composants du DS, en suivant l'arbre des calques ci-dessous : chaque Auto Layout est une boîte flex (direction, gap, padding, align, justify, wrap, width/height : hug = ajusté au contenu, fill = extensible, nombre = fixe en px ; « adaptation » = réglages propres à mobile < 600 px, tablette < 1024 px, desktop, en media queries), chaque Groupe une simple boîte qui regroupe ; « taille » règle un calque dans son Auto Layout, « style » son fond (variable CSS d'un token) et son arrondi ; garde l'ordre et les props, et réutilise les composants codés (file) sans les recoder. La page vit à la route ${page.path} du projet : rends-la accessible à cette adresse sans casser l'existant. Les interactions « au_clic_aller_a » ouvrent la route indiquée : code cette navigation.`,
       {
         page: 'preview',
         kind: 'page',
@@ -1066,94 +1098,159 @@ export default function PreviewBuild({
             {multi.length > 0 ? (
               <>
                 <p className="build-title">{multi.length + 1} calques sélectionnés</p>
-                <div className="build-actions">
+                <div className="build-icons">
                   <button type="button" onClick={() => wrap('group')} title="Grouper (⌘G)">
-                    Grouper
+                    ▢ Grouper
                   </button>
                   <button type="button" onClick={() => wrap('autolayout')} title="Auto Layout (⇧A)">
-                    Auto Layout
+                    ⇥ Auto Layout
                   </button>
                 </div>
                 {hint && <p className="build-empty">{hint}</p>}
               </>
             ) : current ? (
               <>
-                <p className="build-title">{labelOf(current)}</p>
-                <p className="build-file">
-                  {isContainer(current)
-                    ? `${kindLabel(current)} · ${current.children.length} calque(s)`
-                    : (current.file ?? 'Maquette Figma · codée au Build')}
-                </p>
-                <div className="build-actions">
-                  <button type="button" onClick={() => move(-1)} disabled={!found || found.index === 0} title="Monter (⌥↑)" aria-label="Monter">
-                    ↑
-                  </button>
-                  <button type="button" onClick={() => move(1)} disabled={!found || found.index === found.siblings.length - 1} title="Descendre (⌥↓)" aria-label="Descendre">
-                    ↓
-                  </button>
-                  <button type="button" onClick={duplicate} title="Dupliquer (⌘D)">
-                    Dupliquer
-                  </button>
-                  <button type="button" onClick={remove} title="Supprimer (⌫)">
-                    Supprimer
-                  </button>
+                <div className="build-prop-head">
+                  <p className="build-title" title={labelOf(current)}>{labelOf(current)}</p>
+                  <small>{kindLabel(current)}</small>
                 </div>
-                {isContainer(current) ? (
-                  <div className="build-actions">
-                    <button type="button" onClick={convert}>
-                      {current.type === 'group' ? 'Transformer en Auto Layout' : 'Transformer en Groupe'}
-                    </button>
-                    <button type="button" onClick={unwrap} title="Dégrouper (⇧⌘G)">
-                      Dégrouper
-                    </button>
-                  </div>
-                ) : (
-                  <div className="build-actions">
-                    <button type="button" onClick={() => wrap('group')} title="Grouper (⌘G)">
-                      Grouper
-                    </button>
-                    <button type="button" onClick={() => wrap('autolayout')} title="Auto Layout (⇧A)">
-                      Auto Layout
-                    </button>
-                  </div>
+                <div className="build-icons" role="toolbar" aria-label="Actions du calque">
+                  <button type="button" onClick={() => move(-1)} disabled={!found || found.index === 0} title="Monter (⌥↑)" aria-label="Monter">↑</button>
+                  <button type="button" onClick={() => move(1)} disabled={!found || found.index === found.siblings.length - 1} title="Descendre (⌥↓)" aria-label="Descendre">↓</button>
+                  <button type="button" onClick={duplicate} title="Dupliquer (⌘D)" aria-label="Dupliquer">⧉</button>
+                  {isContainer(current) ? (
+                    <>
+                      <button type="button" onClick={convert} title={current.type === 'group' ? 'Transformer en Auto Layout' : 'Transformer en Groupe'} aria-label={current.type === 'group' ? 'Transformer en Auto Layout' : 'Transformer en Groupe'}>⇄</button>
+                      <button type="button" onClick={unwrap} title="Dégrouper (⇧⌘G)" aria-label="Dégrouper">⊟</button>
+                    </>
+                  ) : (
+                    <>
+                      <button type="button" onClick={() => wrap('group')} title="Grouper (⌘G)" aria-label="Grouper">▢</button>
+                      <button type="button" onClick={() => wrap('autolayout')} title="Auto Layout (⇧A)" aria-label="Auto Layout">⇥</button>
+                    </>
+                  )}
+                  <button type="button" onClick={remove} title="Supprimer (⌫)" aria-label="Supprimer">✕</button>
+                </div>
+                {currentComp && (
+                  <Section title="Composant">
+                    {(currentSpecs ?? []).map((s) => (
+                      <PropControl
+                        key={s.name}
+                        spec={s}
+                        value={currentComp.props[s.name]}
+                        onChange={(v) => save(setProp(plan, currentComp.id, s.name, v))}
+                      />
+                    ))}
+                    {currentSpecs?.length === 0 && <p className="build-empty">Aucune propriété réglable.</p>}
+                  </Section>
                 )}
-                {isContainer(current) && current.type === 'autolayout' && (
-                  <LayoutControls layout={current.layout} onChange={layout} />
+                {isContainer(current) && current.type === 'autolayout' ? (
+                  <LayoutControls
+                    layout={layoutOn(current.layout, current.adapt, screenDevice)}
+                    spacing={tokens.spacing}
+                    onChange={layout}
+                  />
+                ) : (
+                  <Section title="Dimensions">
+                    <SizeControl label="Largeur" axis="width" value={(current as { size?: Sizing }).size?.width} onChange={(v) => save(setSize(plan, current.id, { width: v }))} />
+                    <SizeControl label="Hauteur" axis="height" value={(current as { size?: Sizing }).size?.height} onChange={(v) => save(setSize(plan, current.id, { height: v }))} />
+                    {found?.parent?.type !== 'autolayout' && (
+                      <p className="build-empty">« Extensible » agit dans un Auto Layout.</p>
+                    )}
+                  </Section>
                 )}
                 {isContainer(current) && current.type === 'group' && (
-                  <p className="build-empty">Un Groupe organise des calques, sans disposition : pour régler espacements et alignement, transforme-le en Auto Layout.</p>
+                  <p className="build-empty">Un Groupe organise des calques sans les disposer : ⇄ le transforme en Auto Layout.</p>
                 )}
-                <label className="build-prop">
-                  <span>
-                    Au clic
-                    <small>Interaction codée au Build ; essaie-la en mode Tester.</small>
-                  </span>
-                  <select
-                    value={current.link ?? ''}
-                    onChange={(e) => save(setLink(plan, current.id, e.target.value || undefined))}
-                  >
-                    <option value="">Rien</option>
-                    {pages
-                      .filter((x) => x.id !== page.id)
-                      .map((x) => (
-                        <option key={x.id} value={x.id}>
-                          Aller à « {x.name} »
-                        </option>
-                      ))}
-                  </select>
-                </label>
-                {currentComp &&
-                  (currentSpecs ?? []).map((s) => (
-                    <PropControl
-                      key={s.name}
-                      spec={s}
-                      value={currentComp.props[s.name]}
-                      onChange={(v) => save(setProp(plan, currentComp.id, s.name, v))}
+                {isContainer(current) && (
+                  <Section title="Styles">
+                    <label className="build-prop">
+                      <span>Fond</span>
+                      <span className="build-swatch-row">
+                        <i
+                          className="build-swatch"
+                          style={{ background: tokens.colors.find((c) => c.css === current.style?.fill)?.value ?? 'transparent' }}
+                        />
+                        <select
+                          value={current.style?.fill ?? ''}
+                          onChange={(e) => save(setStyle(plan, current.id, { fill: e.target.value || undefined }))}
+                        >
+                          <option value="">Aucun</option>
+                          {tokens.colors.map((c) => (
+                            <option key={c.key} value={c.css}>
+                              {c.key} · {c.value}
+                            </option>
+                          ))}
+                        </select>
+                      </span>
+                    </label>
+                    <NumberField
+                      label="Arrondi"
+                      value={current.style?.radius ?? 0}
+                      suggestions={tokens.radius}
+                      onChange={(v) => save(setStyle(plan, current.id, { radius: v || undefined }))}
                     />
-                  ))}
-                {currentComp && currentSpecs?.length === 0 && (
-                  <p className="build-empty">Aucune propriété modifiable pour ce composant.</p>
+                  </Section>
                 )}
+                {isContainer(current) && current.type === 'autolayout' && (
+                  <Section title="Adaptation" closed>
+                    <label className="build-check build-prop">
+                      <input
+                        type="checkbox"
+                        checked={adaptOn}
+                        onChange={(e) =>
+                          save(
+                            e.target.checked
+                              ? setLayout(plan, current.id, {}, screenDevice)
+                              : clearAdapt(plan, current.id, screenDevice),
+                          )
+                        }
+                      />
+                      <span>
+                        Réglages propres à {deviceName[screenDevice]}
+                        <small>
+                          {adaptOn
+                            ? `Disposition, espacements, alignement et dimensions ne changent que sur ${deviceName[screenDevice]}.`
+                            : `Change de format (iPhone, Tablette, Desktop) pour régler un autre appareil.`}
+                        </small>
+                      </span>
+                    </label>
+                    {Object.keys(current.adapt ?? {}).length > 0 && (
+                      <p className="build-empty">
+                        Réglages propres : {Object.keys(current.adapt ?? {}).map((d) => deviceName[d as keyof typeof deviceName]).join(', ')}
+                      </p>
+                    )}
+                  </Section>
+                )}
+                <Section title="Interactions" closed={!current.link}>
+                  <label className="build-prop">
+                    <span>
+                      Au clic
+                      <small>Codée au Build ; essaie-la en mode Tester.</small>
+                    </span>
+                    <select
+                      value={current.link ?? ''}
+                      onChange={(e) => save(setLink(plan, current.id, e.target.value || undefined))}
+                    >
+                      <option value="">Rien</option>
+                      {pages
+                        .filter((x) => x.id !== page.id)
+                        .map((x) => (
+                          <option key={x.id} value={x.id}>
+                            Aller à « {x.name} »
+                          </option>
+                        ))}
+                    </select>
+                  </label>
+                </Section>
+                <Section title="Détails techniques" closed>
+                  <p className="build-file">
+                    {currentComp
+                      ? (currentComp.file ?? `Maquette Figma ${currentComp.figma ?? ''} · codée au Build`)
+                      : `${kindLabel(current)} · ${isContainer(current) ? current.children.length : 0} calque(s)`}
+                  </p>
+                  <p className="build-file">Identifiant : {current.id}</p>
+                </Section>
               </>
             ) : (
               <p className="build-empty">
@@ -1284,114 +1381,225 @@ function PropControl({
 const kindLabel = (n: Node) =>
   !isContainer(n) ? 'Composant' : n.type === 'group' ? 'Groupe' : 'Auto Layout';
 
-// Disposition d'un Auto Layout : direction, espacements, alignement,
-// dimensions. Chaque réglage change le canvas tout de suite.
-function LayoutControls({ layout, onChange }: { layout: Layout; onChange: (p: Partial<Layout>) => void }) {
-  const num = (v: string) => Math.max(0, Math.min(400, Math.round(Number(v) || 0)));
-  const sameSides = layout.padding.every((p) => p === layout.padding[0]);
-  const size = (axis: 'width' | 'height') => (
-    <label className="build-prop">
-      <span>{axis === 'width' ? 'Largeur' : 'Hauteur'}</span>
-      <select
-        value={typeof layout[axis] === 'number' ? 'fixed' : (layout[axis] as string)}
-        onChange={(e) =>
-          onChange({ [axis]: e.target.value === 'fixed' ? (axis === 'width' ? 320 : 200) : e.target.value } as Partial<Layout>)
-        }
+type Tokens = { colors: { key: string; css: string; value: string }[]; spacing: number[]; radius: number[] };
+const deviceName = { mobile: 'mobile', tablet: 'tablette', desktop: 'desktop' } as const;
+
+// Section repliable du panneau Propriétés ; son état reste d'une sélection à l'autre.
+function Section({ title, closed, children }: { title: string; closed?: boolean; children: React.ReactNode }) {
+  const [open, setOpen] = useState(() => stored(`section:${title}`, !closed));
+  return (
+    <section className="build-section">
+      <button
+        type="button"
+        className="build-section-head"
+        aria-expanded={open}
+        onClick={() => {
+          setOpen(!open);
+          store(`section:${title}`, !open);
+        }}
       >
-        <option value="hug">Ajustée au contenu</option>
-        <option value="fill">Extensible</option>
-        <option value="fixed">Fixe</option>
-      </select>
-      {typeof layout[axis] === 'number' && (
-        <input
-          type="number"
-          min={1}
-          max={4000}
-          value={layout[axis] as number}
-          aria-label={`${axis === 'width' ? 'Largeur' : 'Hauteur'} fixe en px`}
-          onChange={(e) => onChange({ [axis]: Math.max(1, Math.min(4000, Math.round(Number(e.target.value) || 1))) } as Partial<Layout>)}
-        />
+        <span aria-hidden="true">{open ? '▾' : '▸'}</span> {title}
+      </button>
+      {open && <div className="build-section-body">{children}</div>}
+    </section>
+  );
+}
+// Champ de valeur en px, avec les valeurs de tes tokens proposées.
+function NumberField({
+  label,
+  value,
+  suggestions,
+  onChange,
+}: {
+  label: string;
+  value: number;
+  suggestions: number[];
+  onChange: (v: number) => void;
+}) {
+  const list = `build-list-${label.replace(/\W/g, '')}`;
+  return (
+    <label className="build-prop build-num">
+      <span>{label}</span>
+      <input
+        type="number"
+        min={0}
+        max={400}
+        list={suggestions.length ? list : undefined}
+        value={value}
+        onChange={(e) => onChange(Math.max(0, Math.min(400, Math.round(Number(e.target.value) || 0))))}
+      />
+      {suggestions.length > 0 && (
+        <datalist id={list}>
+          {suggestions.map((v) => (
+            <option key={v} value={v} />
+          ))}
+        </datalist>
       )}
     </label>
   );
+}
+function SizeControl({
+  label,
+  axis,
+  value,
+  onChange,
+}: {
+  label: string;
+  axis: 'width' | 'height';
+  value: Size | undefined;
+  onChange: (v: Size) => void;
+}) {
+  const mode = typeof value === 'number' ? 'fixed' : (value ?? 'hug');
   return (
-    <div className="build-layout">
-      <h4>Disposition</h4>
-      <div className="build-segment" role="group" aria-label="Direction">
-        <button type="button" aria-pressed={layout.direction === 'column'} onClick={() => onChange({ direction: 'column' })} title="Vertical">
-          ⤓ Vertical
-        </button>
-        <button type="button" aria-pressed={layout.direction === 'row'} onClick={() => onChange({ direction: 'row' })} title="Horizontal">
-          ⇥ Horizontal
-        </button>
-      </div>
-      <label className="build-check build-prop">
-        <input type="checkbox" checked={layout.wrap} onChange={(e) => onChange({ wrap: e.target.checked })} />
-        <span>Retour à la ligne</span>
-      </label>
-      <h4>Espacements</h4>
-      <label className="build-prop">
-        <span>Entre les éléments (px)</span>
-        <input type="number" min={0} max={400} value={layout.gap} onChange={(e) => onChange({ gap: num(e.target.value) })} />
-      </label>
-      {sameSides ? (
-        <label className="build-prop">
-          <span>Intérieurs (px)</span>
+    <label className="build-prop build-size">
+      <span>{label}</span>
+      <span className="build-size-row">
+        <select
+          value={mode}
+          onChange={(e) => onChange(e.target.value === 'fixed' ? (axis === 'width' ? 320 : 200) : (e.target.value as Size))}
+        >
+          <option value="hug">Ajustée</option>
+          <option value="fill">Extensible</option>
+          <option value="fixed">Fixe</option>
+        </select>
+        {typeof value === 'number' && (
           <input
             type="number"
-            min={0}
-            max={400}
-            value={layout.padding[0]}
-            onChange={(e) => {
-              const v = num(e.target.value);
-              onChange({ padding: [v, v, v, v] });
-            }}
+            min={1}
+            max={4000}
+            value={value}
+            aria-label={`${label} fixe en px`}
+            onChange={(e) => onChange(Math.max(1, Math.min(4000, Math.round(Number(e.target.value) || 1))))}
           />
+        )}
+      </span>
+    </label>
+  );
+}
+// Alignement en grille, comme dans Figma : la case choisie place les
+// éléments ; « Répartie » les étale sur l'axe principal.
+function AlignGrid({ layout, onChange }: { layout: Layout; onChange: (p: Partial<Layout>) => void }) {
+  const steps = ['start', 'center', 'end'] as const;
+  const row = layout.direction === 'row';
+  return (
+    <div className="build-align" role="group" aria-label="Alignement">
+      {steps.map((v) =>
+        steps.map((h) => {
+          const main = row ? h : v;
+          const cross = row ? v : h;
+          const on =
+            (layout.justify === main || (layout.justify === 'space-between' && main === 'start')) &&
+            (layout.align === cross || (layout.align === 'stretch' && cross === 'start'));
+          return (
+            <button
+              key={`${v}-${h}`}
+              type="button"
+              aria-pressed={on}
+              aria-label={`${{ start: 'Haut', center: 'Milieu', end: 'Bas' }[v]} ${{ start: 'gauche', center: 'centre', end: 'droite' }[h]}`}
+              title={`${{ start: 'Haut', center: 'Milieu', end: 'Bas' }[v]} ${{ start: 'gauche', center: 'centre', end: 'droite' }[h]}`}
+              // Répartie et Étirer restent : la case règle l'autre axe.
+              onClick={() =>
+                onChange({
+                  justify: layout.justify === 'space-between' ? 'space-between' : main,
+                  align: layout.align === 'stretch' ? 'stretch' : cross,
+                })
+              }
+            >
+              <i />
+            </button>
+          );
+        }),
+      )}
+    </div>
+  );
+}
+
+// Disposition d'un Auto Layout : direction, espacements, alignement,
+// dimensions. Chaque réglage change le canvas tout de suite.
+function LayoutControls({
+  layout,
+  spacing,
+  onChange,
+}: {
+  layout: Layout;
+  spacing: number[];
+  onChange: (p: Partial<Layout>) => void;
+}) {
+  const sameSides = layout.padding.every((p) => p === layout.padding[0]);
+  const [split, setSplit] = useState(!sameSides);
+  return (
+    <>
+      <Section title="Disposition">
+        <div className="build-segment" role="group" aria-label="Direction">
+          <button type="button" aria-pressed={layout.direction === 'column'} onClick={() => onChange({ direction: 'column' })} title="Vertical">
+            ⤓ Vertical
+          </button>
+          <button type="button" aria-pressed={layout.direction === 'row'} onClick={() => onChange({ direction: 'row' })} title="Horizontal">
+            ⇥ Horizontal
+          </button>
+        </div>
+        <label className="build-check build-prop">
+          <input type="checkbox" checked={layout.wrap} onChange={(e) => onChange({ wrap: e.target.checked })} />
+          <span>Retour à la ligne</span>
         </label>
-      ) : null}
-      <details open={!sameSides}>
-        <summary>Intérieurs par côté</summary>
-        <div className="build-sides">
-          {(['Haut', 'Droite', 'Bas', 'Gauche'] as const).map((side, i) => (
-            <label key={side} className="build-prop">
-              <span>{side}</span>
-              <input
-                type="number"
-                min={0}
-                max={400}
+      </Section>
+      <Section title="Espacements">
+        <NumberField label="Entre les éléments" value={layout.gap} suggestions={spacing} onChange={(gap) => onChange({ gap })} />
+        {!split ? (
+          <NumberField
+            label="Intérieurs"
+            value={layout.padding[0]}
+            suggestions={spacing}
+            onChange={(v) => onChange({ padding: [v, v, v, v] })}
+          />
+        ) : (
+          <div className="build-sides">
+            {(['Haut', 'Droite', 'Bas', 'Gauche'] as const).map((side, i) => (
+              <NumberField
+                key={side}
+                label={side}
                 value={layout.padding[i]}
-                onChange={(e) => {
+                suggestions={spacing}
+                onChange={(v) => {
                   const next = [...layout.padding] as Layout['padding'];
-                  next[i] = num(e.target.value);
+                  next[i] = v;
                   onChange({ padding: next });
                 }}
               />
+            ))}
+          </div>
+        )}
+        <button type="button" className="build-link-button" onClick={() => setSplit(!split)}>
+          {split ? 'Mêmes intérieurs partout' : 'Intérieurs par côté'}
+        </button>
+      </Section>
+      <Section title="Alignement">
+        <div className="build-align-row">
+          <AlignGrid layout={layout} onChange={onChange} />
+          <div className="build-align-options">
+            <label className="build-check build-prop">
+              <input
+                type="checkbox"
+                checked={layout.justify === 'space-between'}
+                onChange={(e) => onChange({ justify: e.target.checked ? 'space-between' : 'start' })}
+              />
+              <span>Répartie</span>
             </label>
-          ))}
+            <label className="build-check build-prop">
+              <input
+                type="checkbox"
+                checked={layout.align === 'stretch'}
+                onChange={(e) => onChange({ align: e.target.checked ? 'stretch' : 'start' })}
+              />
+              <span>Étirer</span>
+            </label>
+          </div>
         </div>
-      </details>
-      <h4>Alignement</h4>
-      <label className="build-prop">
-        <span>{layout.direction === 'row' ? 'Vertical' : 'Horizontal'}</span>
-        <select value={layout.align} onChange={(e) => onChange({ align: e.target.value as Layout['align'] })}>
-          <option value="start">{layout.direction === 'row' ? 'En haut' : 'À gauche'}</option>
-          <option value="center">Au centre</option>
-          <option value="end">{layout.direction === 'row' ? 'En bas' : 'À droite'}</option>
-          <option value="stretch">Étirer</option>
-        </select>
-      </label>
-      <label className="build-prop">
-        <span>Distribution</span>
-        <select value={layout.justify} onChange={(e) => onChange({ justify: e.target.value as Layout['justify'] })}>
-          <option value="start">Au début</option>
-          <option value="center">Au centre</option>
-          <option value="end">À la fin</option>
-          <option value="space-between">Répartie</option>
-        </select>
-      </label>
-      <h4>Dimensions</h4>
-      {size('width')}
-      {size('height')}
-    </div>
+      </Section>
+      <Section title="Dimensions">
+        <SizeControl label="Largeur" axis="width" value={layout.width} onChange={(width) => onChange({ width })} />
+        <SizeControl label="Hauteur" axis="height" value={layout.height} onChange={(height) => onChange({ height })} />
+      </Section>
+    </>
   );
 }

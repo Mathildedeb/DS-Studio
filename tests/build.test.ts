@@ -207,3 +207,31 @@ test('calques en arbre : grouper, Auto Layout, imbriquer, dégrouper, renommer',
   });
   assert.equal((added.plan.instances[0] as typeof bar).children.length, 3);
 });
+
+test('propriétés : dimensions, styles et adaptation par appareil', async () => {
+  const { wrapNodes, setLayout, clearAdapt, setSize, setStyle, layoutOn, deviceOf, findNode } = await import(
+    '../app/shared/pagePlan.js'
+  );
+  const btn = (id: string) => ({ id, component: 'Button', file: 'src/components/atoms/Button/Button.tsx', props: {} });
+  const g = wrapNodes({ instances: [btn('a'), btn('b')] }, ['a', 'b'], 'autolayout');
+  let plan = setLayout(g.plan, g.id!, { direction: 'row' });
+  // Sur mobile seulement : vertical, 8 d'écart ; la base ne bouge pas.
+  plan = setLayout(plan, g.id!, { direction: 'column', gap: 8 }, 'mobile');
+  type AL = import('../app/shared/pagePlan.js').AutoLayout;
+  const al = () => findNode(plan, g.id!)!.node as AL;
+  assert.equal(deviceOf(393), 'mobile');
+  assert.equal(deviceOf(820), 'tablet');
+  assert.equal(deviceOf(1440), 'desktop');
+  assert.deepEqual([layoutOn(al().layout, al().adapt, 'mobile').direction, layoutOn(al().layout, al().adapt, 'mobile').gap], ['column', 8]);
+  assert.equal(layoutOn(al().layout, al().adapt, 'desktop').direction, 'row');
+  plan = clearAdapt(plan, g.id!, 'mobile');
+  assert.equal(al().adapt, undefined);
+  plan = setSize(plan, 'a', { width: 'fill' });
+  plan = setStyle(plan, g.id!, { fill: '--color-neutral-900', radius: 12 });
+  assert.deepEqual((findNode(plan, 'a')!.node as import('../app/shared/pagePlan.js').Instance).size, { width: 'fill' });
+  assert.deepEqual(al().style, { fill: '--color-neutral-900', radius: 12 });
+  plan = setStyle(plan, g.id!, { fill: undefined, radius: undefined });
+  assert.equal(al().style, undefined);
+  assert.doesNotThrow(() => planSchema.parse(plan));
+  assert.throws(() => planSchema.parse({ instances: [{ ...al(), style: { fill: 'red;}' } }] }));
+});

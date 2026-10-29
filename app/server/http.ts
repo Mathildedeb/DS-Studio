@@ -1187,6 +1187,11 @@ export async function createStudioServer(options: {
                     return {
                       [n.type === 'group' ? 'groupe' : 'auto_layout']: n.name ?? true,
                       ...(n.type === 'autolayout' ? { layout: n.layout } : {}),
+                      // Réglages propres à mobile (< 600 px), tablette (< 1024 px) ou desktop.
+                      ...(n.type === 'autolayout' && n.adapt ? { adaptation: n.adapt } : {}),
+                      ...(n.type === 'group' && n.size ? { taille: n.size } : {}),
+                      // Fond : variable CSS d'un token du projet ; arrondi en px.
+                      ...(n.style ? { style: n.style } : {}),
                       ...go,
                       enfants: tree(n.children),
                     };
@@ -1195,6 +1200,7 @@ export async function createStudioServer(options: {
                     ...(n.name ? { nom: n.name } : {}),
                     ...(n.file ? { file: n.file } : { figma_id: n.figma, a_coder: true }),
                     props: n.props,
+                    ...(n.size ? { taille: n.size } : {}),
                     ...go,
                   };
                 });
