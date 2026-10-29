@@ -125,6 +125,14 @@ export default function PreviewBuild({
   const [collapsed, setCollapsed] = useState<string[]>([]);
   const [renaming, setRenaming] = useState<string>();
   const [hint, setHint] = useState('');
+  // Panneau de gauche : les calques de la page, ou la bibliothèque du DS.
+  const [tab, setTabState] = useState<'layers' | 'components'>(() => stored('tab', 'layers'));
+  const setTab = (t: 'layers' | 'components') => {
+    setTabState(t);
+    store('tab', t);
+  };
+  const [layerQuery, setLayerQuery] = useState('');
+  const [menu, setMenu] = useState<{ id: string; x: number; y: number }>();
   const [dropOn, setDropOn] = useState<{ id: string; where: 'before' | 'after' | 'inside' }>();
   const [inspected, setInspected] = useState<string>();
   const [rects, setRects] = useState<Rect[]>([]);
@@ -384,6 +392,11 @@ export default function PreviewBuild({
     save(next, id);
   };
   const remove = () => current && save(removeInstance(plan, current.id), '');
+  const duplicateId = (target: string) => {
+    const { plan: next, id: copy } = duplicateInstance(plan, target);
+    save(next, copy);
+  };
+  const removeId = (target: string) => save(removeInstance(plan, target), target === selected ? '' : undefined);
   // Grouper (⌘G) ou mettre en Auto Layout (⇧A) la sélection ; dégrouper (⇧⌘G).
   const wrap = (kind: 'group' | 'autolayout') => {
     const ids = [selected, ...multi].filter((x): x is string => !!x);
@@ -425,6 +438,8 @@ export default function PreviewBuild({
     else if (k.alt && key === 'arrowup') move(-1);
     else if (k.alt && key === 'arrowdown') move(1);
     else if (key === 'escape') {
+      if (menu) return setMenu(undefined), true;
+      if (inspected) return setInspected(undefined), true;
       setSelected(undefined);
       setMulti([]);
       setInspected(undefined);
@@ -433,6 +448,12 @@ export default function PreviewBuild({
     else return false;
     return true;
   };
+  useEffect(() => {
+    if (!menu) return;
+    const close = () => setMenu(undefined);
+    addEventListener('pointerdown', close);
+    return () => removeEventListener('pointerdown', close);
+  }, [menu]);
   const shortcutRef = useRef(shortcut);
   shortcutRef.current = shortcut;
   useEffect(() => {
@@ -462,6 +483,7 @@ export default function PreviewBuild({
           setSelected(d.id);
           setMulti([]);
         }
+        if (tab !== 'layers') setTab('layers');
         setInspected(undefined);
         if (narrow) setRight(true);
       }
@@ -493,7 +515,7 @@ export default function PreviewBuild({
     const start = e.clientX;
     const from = widths[side];
     const onMove = (m: PointerEvent) => {
-      const next = Math.min(420, Math.max(180, from + (side === 0 ? 1 : -1) * (m.clientX - start)));
+      const next = Math.min(420, Math.max(200, from + (side === 0 ? 1 : -1) * (m.clientX - start)));
       setWidths((w) => (side === 0 ? [next, w[1]] : [w[0], next]));
     };
     const onUp = () => {
@@ -512,7 +534,7 @@ export default function PreviewBuild({
     if (!by) return;
     e.preventDefault();
     setWidths((w) => {
-      const next = Math.min(420, Math.max(180, w[side] + (side === 0 ? by : -by)));
+      const next = Math.min(420, Math.max(200, w[side] + (side === 0 ? by : -by)));
       const out: [number, number] = side === 0 ? [next, w[1]] : [w[0], next];
       store('widths', out);
       return out;
@@ -599,6 +621,19 @@ export default function PreviewBuild({
     return box && y > 0.3 && y < 0.7 ? 'inside' : y < 0.5 ? 'before' : 'after';
   };
   const q = query.trim().toLowerCase();
+  // Recherche dans les calques : ceux dont le nom correspond, et leurs parents.
+  const lq = layerQuery.trim().toLowerCase();
+  const matching = new Set<string>();
+  if (lq)
+    for (const f of flatten(plan))
+      if (labelOf(f.node).toLowerCase().includes(lq)) {
+        matching.add(f.node.id);
+        let p = f.parent;
+        while (p) {
+          matching.add(p);
+          p = findNode(plan, p)?.parent?.id ?? null;
+        }
+      }
   const levels = panelSelection.map((g) => g.level);
   const columns = narrow
     ? 'minmax(0, 1fr)'
@@ -675,21 +710,221 @@ export default function PreviewBuild({
 
       <div className="build-body" style={{ gridTemplateColumns: columns }}>
         {left && (
-          <aside id="build-library" className="build-side build-left" aria-label="Bibliothèque du Design System">
-            <div className="build-side-head">
+          <aside id="build-library" className="build-side build-left" aria-label="Calques et composants">
+            <div className="build-side-head build-tabs">
+              <div role="tablist" aria-label="Panneau de gauche">
+                <button type="button" role="tab" aria-selected={tab === 'layers'} onClick={() => setTab('layers')}>
+                  Calques
+                </button>
+                <button type="button" role="tab" aria-selected={tab === 'components'} onClick={() => setTab('components')}>
+                  Composants
+                </button>
+              </div>
+              <button type="button" className="build-close" onClick={() => setLeft(false)} aria-label="Réduire le panneau" title="Réduire">
+                ‹
+              </button>
+            </div>
+            {tab === 'layers' ? (
+              <>
               <input
                 ref={search}
                 type="search"
                 className="build-search"
-                placeholder="Rechercher  /"
+                placeholder="Rechercher un calque  /"
+                aria-label="Rechercher un calque"
+                value={layerQuery}
+                onChange={(e) => setLayerQuery(e.target.value)}
+              />
+            <section className="build-group">
+              <div className="build-layer-tools">
+                <span className="build-group-head">{page.name}</span>
+                <button type="button" onClick={() => setTab('components')} title="Ajouter un composant" aria-label="Ajouter un composant">
+                  +
+                </button>
+                <button type="button" onClick={() => wrap('group')} disabled={!selected} title="Grouper (⌘G)" aria-label="Grouper">
+                  ▢
+                </button>
+                <button type="button" onClick={() => wrap('autolayout')} disabled={!selected} title="Auto Layout (⇧A)" aria-label="Auto Layout">
+                  ⇥
+                </button>
+              </div>
+              {!plan.instances.length && (
+                <p className="build-empty">Page vide : glisse un composant ou clique sur +.</p>
+              )}
+              <ol className="build-layers" aria-label="Calques">
+                {flatten(plan)
+                  .filter((f) => (lq ? matching.has(f.node.id) : !hidden(f.parent)))
+                  .map(({ node: n, depth }) => {
+                    const box = isContainer(n);
+                    const open = box && !collapsed.includes(n.id);
+                    const isSel = n.id === selected || multi.includes(n.id);
+                    return (
+                      <li
+                        key={n.id}
+                        className={dropOn?.id === n.id ? `build-drop-${dropOn.where}` : undefined}
+                        draggable={renaming !== n.id}
+                        onDragStart={(e) => {
+                          e.stopPropagation();
+                          e.dataTransfer.setData('text/ds-layer', n.id);
+                        }}
+                        onDragOver={(e) => {
+                          e.preventDefault();
+                          setDropOn({ id: n.id, where: dropWhere(e, box) });
+                        }}
+                        onDragLeave={() => setDropOn(undefined)}
+                        onDrop={(e) => {
+                          e.preventDefault();
+                          const where = dropWhere(e, box);
+                          setDropOn(undefined);
+                          const moved = e.dataTransfer.getData('text/ds-layer');
+                          const added = e.dataTransfer.getData('text/ds-component');
+                          const at = findNode(plan, n.id)!;
+                          const parent = where === 'inside' ? n.id : (at.parent?.id ?? null);
+                          const index =
+                            where === 'inside' ? (box ? n.children.length : 0) : at.index + (where === 'after' ? 1 : 0);
+                          if (moved && moved !== n.id) {
+                            const from = findNode(plan, moved);
+                            // Même parent, plus bas : l'index se décale d'un cran.
+                            const shift = from && (from.parent?.id ?? null) === parent && from.index < index ? 1 : 0;
+                            save(moveInstance(plan, moved, index - shift, parent));
+                          } else if (added) add(JSON.parse(added) as Entry, index, {}, parent);
+                        }}
+                      >
+                        <div
+                          className="build-layer"
+                          style={{ paddingLeft: 4 + depth * 14 }}
+                          aria-selected={isSel}
+                          onContextMenu={(e) => {
+                            e.preventDefault();
+                            setSelected(n.id);
+                            setMulti([]);
+                            setMenu({ id: n.id, x: e.clientX, y: e.clientY });
+                          }}
+                        >
+                          {box ? (
+                            <button
+                              type="button"
+                              className="build-twist"
+                              aria-label={open ? 'Réduire' : 'Développer'}
+                              aria-expanded={open}
+                              onClick={() =>
+                                setCollapsed((c) => (open ? [...c, n.id] : c.filter((x) => x !== n.id)))
+                              }
+                            >
+                              {open ? '▾' : '▸'}
+                            </button>
+                          ) : (
+                            <span className="build-twist" />
+                          )}
+                          <span className="build-kind" aria-hidden="true" title={kindLabel(n)}>
+                            {!box ? '◇' : n.type === 'group' ? '▢' : n.layout.direction === 'row' ? '⇥' : '⤓'}
+                          </span>
+                          {renaming === n.id ? (
+                            <input
+                              autoFocus
+                              className="build-rename"
+                              defaultValue={labelOf(n)}
+                              aria-label="Nom du calque"
+                              onBlur={(e) => {
+                                setRenaming(undefined);
+                                if (e.target.value.trim() !== labelOf(n)) save(renameNode(plan, n.id, e.target.value));
+                              }}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') e.currentTarget.blur();
+                                if (e.key === 'Escape') setRenaming(undefined);
+                              }}
+                            />
+                          ) : (
+                            <button
+                              type="button"
+                              className="build-layer-name"
+                              aria-pressed={isSel}
+                              title={`${labelOf(n)} · ${kindLabel(n)} · double-clic pour renommer`}
+                              onClick={(e) => {
+                                setInspected(undefined);
+                                if (e.shiftKey && selected && n.id !== selected)
+                                  setMulti((m) => (m.includes(n.id) ? m.filter((x) => x !== n.id) : [...m, n.id]));
+                                else {
+                                  setSelected(n.id);
+                                  setMulti([]);
+                                }
+                              }}
+                              onDoubleClick={() => setRenaming(n.id)}
+                            >
+                              <span className="build-layer-label">{labelOf(n)}</span>
+                              {n.link && (
+                                <small className="build-link">→ {pages.find((x) => x.id === n.link)?.name ?? 'page'}</small>
+                              )}
+                            </button>
+                          )}
+                          <span className="build-layer-actions">
+                            <button type="button" onClick={() => duplicateId(n.id)} title="Dupliquer (⌘D)" aria-label={`Dupliquer ${labelOf(n)}`}>
+                              ⧉
+                            </button>
+                            <button type="button" onClick={() => removeId(n.id)} title="Supprimer (⌫)" aria-label={`Supprimer ${labelOf(n)}`}>
+                              ✕
+                            </button>
+                          </span>
+                        </div>
+                      </li>
+                    );
+                  })}
+              </ol>
+              {hint && <p className="build-empty">{hint}</p>}
+            </section>
+              </>
+            ) : item ? (
+              <>
+                <div className="build-fiche-head">
+                  <button type="button" onClick={() => setInspected(undefined)} title="Retour aux composants (Échap)">
+                    ← Composants
+                  </button>
+                  <strong>{item.name}</strong>
+                </div>
+            <iframe
+              ref={sample}
+              className="build-sample"
+              title={`Aperçu de ${item.name}`}
+              src={`${devUrl}/ds-studio.html`}
+              onLoad={sendSample}
+            />
+            <p className="build-file">
+              {item.level} · {item.coded ? `codé · ${item.entry.file}` : 'pas encore codé : rendu Figma, codé au Build'}
+            </p>
+            {item.figma?.description && <p>{item.figma.description}</p>}
+            {(detailSpecs ?? []).map((s) => (
+              <PropControl
+                key={s.name}
+                spec={s}
+                value={draft[s.name]}
+                onChange={(v) =>
+                  setDraft((d) => {
+                    const next = { ...d };
+                    if (v === undefined) delete next[s.name];
+                    else next[s.name] = v;
+                    return next;
+                  })
+                }
+              />
+            ))}
+            {detailSpecs?.length === 0 && (
+              <p className="build-empty">Aucune propriété modifiable connue.</p>
+            )}
+            <button type="button" className="studio-primary" onClick={() => add(item.entry, undefined, draft)}>
+              Ajouter à la page
+            </button>
+              </>
+            ) : (
+              <>
+              <input
+                ref={search}
+                type="search"
+                className="build-search"
+                placeholder="Rechercher un composant  /"
                 aria-label="Rechercher un composant"
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
               />
-              <button type="button" className="build-close" onClick={() => setLeft(false)} aria-label="Réduire la bibliothèque" title="Réduire">
-                ‹
-              </button>
-            </div>
             {levels.map((level) => {
               const items = library.filter((x) => x.level === level && x.name.toLowerCase().includes(q));
               if (!items.length) return null;
@@ -753,118 +988,8 @@ export default function PreviewBuild({
             {!library.some((x) => x.name.toLowerCase().includes(q)) && (
               <p className="build-empty">Aucun composant ne correspond à « {query} ».</p>
             )}
-            <section className="build-group">
-              <h3 className="build-group-head">Calques · {page.name}</h3>
-              {!plan.instances.length && (
-                <p className="build-empty">Page vide : glisse un composant ou clique sur +.</p>
-              )}
-              <ol className="build-layers" aria-label="Calques">
-                {flatten(plan)
-                  .filter((f) => !hidden(f.parent))
-                  .map(({ node: n, depth }) => {
-                    const box = isContainer(n);
-                    const open = box && !collapsed.includes(n.id);
-                    const isSel = n.id === selected || multi.includes(n.id);
-                    return (
-                      <li
-                        key={n.id}
-                        className={dropOn?.id === n.id ? `build-drop-${dropOn.where}` : undefined}
-                        draggable={renaming !== n.id}
-                        onDragStart={(e) => {
-                          e.stopPropagation();
-                          e.dataTransfer.setData('text/ds-layer', n.id);
-                        }}
-                        onDragOver={(e) => {
-                          e.preventDefault();
-                          setDropOn({ id: n.id, where: dropWhere(e, box) });
-                        }}
-                        onDragLeave={() => setDropOn(undefined)}
-                        onDrop={(e) => {
-                          e.preventDefault();
-                          const where = dropWhere(e, box);
-                          setDropOn(undefined);
-                          const moved = e.dataTransfer.getData('text/ds-layer');
-                          const added = e.dataTransfer.getData('text/ds-component');
-                          const at = findNode(plan, n.id)!;
-                          const parent = where === 'inside' ? n.id : (at.parent?.id ?? null);
-                          const index =
-                            where === 'inside' ? (box ? n.children.length : 0) : at.index + (where === 'after' ? 1 : 0);
-                          if (moved && moved !== n.id) {
-                            const from = findNode(plan, moved);
-                            // Même parent, plus bas : l'index se décale d'un cran.
-                            const shift = from && (from.parent?.id ?? null) === parent && from.index < index ? 1 : 0;
-                            save(moveInstance(plan, moved, index - shift, parent));
-                          } else if (added) add(JSON.parse(added) as Entry, index, {}, parent);
-                        }}
-                      >
-                        <div
-                          className="build-layer"
-                          style={{ paddingLeft: 4 + depth * 14 }}
-                          aria-selected={isSel}
-                        >
-                          {box ? (
-                            <button
-                              type="button"
-                              className="build-twist"
-                              aria-label={open ? 'Réduire' : 'Développer'}
-                              aria-expanded={open}
-                              onClick={() =>
-                                setCollapsed((c) => (open ? [...c, n.id] : c.filter((x) => x !== n.id)))
-                              }
-                            >
-                              {open ? '▾' : '▸'}
-                            </button>
-                          ) : (
-                            <span className="build-twist" />
-                          )}
-                          <span className="build-kind" aria-hidden="true" title={kindLabel(n)}>
-                            {!box ? '◇' : n.type === 'group' ? '▢' : n.layout.direction === 'row' ? '⇥' : '⤓'}
-                          </span>
-                          {renaming === n.id ? (
-                            <input
-                              autoFocus
-                              className="build-rename"
-                              defaultValue={labelOf(n)}
-                              aria-label="Nom du calque"
-                              onBlur={(e) => {
-                                setRenaming(undefined);
-                                if (e.target.value.trim() !== labelOf(n)) save(renameNode(plan, n.id, e.target.value));
-                              }}
-                              onKeyDown={(e) => {
-                                if (e.key === 'Enter') e.currentTarget.blur();
-                                if (e.key === 'Escape') setRenaming(undefined);
-                              }}
-                            />
-                          ) : (
-                            <button
-                              type="button"
-                              className="build-layer-name"
-                              aria-pressed={isSel}
-                              title={`${labelOf(n)} · ${kindLabel(n)} · double-clic pour renommer`}
-                              onClick={(e) => {
-                                setInspected(undefined);
-                                if (e.shiftKey && selected && n.id !== selected)
-                                  setMulti((m) => (m.includes(n.id) ? m.filter((x) => x !== n.id) : [...m, n.id]));
-                                else {
-                                  setSelected(n.id);
-                                  setMulti([]);
-                                }
-                              }}
-                              onDoubleClick={() => setRenaming(n.id)}
-                            >
-                              <span className="build-layer-label">{labelOf(n)}</span>
-                              {n.link && (
-                                <small className="build-link">→ {pages.find((x) => x.id === n.link)?.name ?? 'page'}</small>
-                              )}
-                            </button>
-                          )}
-                        </div>
-                      </li>
-                    );
-                  })}
-              </ol>
-              {hint && <p className="build-empty">{hint}</p>}
-            </section>
+              </>
+            )}
           </aside>
         )}
         {left && !narrow && (
@@ -879,52 +1004,6 @@ export default function PreviewBuild({
           />
         )}
 
-        {left && item && (
-          <aside
-            className="build-flyout"
-            style={{ left: narrow ? 0 : widths[0] + 4 }}
-            aria-label={`Fiche de ${item.name}`}
-          >
-            <div className="build-side-head">
-              <h3>{item.name}</h3>
-              <button type="button" className="build-close" onClick={() => setInspected(undefined)} aria-label="Fermer la fiche" title="Fermer (Échap)">
-                ×
-              </button>
-            </div>
-            <iframe
-              ref={sample}
-              className="build-sample"
-              title={`Aperçu de ${item.name}`}
-              src={`${devUrl}/ds-studio.html`}
-              onLoad={sendSample}
-            />
-            <p className="build-file">
-              {item.level} · {item.coded ? `codé · ${item.entry.file}` : 'pas encore codé : rendu Figma, codé au Build'}
-            </p>
-            {item.figma?.description && <p>{item.figma.description}</p>}
-            {(detailSpecs ?? []).map((s) => (
-              <PropControl
-                key={s.name}
-                spec={s}
-                value={draft[s.name]}
-                onChange={(v) =>
-                  setDraft((d) => {
-                    const next = { ...d };
-                    if (v === undefined) delete next[s.name];
-                    else next[s.name] = v;
-                    return next;
-                  })
-                }
-              />
-            ))}
-            {detailSpecs?.length === 0 && (
-              <p className="build-empty">Aucune propriété modifiable connue.</p>
-            )}
-            <button type="button" className="studio-primary" onClick={() => add(item.entry, plan.instances.length, draft)}>
-              Ajouter à la page
-            </button>
-          </aside>
-        )}
         <div className="build-stage">
           <DeviceFrame
             width={screen.width}
@@ -1086,6 +1165,50 @@ export default function PreviewBuild({
           </aside>
         )}
       </div>
+      {menu && (
+        <ul
+          className="build-menu"
+          role="menu"
+          style={{ left: menu.x, top: menu.y }}
+          onPointerDown={(e) => e.stopPropagation()}
+        >
+          {(() => {
+            const n = findNode(plan, menu.id)?.node;
+            if (!n) return null;
+            const item = (label: string, keys: string, run: () => void, off = false) => (
+              <li key={label} role="none">
+                <button
+                  type="button"
+                  role="menuitem"
+                  disabled={off}
+                  onClick={() => {
+                    setMenu(undefined);
+                    run();
+                  }}
+                >
+                  <span>{label}</span>
+                  <kbd>{keys}</kbd>
+                </button>
+              </li>
+            );
+            return [
+              item('Renommer', '2× clic', () => setRenaming(n.id)),
+              item('Dupliquer', '⌘D', () => duplicateId(n.id)),
+              item('Grouper', '⌘G', () => wrap('group')),
+              item('Ajouter un Auto Layout', '⇧A', () => wrap('autolayout')),
+              ...(isContainer(n)
+                ? [
+                    item(n.type === 'group' ? 'Transformer en Auto Layout' : 'Transformer en Groupe', '', convert),
+                    item('Dégrouper', '⇧⌘G', unwrap),
+                  ]
+                : []),
+              item('Monter', '⌥↑', () => move(-1), !found || found.index === 0),
+              item('Descendre', '⌥↓', () => move(1), !found || found.index === found.siblings.length - 1),
+              item('Supprimer', '⌫', () => removeId(n.id)),
+            ];
+          })()}
+        </ul>
+      )}
     </div>
   );
 }
