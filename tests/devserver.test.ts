@@ -7,7 +7,13 @@ import { DevServer, detectCommand } from '../app/server/devserver.js';
 
 test('serveur de dev du projet : lancé, adresse lue, arrêté', { timeout: 30_000 }, async (t) => {
   const root = await mkdtemp(path.join(tmpdir(), 'ds-dev-'));
-  t.after(() => rm(root, { recursive: true, force: true }));
+  const dev = new DevServer();
+  // D'abord le serveur arrêté, puis le dossier : sous Windows, il reste
+  // verrouillé un instant après l'arrêt (EBUSY), d'où les nouvelles tentatives.
+  t.after(async () => {
+    dev.stop();
+    await rm(root, { recursive: true, force: true, maxRetries: 20, retryDelay: 250 });
+  });
   assert.equal(await detectCommand(root), null, 'sans package.json');
   await writeFile(
     path.join(root, 'package.json'),
@@ -22,8 +28,6 @@ s.listen(0, '127.0.0.1', () =>
   console.log('  ➜  Local:   http://127.0.0.1:' + s.address().port + '/'));`,
   );
   assert.equal((await detectCommand(root))?.label, 'npm run dev');
-  const dev = new DevServer();
-  t.after(() => dev.stop());
   const status = await dev.start(root);
   assert.equal(status.state, 'running', status.logs.join('\n'));
   assert.match(status.url!, /^http:\/\/127\.0\.0\.1:\d+$/);
