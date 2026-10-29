@@ -542,3 +542,55 @@ export function applyOps(
   }
   return { plan, notes, pages: created };
 }
+
+// Vérification du Build : le code produit suit-il l'arbre des calques ?
+// Lecture du code, pas du rendu : chaque composant codé est utilisé (dans
+// l'ordre des calques), chaque Auto Layout garde sa direction et son
+// espacement, chaque lien mène à la bonne route. Un écart est signalé,
+// jamais corrigé en silence.
+export function checkBuild(plan: PagePlan, code: string, pages: Page[] = []) {
+  const checks: { ok: boolean; text: string }[] = [];
+  const all = flatten(plan).map((f) => f.node);
+  const comps = all.filter((n): n is Instance => !isContainer(n));
+  const tag = (name: string) => new RegExp(`<${name}\\b`);
+  const missing = comps.filter((c) => /^[A-Z]\w*$/.test(c.component) && !tag(c.component).test(code));
+  const uncoded = comps.filter((c) => !c.file);
+  checks.push(
+    missing.length
+      ? { ok: false, text: `Composants absents du code : ${[...new Set(missing.map((c) => c.component))].join(', ')}` }
+      : { ok: true, text: `${comps.length} composant(s) utilisés dans le code` },
+  );
+  if (uncoded.length)
+    checks.push({ ok: false, text: `Encore en maquette (pas codés) : ${[...new Set(uncoded.map((c) => c.component))].join(', ')}` });
+  // Ordre : la première apparition de chaque composant suit l'ordre des calques.
+  const order = [...new Set(comps.map((c) => c.component))]
+    .filter((n) => /^[A-Z]\w*$/.test(n))
+    .map((n) => ({ n, at: code.search(tag(n)) }))
+    .filter((x) => x.at >= 0);
+  const sorted = order.every((x, i) => i === 0 || order[i - 1].at <= x.at);
+  if (order.length > 1)
+    checks.push(sorted ? { ok: true, text: 'Composants dans l’ordre des calques' } : { ok: false, text: 'L’ordre des composants dans le code diffère des calques' });
+  for (const n of all) {
+    if (!isContainer(n) || n.type !== 'autolayout') continue;
+    const l = n.layout;
+    const gap = new RegExp(`gap\\s*[:=]\\s*['"{]?\\s*${l.gap}(px|\\b)`);
+    const row = /flex-direction\s*:\s*row|flexDirection\s*:\s*['"]row/;
+    const label = labelOf(n);
+    checks.push(
+      gap.test(code) ? { ok: true, text: `${label} : écart de ${l.gap} px` } : { ok: false, text: `${label} : écart de ${l.gap} px introuvable dans le code` },
+    );
+    if (l.direction === 'row')
+      checks.push(row.test(code) ? { ok: true, text: `${label} : horizontal` } : { ok: false, text: `${label} : disposition horizontale introuvable` });
+  }
+  for (const n of all) {
+    if (!n.link) continue;
+    const route = pages.find((p) => p.id === n.link)?.path;
+    if (!route) continue;
+    checks.push(
+      code.includes(`'${route}'`) || code.includes(`"${route}"`) || code.includes(`\`${route}`)
+        ? { ok: true, text: `${labelOf(n)} ouvre ${route}` }
+        : { ok: false, text: `${labelOf(n)} : lien vers ${route} introuvable` },
+    );
+  }
+  return checks;
+}

@@ -7,7 +7,7 @@ import type { Focus } from '../shared/focus.js';
 import type { DevStatus } from '../server/devserver.js';
 import type { CodeProposal } from '../server/code.js';
 import type { CodeComponent } from '../shared/components.js';
-import PreviewBuild from './PreviewBuild.js';
+import PreviewBuild, { type BuildRequest } from './PreviewBuild.js';
 import DeviceFrame, { closestIPhone, isPhone } from './DeviceFrame.js';
 
 // Page Preview : un format (largeur × hauteur réelles) et une page du proto.
@@ -51,7 +51,7 @@ export default function PreviewPage({
   code?: { components: CodeComponent[]; map: Record<string, string> };
   figma?: FigmaComponent[];
   onAsk: (message: string) => void;
-  onBuild: (message: string, focus: Focus) => void;
+  onBuild: (request: BuildRequest) => void;
   onCodeProposal: (p: CodeProposal) => void;
   chatChange?: { page: string; n: number };
 }) {

@@ -36,6 +36,14 @@ import type { FigmaComponent } from '../../connectors/figma/library.js';
 import DeviceFrame, { closestIPhone, iPhones, isPhone } from './DeviceFrame.js';
 
 type Value = string | number | boolean;
+// Ce que la Preview confie au chat pour le Build d'une page.
+export type BuildRequest = {
+  page: { id: string; name: string; path: string };
+  toCode: string[];
+  componentsMessage: string;
+  pageMessage: string;
+  focus: Focus;
+};
 type Rect = { id: string; top: number; bottom: number };
 // Ce qu'on glisse ou ajoute : un composant codé, ou sa maquette Figma.
 type Entry = { component: string; file?: string; figma?: string };
@@ -113,8 +121,8 @@ export default function PreviewBuild({
   code?: { components: CodeComponent[]; map: Record<string, string> };
   // Composants du fichier Figma du projet : maquettes des composants non codés.
   figma?: FigmaComponent[];
-  // Build : Clodo code la page et ses maquettes, proposé en diff.
-  onBuild: (message: string, focus: Focus) => void;
+  // Build : le chat demande puis code les maquettes, puis la page, en diff.
+  onBuild: (request: BuildRequest) => void;
   onCodeProposal: (p: CodeProposal) => void;
   onError: (message: string) => void;
   // Le chat reçoit la page et l'instance sélectionnée (« ce bouton »).
@@ -609,14 +617,16 @@ export default function PreviewBuild({
   }, [code, plan]);
   const toBuild = components.filter((i) => !i.file);
   const toCode = [...new Set(toBuild.map((i) => i.component))];
-  // Build en deux temps, pour des réponses courtes et vérifiables : d'abord
-  // les composants encore en maquette, puis la page qui les assemble.
+  // Build piloté par le chat, en deux temps pour des réponses courtes et
+  // vérifiables : d'abord les composants encore en maquette, puis la page
+  // qui les assemble. Le chat pose la question avant chaque étape.
   const build = () =>
-    onBuild(
-      toCode.length
-        ? `Build, étape 1/2 de la page « ${page.name} » : code UNIQUEMENT ces composants du DS, encore en maquette, fidèles à Figma et avec mes tokens, chacun dans son dossier src/components/<niveau>/<Nom>/ avec son CSS et une interface <Nom>Props pour ses variantes : ${toCode.join(', ')}. Ne touche à aucune page : la page sera codée à l'étape 2.`
-        : `Build, étape 2/2 : code la vraie page React « ${page.name} » avec les composants du DS, en suivant l'arbre des calques ci-dessous : chaque Auto Layout est une boîte flex (direction, gap, padding, align, justify, wrap, width/height : hug = ajusté au contenu, fill = extensible, nombre = fixe en px ; « adaptation » = réglages propres à mobile < 600 px, tablette < 1024 px, desktop, en media queries), chaque Groupe une simple boîte qui regroupe ; « taille » règle un calque dans son Auto Layout, « style » son fond (variable CSS d'un token) et son arrondi ; garde l'ordre et les props, et réutilise les composants codés (file) sans les recoder. La page vit à la route ${page.path} du projet : rends-la accessible à cette adresse sans casser l'existant. Les interactions « au_clic_aller_a » ouvrent la route indiquée : code cette navigation.`,
-      {
+    onBuild({
+      page,
+      toCode,
+      componentsMessage: `Build, étape 1/2 de la page « ${page.name} » : code UNIQUEMENT ces composants du DS, encore en maquette, fidèles à Figma et avec mes tokens, chacun dans son dossier src/components/<niveau>/<Nom>/ avec son CSS et une interface <Nom>Props pour ses variantes : ${toCode.join(', ')}. Ne touche à aucune page : la page sera codée à l'étape 2.`,
+      pageMessage: `Build, étape 2/2 : code la vraie page React « ${page.name} » avec les composants du DS, en suivant l'arbre des calques ci-dessous : chaque Auto Layout est une boîte flex (direction, gap, padding, align, justify, wrap, width/height : hug = ajusté au contenu, fill = extensible, nombre = fixe en px ; « adaptation » = réglages propres à mobile < 600 px, tablette < 1024 px, desktop, en media queries), chaque Groupe une simple boîte qui regroupe ; « taille » règle un calque dans son Auto Layout, « style » son fond (variable CSS d'un token) et son arrondi ; garde l'ordre et les props, et réutilise les composants codés (file) sans les recoder. La page vit à la route ${page.path} du projet : rends-la accessible à cette adresse sans casser l'existant. Les interactions « au_clic_aller_a » ouvrent la route indiquée : code cette navigation.`,
+      focus: {
         page: 'preview',
         kind: 'page',
         name: page.name,
@@ -625,7 +635,7 @@ export default function PreviewBuild({
         value: page.id,
         props: { format: `${screen.width}px` },
       },
-    );
+    });
 
   if (bridge && !bridge.current)
     return (
@@ -740,7 +750,7 @@ export default function PreviewBuild({
           disabled={!plan.instances.length}
           title={toCode.length ? `D'abord les composants : ${toCode.join(', ')}` : 'Clodo code la page et sa navigation'}
         >
-          {toCode.length ? `Build 1/2 · coder ${toCode.length} composant(s)` : 'Build 2/2 · coder la page'}
+          Build{toCode.length ? ` · ${toCode.length} à coder` : ''}
         </button>
         <button
           type="button"

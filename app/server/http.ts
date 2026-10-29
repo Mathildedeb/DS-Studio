@@ -21,7 +21,7 @@ import { readProjectTokens, writeProjectTokens } from './projectTokens.js';
 import { BATCH, PublishCounter, gitStatus, projectPullRequest, publish } from './gitops.js';
 import { runTokensScript, type TokensScript } from './npm.js';
 import { codedFor } from '../shared/components.js';
-import { applyOps, isContainer, planSchema, type Node } from '../shared/pagePlan.js';
+import { applyOps, checkBuild, isContainer, planSchema, type Node } from '../shared/pagePlan.js';
 import {
   compareComponents,
   figmaComponentSchema,
@@ -888,6 +888,28 @@ export async function createStudioServer(options: {
         }
         // Code : Clodo propose, l'étudiante valide le diff, le serveur écrit.
         // Annuler la dernière modification du chat sur une page.
+        // Build : le code écrit suit-il les calques ? Lecture du code (pas du
+        // rendu) : chaque composant présent, dans l'ordre, les espacements et
+        // directions des Auto Layout, les liens vers les autres pages.
+        if (url.pathname === '/api/page-build/check') {
+          const b = z
+            .object({
+              page: z.string().regex(/^[\w-]{1,60}$/),
+              files: z.array(z.string().max(300)).max(40),
+            })
+            .strict()
+            .parse(body);
+          const scope = await workspace();
+          if (!scope.project) throw new StudioError('Ouvrez d’abord un projet.', 409);
+          const plan = await readPrivate(path.join(store.directory, 'pages', `${b.page}.json`), 500_000)
+            .then((raw) => planSchema.parse(JSON.parse(raw)))
+            .catch(() => ({ instances: [] }));
+          const code = (
+            await Promise.all(b.files.filter((f) => /\.(tsx|jsx|ts|css)$/.test(f)).map((f) => scope.code.source(f).catch(() => '')))
+          ).join('\n');
+          const { pages } = await dashboard.readPreview(store.directory);
+          return send(200, { checks: checkBuild(plan, code, pages) });
+        }
         // Créer dans Figma une valeur de variante qui n'existe que dans le code.
         if (url.pathname === '/api/component-sync/send') {
           const b = z

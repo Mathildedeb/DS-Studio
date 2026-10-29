@@ -3513,3 +3513,24 @@ h2[id] {
   font-size: 12px;
   cursor: pointer;
 }
+
+/* Build piloté par le chat : checklist des étapes. */
+.chat-build-steps {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 13px;
+}
+.chat-build-steps li[data-state='todo'] {
+  color: #6b7080;
+}
+.chat-build-steps li[data-state='doing'] {
+  font-weight: 600;
+}
+.chat-build-link {
+  align-self: center;
+  font-size: 13px;
+  font-weight: 600;
+}

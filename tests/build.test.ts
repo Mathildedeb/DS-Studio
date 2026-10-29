@@ -235,3 +235,22 @@ test('propriétés : dimensions, styles et adaptation par appareil', async () =>
   assert.doesNotThrow(() => planSchema.parse(plan));
   assert.throws(() => planSchema.parse({ instances: [{ ...al(), style: { fill: 'red;}' } }] }));
 });
+
+test('Build vérifié : composants, ordre, espacements, direction, liens', async () => {
+  const { checkBuild, wrapNodes, setLayout, setLink } = await import('../app/shared/pagePlan.js');
+  const c = (id: string, component: string) => ({ id, component, file: `src/components/atoms/${component}/${component}.tsx`, props: {} });
+  const g = wrapNodes({ instances: [c('a', 'Avatar'), c('b', 'Button')] }, ['a', 'b'], 'autolayout');
+  let plan = setLayout(g.plan, g.id!, { direction: 'row', gap: 12 });
+  plan = setLink(plan, 'b', 'profil-1');
+  const pages = [{ id: 'profil-1', name: 'Profil', path: '/profil' }];
+  const good = `<div style={{ display: 'flex', flexDirection: 'row', gap: 12 }}><Avatar /><Button onClick={() => go('/profil')} /></div>`;
+  assert.ok(checkBuild(plan, good, pages).every((x) => x.ok));
+  const bad = `<div style={{ gap: 8 }}><Button /></div>`;
+  const out = checkBuild(plan, bad, pages).filter((x) => !x.ok).map((x) => x.text);
+  assert.deepEqual(out, [
+    'Composants absents du code : Avatar',
+    'Auto Layout : écart de 12 px introuvable dans le code',
+    'Auto Layout : disposition horizontale introuvable',
+    'Button : lien vers /profil introuvable',
+  ]);
+});

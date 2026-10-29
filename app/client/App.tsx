@@ -14,6 +14,14 @@ import Clodo from './Clodo.js';
 import type { CodeProposal } from '../server/code.js';
 import Dashboard from './Dashboard.js';
 import PreviewPage from './PreviewPage.js';
+import type { BuildRequest } from './PreviewBuild.js';
+
+type BuildFlow = BuildRequest & {
+  stage: 'components' | 'page' | 'test' | 'publish' | 'done';
+  waiting?: 'clodo' | 'diff' | 'check';
+  checks?: { ok: boolean; text: string }[];
+  note?: string;
+};
 import OpenProject from './OpenProject.js';
 import FigmaPanel, { figmaLevel } from './FigmaPanel.js';
 import type { Level } from './dsRegistry.js';
@@ -203,6 +211,10 @@ export default function App() {
   const [clodoOpen, setClodoOpen] = useState(false);
   const [connection, setConnection] = useState<ConnectionStatus>();
   const [opening, setOpening] = useState(false);
+  // Build d'une page, piloté par le chat : il pose la question avant chaque
+  // étape (composants en maquette, page, test, publication) et coche la
+  // checklist au fil des diffs validés.
+  const [flow, setFlow] = useState<BuildFlow>();
   const [publishCard, setPublishCard] = useState<{
     git: PublishStatus;
     busy: boolean;
@@ -612,6 +624,7 @@ export default function App() {
         setCodeProposal(reply.proposal);
       }
       if (reply.tokenProposal) setProposal(reply.tokenProposal);
+      return reply;
     } catch (e) {
       setError(
         abort.signal.aborted
@@ -631,6 +644,87 @@ export default function App() {
         <p>Lancez le serveur local puis rechargez cette page.</p>
       </main>
     );
+  function startBuild(request: BuildRequest) {
+    setFlow({ ...request, stage: request.toCode.length ? 'components' : 'page' });
+    setClodoOpen(true);
+  }
+  // Le chat code l'étape en cours ; son diff passe ensuite par la validation.
+  async function flowRun() {
+    if (!flow || (flow.stage !== 'components' && flow.stage !== 'page')) return;
+    const current = { ...flow, waiting: 'clodo' as const, note: undefined };
+    setFlow(current);
+    const reply = await sendMessage(
+      flow.stage === 'components' ? flow.componentsMessage : flow.pageMessage,
+      flow.focus,
+    );
+    setFlow(
+      reply?.proposal
+        ? { ...current, waiting: 'diff' }
+        : { ...current, waiting: undefined, note: 'Clodo n’a pas proposé de code : relis sa réponse, puis recommence.' },
+    );
+  }
+  // Diff validé : étape suivante, ou vérification du code de la page.
+  async function flowApplied(files: string[]) {
+    if (!flow) return;
+    if (flow.stage === 'components') return setFlow({ ...flow, stage: 'page', waiting: undefined });
+    setFlow({ ...flow, waiting: 'check' });
+    const { checks } = await request<{ checks: { ok: boolean; text: string }[] }>('page-build/check', {
+      page: flow.page.id,
+      files,
+    }).catch(() => ({ checks: [{ ok: false, text: 'Vérification impossible' }] }));
+    setFlow({ ...flow, stage: 'test', waiting: undefined, checks });
+  }
+  const buildCard = flow && {
+    page: flow.page.name,
+    route: connection?.project && flow.page.path,
+    steps: (
+      [
+        ['components', flow.toCode.length ? `Composants en maquette (${flow.toCode.join(', ')})` : 'Composants : tous codés'],
+        ['page', 'Page codée avec sa disposition et ses liens'],
+        ['check', 'Code vérifié par rapport aux calques'],
+        ['test', 'Testée sur l’iPhone'],
+        ['publish', 'Publiée sur Git'],
+      ] as const
+    ).map(([id, label]) => {
+      const order = ['components', 'page', 'check', 'test', 'publish', 'done'];
+      const at = order.indexOf(flow.stage === 'test' && !flow.checks ? 'check' : flow.stage);
+      const mine = order.indexOf(id);
+      const warn = id === 'check' && flow.checks?.some((c) => !c.ok);
+      return {
+        label,
+        state: (id === 'components' && !flow.toCode.length) || mine < at ? (warn ? 'warn' : 'done') : mine === at ? 'doing' : 'todo',
+      } as const;
+    }),
+    checks: flow.checks,
+    note: flow.note,
+    busy: !!flow.waiting,
+    question:
+      flow.waiting === 'clodo'
+        ? 'Clodo code…'
+        : flow.waiting === 'diff'
+          ? 'Relis le diff, puis valide-le.'
+          : flow.waiting === 'check'
+            ? 'Je vérifie le code…'
+            : flow.stage === 'components'
+              ? `Je code les ${flow.toCode.length} composant(s) encore en maquette ?`
+              : flow.stage === 'page'
+                ? `Je code la page « ${flow.page.name} » avec sa disposition et ses liens ?`
+                : flow.stage === 'test'
+                  ? 'Tu la testes sur l’iPhone ? Ouvre la Preview en Aperçu, ou la page codée.'
+                  : flow.stage === 'publish'
+                    ? 'Je publie sur Git ?'
+                    : 'Build terminé.',
+  };
+  const flowYes = () => {
+    if (!flow) return;
+    if (flow.stage === 'components' || flow.stage === 'page') return void flowRun();
+    if (flow.stage === 'test') return setFlow({ ...flow, stage: 'publish' });
+    if (flow.stage === 'publish') {
+      setFlow({ ...flow, stage: 'done' });
+      return void offerPublish(true);
+    }
+    setFlow(undefined);
+  };
   const chatBox = (agentId: string, onClose?: () => void) => {
     const status = agents.find((a) => a.id === agentId);
     return (
@@ -647,6 +741,9 @@ export default function App() {
         onClose={onClose}
         focus={focus && focusLabel(focus)}
         lastCode={lastCode}
+        build={buildCard}
+        onBuildYes={flowYes}
+        onBuildLater={() => setFlow(undefined)}
         publish={publishCard}
         onPublish={(m) => void confirmPublish(m)}
         onDismissPublish={() => setPublishCard(undefined)}
@@ -1200,10 +1297,7 @@ export default function App() {
               code={projectCode}
               figma={figmaList}
               onAsk={askClodo}
-              onBuild={(text, buildFocus) => {
-                setClodoOpen(true);
-                void sendMessage(text, buildFocus);
-              }}
+              onBuild={startBuild}
               onCodeProposal={setCodeProposal}
               chatChange={chatPage}
             />
@@ -1223,7 +1317,11 @@ export default function App() {
         proposal={codeProposal}
         busy={codeBusy}
         error={codeError}
-        onCancel={() => setCodeProposal(undefined)}
+        onCancel={() => {
+          setCodeProposal(undefined);
+          if (flow?.waiting === 'diff')
+            setFlow({ ...flow, waiting: undefined, note: 'Diff refusé : rien n’a été écrit. Je peux recommencer.' });
+        }}
         onApply={async () => {
           if (!codeProposal) return;
           setCodeBusy(true);
@@ -1236,7 +1334,8 @@ export default function App() {
             setCodeProposal(undefined);
             setLastCode(applied);
             setNotice(`Code modifié : ${applied.files.join(', ')}.`);
-            void offerPublish();
+            if (flow?.waiting === 'diff') void flowApplied(applied.files);
+            else void offerPublish();
           } catch (e) {
             setCodeError((e as Error).message);
           } finally {
