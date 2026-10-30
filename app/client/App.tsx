@@ -25,6 +25,7 @@ type BuildFlow = BuildRequest & {
   note?: string;
 };
 import OpenProject from './OpenProject.js';
+import AiConnect, { type AiInfo } from './AiConnect.js';
 import SyncPanel from './SyncPanel.js';
 import ComponentLibrary from './ComponentLibrary.js';
 import { useConversations } from './useConversations.js';
@@ -235,6 +236,25 @@ export default function App() {
   // ou quand on le demande (« vérifie mon projet »).
   const [projectCheck, setProjectCheck] = useState<{ project: string; items: CheckItem[] }>();
   const [checkBusy, setCheckBusy] = useState(false);
+  // Source d'IA de cet ordinateur ; « Connecte ton IA » s'ouvre de lui-même
+  // au premier lancement si aucune IA n'est encore branchée.
+  const [ai, setAi] = useState<AiInfo>();
+  const [aiOpen, setAiOpen] = useState(false);
+  useEffect(() => {
+    request<AiInfo>('ai')
+      .then((info) => {
+        setAi(info);
+        let asked = false;
+        try {
+          asked = !!localStorage.getItem('ds-ai-asked');
+          localStorage.setItem('ds-ai-asked', '1');
+        } catch {
+          asked = false;
+        }
+        if (!info.configured && !info.available && !asked) setAiOpen(true);
+      })
+      .catch(() => undefined);
+  }, []);
   // Dernière correction qui n'a pas abouti : la cause en clair et la suite.
   const [checkNote, setCheckNote] = useState<{ text: string; fix?: Fix }>();
   const checkedFolder = useRef<string | undefined>(undefined);
@@ -885,6 +905,7 @@ export default function App() {
             : undefined
         }
         onAskFix={askClodo}
+        onConnectAi={() => setAiOpen(true)}
         onRevert={() =>
           void perform(async () => {
             if (!lastCode) return;
@@ -1018,6 +1039,16 @@ export default function App() {
         <div className="header-status">
           <button
             type="button"
+            className={`ai-badge ${ai?.available ? 'on' : 'off'}`}
+            onClick={() => setAiOpen(true)}
+            title={ai?.detail ?? 'Connecte ton IA'}
+          >
+            {ai
+              ? `IA · ${ai.kind === 'claude-code' ? 'Claude Code' : ai.kind === 'anthropic' ? 'ma clé' : 'mon serveur'}${ai.available ? '' : ' (à connecter)'}`
+              : 'Connecte ton IA'}
+          </button>
+          <button
+            type="button"
             className="project-badge"
             onClick={() => setOpening(true)}
             title={connection?.project?.folder ?? 'Ouvrir un projet'}
@@ -1049,6 +1080,17 @@ export default function App() {
           </button>
         </div>
       </header>
+      {aiOpen && (
+        <AiConnect
+          onClose={() => setAiOpen(false)}
+          onSaved={(info) => {
+            setAi(info);
+            request<Bootstrap['agents']>('agents')
+              .then(setAgents)
+              .catch(() => undefined);
+          }}
+        />
+      )}
       {mustOpen || opening ? (
         <OpenProject
           status={connection}

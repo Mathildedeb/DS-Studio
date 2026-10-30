@@ -49,6 +49,7 @@ export default function Chat({
   onDismissPublish,
   circuit,
   onAskFix,
+  onConnectAi,
 }: {
   agentName: string;
   detail: string;
@@ -101,6 +102,8 @@ export default function Chat({
   // Checklist de la dernière validation : DS, code, interface, Figma, GitHub.
   circuit?: { revision: number; steps: CircuitStep[] };
   onAskFix: (text: string) => void;
+  // Ouvre « Connecte ton IA » quand Clodo n'a pas d'IA disponible.
+  onConnectAi?: () => void;
 }) {
   const [commitMessage, setCommitMessage] = useState('');
   const log = useRef<HTMLDivElement>(null);
@@ -119,6 +122,11 @@ export default function Chat({
           <span className={`chat-status ${available ? 'on' : 'off'}`}>
             {available ? 'Disponible' : 'Indisponible'}
           </span>
+          {!available && onConnectAi && (
+            <button type="button" className="chat-connect-ai" onClick={onConnectAi}>
+              Connecter mon IA
+            </button>
+          )}
         </div>
         {onClose && (
           <button

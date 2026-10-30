@@ -90,3 +90,23 @@ l’atelier. **Non testé** : écran complet sur plusieurs fichiers, effet réel
 `CLODO.md`, Windows et Linux.
 Limites : aucune vérification TypeScript après application (l’erreur s’affiche dans
 l’atelier), et l’historique du chat est perdu quand l’atelier se recharge.
+
+## Sources d’IA de Clodo : chacun branche la sienne
+
+« Connecte ton IA » (badge « IA · … » en haut, ou bouton dans le chat quand Clodo
+est indisponible) choisit la source utilisée par `ask` (`connectors/agents/providers.ts`),
+relue à chaque demande :
+
+- **Claude Code** (par défaut) : le CLI local, connecté au compte de la personne
+  (`claude`, puis `/login`). Aucune clé ne passe par DS-Studio.
+- **Clé Anthropic** : SDK officiel `@anthropic-ai/sdk`, modèle `claude-opus-5-5`
+  par défaut, réponse en flux, `effort: high`, repli serveur `fallbacks: "default"`
+  (beta `server-side-fallback-2026-07-01`) si le modèle décline la demande.
+- **Mon serveur** : n’importe quel serveur compatible OpenAI (`/chat/completions`),
+  par exemple OpenAI, Mistral, LM Studio ou Ollama, avec une clé facultative.
+
+Le réglage est dans `.ds-studio/ai.json` (mode 600, ignoré par Git), propre à
+chaque ordinateur. La clé n’est jamais renvoyée au navigateur (seulement ses
+4 derniers signes), ni journalisée. « Enregistrer et tester » pose une question
+minimale et affiche la réponse, ou l’erreur en clair. Au premier lancement, si
+aucune IA n’est disponible, l’écran s’ouvre de lui-même.
