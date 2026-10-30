@@ -17,6 +17,7 @@ import { proposeCode, type Ask } from '../../connectors/agents/coder.js';
 import { CodeStore } from './code.js';
 import { ConnectionStore, inspectFolder, pickFolder } from './connection.js';
 import { DevServer, detectCommand } from './devserver.js';
+import { aiSettingsSchema, askFor, publicSettings, type AiSettings } from '../../connectors/agents/providers.js';
 import { checkProject } from '../shared/projectCheck.js';
 import { atomicWrite, readPrivate } from './files.js';
 import { readProjectTokens, writeProjectTokens } from './projectTokens.js';
@@ -136,7 +137,32 @@ export async function createStudioServer(options: {
     return { code: scoped, project: project.name };
   };
   const claudeCli = new ClaudeAdapter();
-  const ask: Ask = options.ask ?? ((...a) => claudeCli.ask(...a));
+  const claudeCode: Ask = (...a) => claudeCli.ask(...a);
+  // Source d'IA choisie sur cet ordinateur (« Connecte ton IA »), relue à
+  // chaque demande : changer de source ne demande pas de redémarrer.
+  const aiFile = () => path.join(base.directory, 'ai.json');
+  const readAi = async (): Promise<AiSettings | null> => {
+    try {
+      return aiSettingsSchema.parse(JSON.parse(await readPrivate(aiFile(), 20_000)));
+    } catch {
+      return null;
+    }
+  };
+  const aiStatus = async () => {
+    const settings = (await readAi()) ?? { kind: 'claude-code' as const };
+    if (settings.kind === 'claude-code') return { settings, ...(await claudeCli.status()) };
+    return {
+      settings,
+      available: true,
+      detail:
+        settings.kind === 'anthropic'
+          ? `Ta clé Anthropic · ${settings.model}`
+          : `Ton serveur ${new URL(settings.baseUrl).host} · ${settings.model}`,
+    };
+  };
+  const ask: Ask =
+    options.ask ??
+    (async (...a) => askFor((await readAi()) ?? { kind: 'claude-code' }, claudeCode)(...a));
   const figma = options.figma ?? new FigmaReader(undefined);
   // Variantes Figma lues une fois par composant (panneau et chat de la Preview).
   const variantCache = new Map<string, ReturnType<typeof figmaVariants>>();
@@ -505,12 +531,21 @@ export async function createStudioServer(options: {
             return send(
               200,
               await Promise.all(
-                Object.values(adapters).map(async (a) => ({
-                  id: a.id,
-                  ...(await a.status()),
-                })),
+                Object.values(adapters).map(async (a) => {
+                  // Clodo suit la source d'IA choisie, pas seulement Claude Code.
+                  if (a.id === 'claude' && !options.claude) {
+                    const { available, detail } = await aiStatus();
+                    return { id: a.id, available, detail };
+                  }
+                  return { id: a.id, ...(await a.status()) };
+                }),
               ),
             );
+          // Source d'IA de cet ordinateur : jamais la clé, seulement sa fin.
+          if (url.pathname === '/api/ai') {
+            const { settings, available, detail } = await aiStatus();
+            return send(200, { ...publicSettings(settings), configured: !!(await readAi()), available, detail });
+          }
           if (url.pathname === '/api/project')
             return send(200, await project.read());
           if (url.pathname === '/api/figma')
@@ -997,6 +1032,32 @@ export async function createStudioServer(options: {
           ).join('\n');
           const { pages } = await dashboard.readPreview(store.directory);
           return send(200, { checks: checkBuild(plan, code, pages) });
+        }
+        // Choisir sa source d'IA. Une clé laissée vide garde celle déjà enregistrée.
+        if (url.pathname === '/api/ai') {
+          const raw = z.record(z.string(), z.unknown()).parse(body);
+          const previous = await readAi();
+          const keep =
+            !raw.key && previous && previous.kind === raw.kind && previous.kind !== 'claude-code'
+              ? { key: previous.key }
+              : {};
+          const settings = aiSettingsSchema.parse({ ...raw, ...keep });
+          await atomicWrite(aiFile(), JSON.stringify(settings) + '\n');
+          const { available, detail } = await aiStatus();
+          return send(200, { ...publicSettings(settings), configured: true, available, detail });
+        }
+        // Tester la connexion : une toute petite question, réponse attendue « OK ».
+        if (url.pathname === '/api/ai/test') {
+          const started = Date.now();
+          try {
+            const reply = await ask('Réponds uniquement par le mot OK.', 'Test de connexion DS-Studio.', undefined, 60_000);
+            return send(200, {
+              ok: true,
+              detail: `Connexion réussie en ${((Date.now() - started) / 1000).toFixed(1)} s (réponse : « ${reply.trim().slice(0, 40)} »).`,
+            });
+          } catch (e) {
+            return send(200, { ok: false, detail: (e as Error).message.slice(0, 300) });
+          }
         }
         // Créer dans Figma une valeur de variante qui n'existe que dans le code.
         if (url.pathname === '/api/component-sync/send') {
