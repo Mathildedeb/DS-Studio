@@ -92,7 +92,7 @@ export default function AiConnect({ onClose, onSaved }: { onClose: () => void; o
           <label>
             <input type="radio" name="ai-kind" checked={kind === 'anthropic'} onChange={() => setKind('anthropic')} />
             <span>
-              <strong>Ma clé Anthropic</strong>
+              <strong>Clé API</strong>
               <small>Une clé d’API de console.anthropic.com, facturée à ton compte.</small>
             </span>
           </label>

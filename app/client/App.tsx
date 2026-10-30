@@ -1042,7 +1042,7 @@ export default function App() {
             title={ai?.detail ?? 'Connecte ton IA'}
           >
             {ai
-              ? `IA · ${ai.kind === 'claude-code' ? 'Claude Code' : ai.kind === 'anthropic' ? 'ma clé' : 'mon serveur'}${ai.available ? '' : ' (à connecter)'}`
+              ? `IA · ${ai.kind === 'claude-code' ? 'Claude Code' : ai.kind === 'anthropic' ? 'clé API' : 'mon serveur'}${ai.available ? '' : ' (à connecter)'}`
               : 'Connecte ton IA'}
           </button>
           <button
