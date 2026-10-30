@@ -15,6 +15,8 @@ import type { CodeProposal } from '../server/code.js';
 import Dashboard from './Dashboard.js';
 import PreviewPage from './PreviewPage.js';
 import type { BuildRequest } from './PreviewBuild.js';
+import { diagnose, type CheckItem, type Fix } from '../shared/projectCheck.js';
+import type { DevStatus } from '../server/devserver.js';
 
 type BuildFlow = BuildRequest & {
   stage: 'components' | 'page' | 'test' | 'publish' | 'done';
@@ -228,6 +230,26 @@ export default function App() {
   // étape (composants en maquette, page, test, publication) et coche la
   // checklist au fil des diffs validés.
   const [flow, setFlow] = useState<BuildFlow>();
+  // Contrôle du projet ouvert, présenté par le chat : ce qui manque et ce
+  // que Clodo peut régler. Montré à l'ouverture s'il manque quelque chose,
+  // ou quand on le demande (« vérifie mon projet »).
+  const [projectCheck, setProjectCheck] = useState<{ project: string; items: CheckItem[] }>();
+  const [checkBusy, setCheckBusy] = useState(false);
+  // Dernière correction qui n'a pas abouti : la cause en clair et la suite.
+  const [checkNote, setCheckNote] = useState<{ text: string; fix?: Fix }>();
+  const checkedFolder = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    const folder = connection?.project?.folder;
+    if (!folder || checkedFolder.current === folder) return;
+    checkedFolder.current = folder;
+    let dismissed = false;
+    try {
+      dismissed = !!sessionStorage.getItem(`ds-check:${folder}`);
+    } catch {
+      dismissed = false;
+    }
+    if (!dismissed) void loadCheck(false);
+  }, [connection?.project?.folder]);
   const [publishCard, setPublishCard] = useState<{
     git: PublishStatus;
     busy: boolean;
@@ -597,6 +619,13 @@ export default function App() {
   async function sendMessage(asked?: string, askedFocus?: Focus) {
     const text = asked ?? message;
     if (!state || !text.trim() || thinking) return;
+    // « vérifie mon projet » : la checklist du projet, sans appeler Clodo.
+    if (/(v[ée]rifie|contr[ôo]le|check|diagnostic)\b.*projet|^\s*(v[ée]rifie|check)\s*$/i.test(text) && connection?.project) {
+      setMessage('');
+      setChat((c) => [...c, { role: 'user', text }]);
+      await loadCheck(true);
+      return;
+    }
     // « push », « publie » : pas besoin de Clodo, on montre ce qui partira.
     if (
       /^\s*(push|pousse|publie|publish)\b/i.test(text) &&
@@ -660,6 +689,55 @@ export default function App() {
         <p>Lancez le serveur local puis rechargez cette page.</p>
       </main>
     );
+  async function loadCheck(show: boolean) {
+    if (!connection?.project) return;
+    setCheckBusy(true);
+    try {
+      const check = await request<{ project: string; items: CheckItem[] }>('project-check');
+      if (show || check.items.some((i) => i.state !== 'ok')) {
+        setProjectCheck(check);
+        setClodoOpen(true);
+      } else setProjectCheck(undefined);
+    } catch (e) {
+      if (show) setError((e as Error).message);
+    } finally {
+      setCheckBusy(false);
+    }
+  }
+  // Le chat règle un manque : action connue, demande à Clodo, ou explication.
+  async function fixProject(item: CheckItem) {
+    const fix = item.fix;
+    if (!fix || fix.kind === 'manual') return;
+    setCheckNote(undefined);
+    if (fix.kind === 'chat') {
+      const reply = await sendMessage(fix.message);
+      if (reply && !reply.proposal && !reply.tokenProposal)
+        setCheckNote({
+          text: 'Clodo n’a proposé aucun changement : relis sa réponse dans le chat. Tu peux préciser la demande, puis réessayer.',
+          fix,
+        });
+      return;
+    }
+    if (fix.action === 'open-project') return setOpening(true);
+    if (fix.action === 'import-tokens') return importProjectTokens();
+    setCheckBusy(true);
+    try {
+      if (fix.action === 'install') {
+        const status = await request<DevStatus>('project-dev/install', {});
+        if (status.state === 'error') {
+          const d = diagnose(status.logs.join('\n'), 'install');
+          setCheckNote({ text: `L’installation a échoué. ${d.cause}`, fix: d.fix });
+        }
+      }
+      if (fix.action === 'relay') setCodeProposal(await request<CodeProposal>('ds-bridge/install', {}));
+    } catch (e) {
+      const d = diagnose((e as Error).message, 'install');
+      setCheckNote({ text: `« ${fix.label} » n’a pas abouti : ${(e as Error).message} ${d.cause}`, fix: d.fix });
+    } finally {
+      setCheckBusy(false);
+    }
+    void loadCheck(true);
+  }
   function startBuild(request: BuildRequest) {
     setFlow({
       ...request,
@@ -784,6 +862,17 @@ export default function App() {
         onClose={onClose}
         focus={focus && focusLabel(focus)}
         lastCode={lastCode}
+        project={projectCheck && { ...projectCheck, busy: checkBusy, note: checkNote }}
+        onProjectFix={(item) => void fixProject(item)}
+        onProjectRefresh={() => void loadCheck(true)}
+        onProjectClose={() => {
+          setProjectCheck(undefined);
+          try {
+            sessionStorage.setItem(`ds-check:${connection?.project?.folder}`, '1');
+          } catch {
+            // Navigation privée : le contrôle pourra revenir au rechargement.
+          }
+        }}
         build={buildCard}
         onBuildYes={flowYes}
         onBuildLater={() => setFlow(undefined)}
@@ -1536,6 +1625,7 @@ export default function App() {
             setCodeProposal(undefined);
             setLastCode(applied);
             setNotice(`Code modifié : ${applied.files.join(', ')}.`);
+            if (projectCheck) void loadCheck(true);
             if (flow?.waiting === 'diff') void flowApplied(applied.files);
             else void offerPublish();
           } catch (e) {

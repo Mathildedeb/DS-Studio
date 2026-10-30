@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { PublishStatus } from '../server/gitops.js';
 import type { CircuitStep } from '../shared/circuit.js';
 import { request } from './api.js';
+import type { CheckItem } from '../shared/projectCheck.js';
 import assistantMascot from './assets/assistant-mascot.png';
 import { Card } from './components/ui/card';
 import { Avatar, AvatarImage, AvatarFallback } from './components/ui/avatar';
@@ -37,6 +38,10 @@ export default function Chat({
   lastCode,
   onRevert,
   build,
+  project,
+  onProjectFix,
+  onProjectRefresh,
+  onProjectClose,
   onBuildYes,
   onBuildLater,
   publish,
@@ -61,6 +66,18 @@ export default function Chat({
   lastCode?: { id: string; files: string[] };
   onRevert: () => void;
   // Build d'une page : checklist des étapes et la question de l'étape en cours.
+  // Contrôle du projet ouvert : checklist, et pour chaque manque ce que le
+  // chat peut faire (ou ce que l'utilisatrice doit faire elle-même).
+  project?: {
+    project: string;
+    items: CheckItem[];
+    busy: boolean;
+    // Correction qui n'a pas abouti : la cause en clair et la suite proposée.
+    note?: { text: string; fix?: CheckItem['fix'] };
+  };
+  onProjectFix?: (item: CheckItem) => void;
+  onProjectRefresh?: () => void;
+  onProjectClose?: () => void;
   build?: {
     page: string;
     route?: string | false;
@@ -184,6 +201,71 @@ export default function Chat({
         )}
         {thinking && <Progress agentName={agentName} />}
       </div>
+      {project && (
+        <section className="chat-publish chat-build" aria-label={`Contrôle du projet ${project.project}`}>
+          <p>
+            <strong>Mon projet · {project.project}</strong>
+          </p>
+          <ol className="chat-build-steps chat-check">
+            {project.items.map((i) => (
+              <li key={i.id} data-state={i.state === 'ok' ? 'done' : 'doing'}>
+                <span aria-hidden="true">{{ ok: '✓', warn: '⚠️', missing: '✗' }[i.state]}</span>{' '}
+                <strong>{i.label}</strong> : {i.detail}
+                {i.state !== 'ok' && i.fix && (
+                  <div className="chat-check-fix">
+                    {i.fix.kind === 'manual' ? (
+                      <small>{i.fix.label}</small>
+                    ) : (
+                      <button type="button" disabled={project.busy} onClick={() => onProjectFix?.(i)}>
+                        {i.fix.label}
+                      </button>
+                    )}
+                  </div>
+                )}
+              </li>
+            ))}
+          </ol>
+          {project.note && (
+            <div className="chat-check-note" role="alert">
+              <p>⚠️ {project.note.text}</p>
+              {project.note.fix &&
+                (project.note.fix.kind === 'manual' ? (
+                  <small>{project.note.fix.label}</small>
+                ) : (
+                  <button
+                    type="button"
+                    disabled={project.busy}
+                    onClick={() =>
+                      onProjectFix?.({ id: 'note', label: 'Suite', state: 'missing', detail: '', fix: project.note!.fix })
+                    }
+                  >
+                    {project.note.fix.label}
+                  </button>
+                ))}
+            </div>
+          )}
+          <p>
+            {project.items.every((i) => i.state === 'ok')
+              ? 'Tout est en place : tu peux composer, coder et publier.'
+              : (() => {
+                  const missing = project.items.filter((i) => i.state === 'missing').length;
+                  const warn = project.items.filter((i) => i.state === 'warn').length;
+                  const watch = warn ? `${warn} point(s) à surveiller` : '';
+                  return missing
+                    ? `Il manque ${missing} chose(s)${watch ? `, et ${watch}` : ''}. Je règle ce que je peux, un bouton à la fois.`
+                    : `Rien ne manque ; ${watch}.`;
+                })()}
+          </p>
+          <div>
+            <button type="button" onClick={onProjectRefresh} disabled={project.busy}>
+              {project.busy ? 'Vérification…' : 'Revérifier'}
+            </button>
+            <button type="button" onClick={onProjectClose}>
+              Fermer
+            </button>
+          </div>
+        </section>
+      )}
       {build && (
         <section
           className="chat-publish chat-build"

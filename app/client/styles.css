@@ -4644,3 +4644,34 @@ html[data-building] .ux-save {
     gap: 8px;
   }
 }
+
+/* Contrôle du projet dans le chat. */
+.chat-check li {
+  line-height: 1.35;
+}
+.chat-check-fix {
+  margin: 4px 0 6px 18px;
+}
+.chat-check-fix button {
+  padding: 2px 10px;
+  font-size: 12px;
+}
+.chat-check-fix small {
+  color: inherit;
+  opacity: 0.8;
+}
+.chat-check-note {
+  display: grid;
+  gap: 4px;
+  padding: 8px;
+  border-radius: 8px;
+  background: rgb(255 180 0 / 12%);
+}
+.chat-check-note p {
+  margin: 0;
+}
+.chat-check-note button {
+  justify-self: start;
+  padding: 2px 10px;
+  font-size: 12px;
+}
