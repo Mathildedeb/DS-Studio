@@ -1,3 +1,4 @@
+import { execFile } from 'node:child_process';
 import http from 'node:http';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
@@ -15,7 +16,8 @@ import { ClaudeAdapter } from '../../connectors/agents/claude.js';
 import { proposeCode, type Ask } from '../../connectors/agents/coder.js';
 import { CodeStore } from './code.js';
 import { ConnectionStore, inspectFolder, pickFolder } from './connection.js';
-import { DevServer } from './devserver.js';
+import { DevServer, detectCommand } from './devserver.js';
+import { checkProject } from '../shared/projectCheck.js';
 import { atomicWrite, readPrivate } from './files.js';
 import { readProjectTokens, writeProjectTokens } from './projectTokens.js';
 import { BATCH, PublishCounter, gitStatus, projectPullRequest, publish } from './gitops.js';
@@ -599,6 +601,92 @@ export async function createStudioServer(options: {
             return send(200, await dashboard.readPreview(store.directory));
           if (url.pathname === '/api/connection')
             return send(200, await connection.status());
+          // Contrôle du projet ouvert : ce qui marche, ce qui manque, et
+          // comment le régler (le chat le présente en checklist).
+          if (url.pathname === '/api/project-check') {
+            const status = await connection.status();
+            const project = status.project;
+            if (!project) throw new StudioError('Ouvrez d’abord un projet.', 409);
+            const scope = await workspace();
+            const at = (...parts: string[]) => path.join(project.folder, ...parts);
+            const exists = (p: string) => fs.stat(p).then(() => true, () => false);
+            const pkg = await fs
+              .readFile(at('package.json'), 'utf8')
+              .then((raw) => JSON.parse(raw) as Record<string, Record<string, string> | undefined>)
+              .catch(() => null);
+            const deps = { ...pkg?.dependencies, ...pkg?.devDependencies };
+            const coded = (await scope.code.components().catch(() => [])).filter((c) =>
+              c.file.startsWith('src/components/'),
+            );
+            const tokens = await readProjectTokens(project.folder)
+              .then((t) => ({ file: t.file, count: Object.keys(t.tokens).length }))
+              .catch(() => null);
+            const fileUrl = await figmaUrl();
+            const figmaState = await figma.status(fileUrl);
+            const figmaList = figmaState.connected
+              ? await figmaComponents(figma, fileUrl).catch(() => [])
+              : [];
+            const map = await scope.code.componentMap().catch(() => ({}));
+            const nodeModules = await exists(at('node_modules'));
+            const devScript = (await detectCommand(project.folder))?.label ?? null;
+            // Le projet démarre-t-il vraiment ? Déjà lancé, ou lancé ici (il
+            // reste lancé : c'est le proto de la Preview).
+            let start: { ok: boolean; url?: string; log?: string } | undefined;
+            let compile: { ok: boolean; errors?: number; log?: string } | undefined;
+            if (pkg && devScript && nodeModules) {
+              let dev = await devServer.readFor(project.folder);
+              if (dev.state !== 'running' || dev.folder !== project.folder)
+                dev = await devServer.start(project.folder);
+              start =
+                dev.state === 'running'
+                  ? { ok: true, url: dev.url }
+                  : { ok: false, log: dev.logs.join('\n') };
+              // Compilation avec le TypeScript du projet, s'il en a un.
+              const tsc = at('node_modules', 'typescript', 'bin', 'tsc');
+              if ((await exists(at('tsconfig.json'))) && (await exists(tsc))) {
+                const config = await fs.readFile(at('tsconfig.json'), 'utf8').catch(() => '');
+                const args = /"references"/.test(config) ? ['-b', '--noEmit'] : ['--noEmit', '-p', '.'];
+                const out = await new Promise<{ code: number; text: string }>((done) =>
+                  execFile(process.execPath, [tsc, ...args], { cwd: project.folder, timeout: 90_000, maxBuffer: 2_000_000 }, (error, stdout, stderr) =>
+                    done({ code: error ? 1 : 0, text: `${stdout}${stderr}` }),
+                  ),
+                );
+                compile = out.code
+                  ? { ok: false, errors: (out.text.match(/error TS\d+/g) ?? []).length || undefined, log: out.text }
+                  : { ok: true };
+              }
+            }
+            const relayInstalled = (await exists(at(bridgeHtml))) && (await exists(at(...bridgeEntry.split('/'))));
+            const relayCurrent =
+              relayInstalled &&
+              (await fs.readFile(at(...bridgeEntry.split('/')), 'utf8').catch(() => '')).includes(bridgeMark);
+            return send(200, {
+              project: project.name,
+              items: checkProject({
+                name: project.name,
+                git: project.git,
+                packageJson: !!pkg,
+                devScript,
+                react: !!deps.react,
+                vite: !!deps.vite,
+                nodeModules,
+                start,
+                compile,
+                components: coded.length,
+                tokens,
+                figma: {
+                  linked: !!fileUrl,
+                  hasToken: figma.hasToken,
+                  connected: figmaState.connected,
+                  label: figmaState.label,
+                },
+                figmaComponents: figmaList.length,
+                coded: figmaList.filter((c) => codedFor(c.name, coded, map)).length,
+                relay: { installed: relayInstalled, current: relayCurrent },
+                pluginSeen: !!pluginSeenAt && Date.now() - pluginSeenAt < 60_000,
+              }),
+            });
+          }
           if (url.pathname === '/api/plugin/pairing')
             return send(200, {
               token: await pluginToken(),

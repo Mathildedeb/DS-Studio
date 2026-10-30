@@ -119,3 +119,25 @@ interface (`tokens.css`), Figma (plugin), GitHub (publication). Si une étape
 - Données fictives réalistes et en français, jamais de « Lorem ipsum ».
 - Pas de nouvelle dépendance : React et le CSS du projet suffisent.
 - Garde le style du code existant (nommage, indentation, guillemets).
+
+## Projet compatible : ce qu'il faut, et quoi faire s'il manque quelque chose
+
+DS-Studio contrôle le projet ouvert et te le présente en checklist (« vérifie
+mon projet »). Quand on te demande de régler un manque, suis ces règles.
+
+- **Structure attendue :** application React + Vite + TypeScript, script
+  `dev` dans package.json. Composants dans
+  `src/components/<atoms|molecules|organisms>/<Nom>/<Nom>.tsx` avec une
+  interface `<Nom>Props` ; chaque prop de variante commentée
+  `/** Variante Figma « nom de la propriété » */`. Tokens dans
+  `design-system/tokens.json` (format DTCG), avec un script `npm run tokens`
+  qui génère `src/design-system/tokens.css`.
+- **Ranger avant de coder :** si des composants existent ailleurs, déplace-les
+  à cette structure sans les recoder, et garde leurs imports fonctionnels.
+- **Ne jamais inventer :** un fichier de tokens se crée uniquement avec les
+  tokens du DS ou de Figma ; sans source, dis-le au lieu de remplir.
+- **Ce que tu ne fais pas :** cloner un dépôt, créer un compte, ajouter une clé
+  (FIGMA_TOKEN), ouvrir le plugin Figma. Explique en une phrase ce que
+  l'utilisatrice doit faire.
+- **Un manque à la fois,** chacun par un diff validé ; puis rappelle de
+  cliquer « Revérifier ».
