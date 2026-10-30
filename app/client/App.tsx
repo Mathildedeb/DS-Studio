@@ -25,6 +25,7 @@ type BuildFlow = BuildRequest & {
 import OpenProject from './OpenProject.js';
 import SyncPanel from './SyncPanel.js';
 import ComponentLibrary from './ComponentLibrary.js';
+import { useConversations } from './useConversations.js';
 import FigmaPanel, { figmaLevel } from './FigmaPanel.js';
 import type { Level } from './dsRegistry.js';
 import type { FigmaComponent } from '../../connectors/figma/library.js';
@@ -100,7 +101,7 @@ function useView() {
   const read = (): View =>
     location.hash === '' || location.hash === '#tableau-de-bord'
       ? 'dashboard'
-      : location.hash === '#synchro'
+      : location.hash === '#synchro' || location.hash === '#plugin'
         ? 'sync'
         : location.hash === '#preview' || location.hash === '#pages'
           ? 'preview'
@@ -201,7 +202,6 @@ export default function App() {
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [message, setMessage] = useState('');
-  const [chat, setChat] = useState<ChatMessage[]>([]);
   const [codeProposal, setCodeProposal] = useState<CodeProposal>();
   const [codeBusy, setCodeBusy] = useState(false);
   const [codeError, setCodeError] = useState('');
@@ -216,50 +216,14 @@ export default function App() {
   const [clodoOpen, setClodoOpen] = useState(false);
   const [connection, setConnection] = useState<ConnectionStatus>();
   const [opening, setOpening] = useState(false);
-  const conversationKey = connection
-    ? `ds-studio-conversation:${connection.saved.folder ?? 'atelier'}`
-    : undefined;
-  const [conversationLoaded, setConversationLoaded] = useState<string>();
-  const [conversationStorageError, setConversationStorageError] =
-    useState(false);
-  useEffect(() => {
-    if (!conversationKey) return;
-    let restored: ChatMessage[] = [];
-    try {
-      const raw = JSON.parse(localStorage.getItem(conversationKey) || '[]');
-      if (Array.isArray(raw))
-        restored = raw
-          .filter(
-            (m) =>
-              m &&
-              (m.role === 'user' || m.role === 'assistant') &&
-              typeof m.text === 'string',
-          )
-          .slice(-100)
-          .map((m) => ({ role: m.role, text: m.text.slice(0, 10000) }));
-    } catch {
-      setConversationStorageError(true);
-    }
-    setChat(restored);
-    setConversationLoaded(conversationKey);
-  }, [conversationKey]);
-  useEffect(() => {
-    if (!conversationKey || conversationLoaded !== conversationKey) return;
-    try {
-      localStorage.setItem(
-        conversationKey,
-        JSON.stringify(
-          chat
-            .slice(-100)
-            .map(({ role, text }) => ({ role, text: text.slice(0, 10000) })),
-        ),
-      );
-      setConversationStorageError(false);
-    } catch {
-      setConversationStorageError(true);
-    }
-  }, [chat, conversationKey, conversationLoaded]);
-
+  const conversations = useConversations(
+    connection ? (connection.saved.folder ?? 'atelier') : undefined,
+  );
+  const {
+    chat,
+    setChat,
+    storageError: conversationStorageError,
+  } = conversations;
   // Build d'une page, piloté par le chat : il pose la question avant chaque
   // étape (composants en maquette, page, test, publication) et coche la
   // checklist au fil des diffs validés.
@@ -788,7 +752,7 @@ export default function App() {
               : flow.stage === 'page'
                 ? `Je code la page « ${flow.page.name} » avec sa disposition et ses liens ?`
                 : flow.stage === 'test'
-                  ? 'Tu la testes sur l’iPhone ? Ouvre Pages en mode Code réel, ou la page codée.'
+                  ? 'Tu la testes sur l’iPhone ? Ouvre Preview en mode Aperçu, ou la page codée.'
                   : flow.stage === 'publish'
                     ? 'Je publie sur Git ?'
                     : 'Build terminé.',
@@ -944,25 +908,22 @@ export default function App() {
             href="#tableau-de-bord"
             aria-current={view === 'dashboard' ? 'page' : undefined}
           >
-            Accueil
+            Dash
           </a>
           <a
             href="#design-system"
             aria-current={view === 'ds' ? 'page' : undefined}
           >
-            Bibliothèque
+            DS
           </a>
           <a
-            href="#pages"
+            href="#preview"
             aria-current={view === 'preview' ? 'page' : undefined}
           >
-            Pages
+            Preview
           </a>
-          <a
-            href="#synchro"
-            aria-current={view === 'sync' ? 'page' : undefined}
-          >
-            Synchro
+          <a href="#plugin" aria-current={view === 'sync' ? 'page' : undefined}>
+            Plugin
           </a>
         </nav>
         <div className="header-status">
@@ -976,7 +937,7 @@ export default function App() {
               ? `${connection.project.name}${connection.project.git?.branch ? ` · ${connection.project.git.branch}` : ''}`
               : 'Ouvrir un projet'}
           </button>
-          <span className="local-badge">● Sur cet ordinateur</span>
+
           {figma?.file ? (
             <a
               className="figma-status connected"
@@ -1030,7 +991,7 @@ export default function App() {
         <>
           <div className="intro">
             <div>
-              <h1>Synchro</h1>
+              <h1>Plugin</h1>
               <p>
                 Vérifie les variantes Figma, le code local et les changements à
                 publier.
@@ -1060,7 +1021,7 @@ export default function App() {
           <div className="intro">
             <div>
               <h1 id="ds-title" tabIndex={-1}>
-                Bibliothèque
+                DS
               </h1>
               <p>
                 {connection?.project?.name ?? 'Aucun projet ouvert'} · révision{' '}
@@ -1418,17 +1379,6 @@ export default function App() {
         </>
       ) : (
         <>
-          <div className="intro">
-            <div>
-              <h1 id="preview-title" tabIndex={-1}>
-                Pages
-              </h1>
-              <p>
-                Compose ta page, puis vérifie son code. Chaque écriture de code
-                passe par ta validation.
-              </p>
-            </div>
-          </div>
           {feedback}
           {history}
           <main className="studio-main">
@@ -1453,12 +1403,113 @@ export default function App() {
         </footer>
       )}
       <Clodo open={clodoOpen} onOpen={() => setClodoOpen(true)}>
-        <p className="ux-save" role="status">
-          {conversationStorageError
-            ? 'Conversation conservée pour cette session seulement : stockage local indisponible.'
-            : 'Conversation conservée sur cet ordinateur · 100 derniers messages. Les propositions de code doivent être redemandées après rechargement.'}
-        </p>
-        {chatBox('claude', () => setClodoOpen(false))}
+        <div className="assistant-workspace">
+          <nav
+            className="discussion-sidebar chat-rail"
+            aria-label="Discussions du projet"
+          >
+            <button
+              className="new-discussion"
+              aria-label="Ajouter un chat"
+              title="Ajouter un chat"
+              disabled={
+                !conversations.ready ||
+                thinking ||
+                codeBusy ||
+                !!codeProposal ||
+                !!proposal ||
+                !!flow ||
+                !!publishCard ||
+                conversations.discussions.length >= 50
+              }
+              onClick={() => {
+                conversations.create();
+                setClodoOpen(true);
+                setMessage('');
+              }}
+            >
+              <svg
+                aria-hidden="true"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.6"
+              >
+                <path d="M12 4v16M4 12h16" />
+              </svg>
+            </button>
+            <div className="discussion-project">
+              <ul>
+                {conversations.discussions.map((d) => (
+                  <li key={d.id}>
+                    <button
+                      aria-label={d.title}
+                      title={d.title}
+                      style={
+                        {
+                          '--chat-dot': [
+                            '#c33d70',
+                            '#506bce',
+                            '#27816c',
+                            '#a65c22',
+                            '#8150bd',
+                            '#347e9e',
+                          ][
+                            Array.from(d.id).reduce(
+                              (n, c) => n + c.charCodeAt(0),
+                              0,
+                            ) % 6
+                          ],
+                        } as React.CSSProperties
+                      }
+                      aria-current={
+                        d.id === conversations.active ? 'page' : undefined
+                      }
+                      disabled={
+                        thinking ||
+                        codeBusy ||
+                        !!codeProposal ||
+                        !!proposal ||
+                        !!flow ||
+                        !!publishCard
+                      }
+                      onClick={() => {
+                        conversations.select(d.id);
+                        setClodoOpen(true);
+                        setMessage('');
+                      }}
+                    >
+                      <span className="chat-dot" aria-hidden="true" />
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </div>
+            {(thinking ||
+              codeBusy ||
+              codeProposal ||
+              proposal ||
+              flow ||
+              publishCard) && (
+              <p>
+                Termine ou ferme l’étape en cours pour changer de discussion.
+              </p>
+            )}
+            {conversations.discussions.length >= 50 && (
+              <p>Limite de 50 discussions pour ce projet.</p>
+            )}
+          </nav>
+
+          <div className="discussion-current">
+            {conversationStorageError && (
+              <p className="ux-save" role="status">
+                Stockage indisponible : discussions conservées pour cette
+                session seulement.
+              </p>
+            )}
+            {chatBox('claude', () => setClodoOpen(false))}
+          </div>
+        </div>
       </Clodo>
       <CodeReview
         proposal={codeProposal}

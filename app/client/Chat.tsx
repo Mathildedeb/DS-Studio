@@ -2,6 +2,10 @@ import { useEffect, useRef, useState } from 'react';
 import type { PublishStatus } from '../server/gitops.js';
 import type { CircuitStep } from '../shared/circuit.js';
 import { request } from './api.js';
+import assistantMascot from './assets/assistant-mascot.png';
+import { Card } from './components/ui/card';
+import { Avatar, AvatarImage, AvatarFallback } from './components/ui/avatar';
+import { Textarea } from './components/ui/textarea';
 
 // circuit : réponse de Clodo qui suit une validation (checklist de la
 // révision indiquée) ; elle reste dans l'atelier, jamais envoyée au CLI.
@@ -16,12 +20,6 @@ const stateText = {
   warn: 'à corriger',
   todo: 'en attente',
 };
-
-const suggestions = [
-  'Propose une couleur de marque plus chaleureuse.',
-  'Resserre l’espacement de ce composant.',
-  'Vérifie le contraste de mes boutons.',
-];
 
 // L'état de la conversation reste dans App ; ce composant ne fait qu'afficher.
 export default function Chat({
@@ -75,7 +73,12 @@ export default function Chat({
   onBuildYes?: () => void;
   onBuildLater?: () => void;
   // Carte « Je publie ? » : commit + push du projet, seulement à l'accord.
-  publish?: { git: PublishStatus; busy: boolean; done?: string; error?: string };
+  publish?: {
+    git: PublishStatus;
+    busy: boolean;
+    done?: string;
+    error?: string;
+  };
   onPublish: (message: string) => void;
   onDismissPublish: () => void;
   // Checklist de la dernière validation : DS, code, interface, Figma, GitHub.
@@ -90,9 +93,10 @@ export default function Chat({
   return (
     <div className="chat">
       <header className="chat-head">
-        <span className="chat-avatar" aria-hidden="true">
-          ✳
-        </span>
+        <Avatar className="chat-avatar">
+          <AvatarImage src={assistantMascot} alt="Mascotte de l’assistant" />
+          <AvatarFallback>DS</AvatarFallback>
+        </Avatar>
         <div>
           <strong>{agentName}</strong>
           <span className={`chat-status ${available ? 'on' : 'off'}`}>
@@ -112,34 +116,17 @@ export default function Chat({
         )}
       </header>
       <div
-        className="chat-log"
+        className={`chat-log${!chat.length && !thinking ? ' is-empty' : ''}`}
         ref={log}
         aria-label="Conversation"
         aria-live="polite"
       >
-        {!chat.length && (
-          <div className="chat-empty">
-            <p>
-              Demandez une modification. {agentName} choisit de changer des
-              tokens ou le code, et vous validez le diff avant toute écriture.
-            </p>
-            <div className="chat-suggestions">
-              {suggestions.map((s) => (
-                <button
-                  key={s}
-                  type="button"
-                  onClick={() => onMessage(s)}
-                  disabled={thinking}
-                >
-                  {s}
-                </button>
-              ))}
-            </div>
-          </div>
+        {!chat.length && !thinking && (
+          <p className="chat-start">Commence la discussion</p>
         )}
         {chat.map((c, i) =>
           c.circuit !== undefined ? (
-            <article className="chat-bubble assistant chat-circuit" key={i}>
+            <Card className="chat-bubble assistant chat-circuit" key={i}>
               <span className="sr-only">{agentName} :</span>
               <p>{c.text}</p>
               {circuit?.revision === c.circuit ? (
@@ -150,9 +137,14 @@ export default function Chat({
                         <span className="circuit-icon" aria-hidden="true" />
                         <span>
                           {s.label}
-                          <span className="sr-only"> ({stateText[s.state]})</span>
+                          <span className="sr-only">
+                            {' '}
+                            ({stateText[s.state]})
+                          </span>
                           {s.detail && <small>{s.detail}</small>}
-                          {s.fix && <small className="circuit-fix">{s.fix}</small>}
+                          {s.fix && (
+                            <small className="circuit-fix">{s.fix}</small>
+                          )}
                         </span>
                       </li>
                     ))}
@@ -165,7 +157,9 @@ export default function Chat({
                           `Après la révision ${circuit.revision}, une étape n’est pas à jour : ${circuit.steps
                             .filter((s) => s.state === 'warn')
                             .map((s) => `${s.label} : ${s.detail}`)
-                            .join(' ; ')}. Explique-moi et propose une solution.`,
+                            .join(
+                              ' ; ',
+                            )}. Explique-moi et propose une solution.`,
                         )
                       }
                     >
@@ -174,36 +168,45 @@ export default function Chat({
                   )}
                 </>
               ) : (
-                <p className="circuit-done">Suivi passé à la modification suivante.</p>
+                <p className="circuit-done">
+                  Suivi passé à la modification suivante.
+                </p>
               )}
-            </article>
+            </Card>
           ) : (
-            <article className={`chat-bubble ${c.role}`} key={i}>
+            <Card className={`chat-bubble ${c.role}`} key={i}>
               <span className="sr-only">
                 {c.role === 'user' ? 'Vous' : agentName} :
               </span>
               <p>{c.text}</p>
-            </article>
+            </Card>
           ),
         )}
         {thinking && <Progress agentName={agentName} />}
       </div>
       {build && (
-        <section className="chat-publish chat-build" aria-label={`Build de la page ${build.page}`}>
+        <section
+          className="chat-publish chat-build"
+          aria-label={`Build de la page ${build.page}`}
+        >
           <p>
             <strong>Build · {build.page}</strong>
           </p>
           <ol className="chat-build-steps">
             {build.steps.map((s) => (
               <li key={s.label} data-state={s.state}>
-                <span aria-hidden="true">{{ done: '✓', doing: '⏳', todo: '○', warn: '⚠️' }[s.state]}</span> {s.label}
+                <span aria-hidden="true">
+                  {{ done: '✓', doing: '⏳', todo: '○', warn: '⚠️' }[s.state]}
+                </span>{' '}
+                {s.label}
               </li>
             ))}
           </ol>
           {build.checks && (
             <details open={build.checks.some((c) => !c.ok)}>
               <summary>
-                Vérification du code : {build.checks.filter((c) => c.ok).length}/{build.checks.length}
+                Vérification du code : {build.checks.filter((c) => c.ok).length}
+                /{build.checks.length}
               </summary>
               <ul>
                 {build.checks.map((c) => (
@@ -219,12 +222,23 @@ export default function Chat({
           {!build.busy && (
             <div>
               {build.question !== 'Build terminé.' && (
-                <button type="button" className="studio-primary" onClick={onBuildYes}>
-                  {build.question.startsWith('Tu la testes') ? 'Valider le test' : 'Continuer cette étape'}
+                <button
+                  type="button"
+                  className="studio-primary"
+                  onClick={onBuildYes}
+                >
+                  {build.question.startsWith('Tu la testes')
+                    ? 'Valider le test'
+                    : 'Continuer cette étape'}
                 </button>
               )}
               {build.question.startsWith('Tu la testes') && build.route && (
-                <a className="chat-build-link" href={`http://localhost:5173${build.route}`} target="_blank" rel="noreferrer">
+                <a
+                  className="chat-build-link"
+                  href={`http://localhost:5173${build.route}`}
+                  target="_blank"
+                  rel="noreferrer"
+                >
                   Ouvrir la page codée ↗
                 </a>
               )}
@@ -245,8 +259,7 @@ export default function Chat({
                 <strong>Je publie sur Git ?</strong> {publish.git.pending}{' '}
                 modifications validées · {publish.git.files.length} fichier(s)
                 {publish.git.ahead > 0 && ' · commits à pousser'} · nouvelle
-                branche design/… créée depuis{' '}
-                {publish.git.branch ?? 'main'}
+                branche design/… créée depuis {publish.git.branch ?? 'main'}
               </p>
               {publish.git.files.length > 0 && (
                 <details>
@@ -286,7 +299,9 @@ export default function Chat({
                     )
                   }
                 >
-                  {publish.busy ? 'Publication…' : 'Oui, créer la branche et pousser'}
+                  {publish.busy
+                    ? 'Publication…'
+                    : 'Oui, créer la branche et pousser'}
                 </button>
                 <button
                   type="button"
@@ -315,7 +330,7 @@ export default function Chat({
         <label className="sr-only" htmlFor="chat-input">
           Votre demande
         </label>
-        <textarea
+        <Textarea
           id="chat-input"
           rows={2}
           value={message}
@@ -378,7 +393,9 @@ function Progress({ agentName }: { agentName: string }) {
   useEffect(() => {
     const start = Date.now();
     const read = () =>
-      request<{ busy: boolean; steps: { at: number; text: string }[] }>('code/progress')
+      request<{ busy: boolean; steps: { at: number; text: string }[] }>(
+        'code/progress',
+      )
         .then((p) => setSteps(p.steps))
         .catch(() => undefined);
     void read();
@@ -389,11 +406,18 @@ function Progress({ agentName }: { agentName: string }) {
     return () => clearInterval(timer);
   }, []);
   return (
-    <div className="chat-thinking chat-progress" role="status" aria-live="polite">
+    <div
+      className="chat-thinking chat-progress"
+      role="status"
+      aria-live="polite"
+    >
       {steps.length ? (
         <ol>
           {steps.map((s, i) => (
-            <li key={i} aria-current={i === steps.length - 1 ? 'step' : undefined}>
+            <li
+              key={i}
+              aria-current={i === steps.length - 1 ? 'step' : undefined}
+            >
               <span>{i === steps.length - 1 ? '◌' : '✓'}</span> {s.text}
             </li>
           ))}
@@ -406,7 +430,9 @@ function Progress({ agentName }: { agentName: string }) {
           <span className="sr-only">{agentName} réfléchit…</span>
         </p>
       )}
-      <small>{agentName} travaille depuis {seconds} s</small>
+      <small>
+        {agentName} travaille depuis {seconds} s
+      </small>
     </div>
   );
 }
