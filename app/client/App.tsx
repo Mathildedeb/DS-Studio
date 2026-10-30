@@ -26,10 +26,11 @@ type BuildFlow = BuildRequest & {
 };
 import OpenProject from './OpenProject.js';
 import AiConnect, { type AiInfo } from './AiConnect.js';
+import PluginSetup from './PluginSetup.js';
 import SyncPanel from './SyncPanel.js';
 import ComponentLibrary from './ComponentLibrary.js';
 import { useConversations } from './useConversations.js';
-import FigmaPanel, { figmaLevel } from './FigmaPanel.js';
+import { figmaLevel } from './FigmaPanel.js';
 import type { Level } from './dsRegistry.js';
 import type { FigmaComponent } from '../../connectors/figma/library.js';
 import type { ConnectionStatus } from '../shared/connection.js';
@@ -195,7 +196,6 @@ export default function App() {
   const [tab, setTab] = useState<Tab>('tokens');
   const [componentFocus, setComponentFocus] = useState<Focus>();
   const [previewFocus, setPreviewFocus] = useState<Focus>();
-  const [figmaFocus, setFigmaFocus] = useState<Focus>();
   const openToken = (k: TokenKey) => {
     setKey(k);
     setTab('tokens');
@@ -555,9 +555,7 @@ export default function App() {
   const focus: Focus | undefined =
     view === 'preview'
       ? previewFocus
-      : view === 'ds' && tab === 'figma'
-        ? figmaFocus
-        : view !== 'ds' || !state
+      : view !== 'ds' || !state
           ? undefined
           : tab === 'tokens'
             ? state.tokens[key] && {
@@ -1138,13 +1136,7 @@ export default function App() {
               charge.
             </p>
             <SyncPanel active onAsk={askClodo} />
-            <a
-              className="ux-text-link"
-              href="#design-system"
-              onClick={() => setTab('figma')}
-            >
-              Configurer le plugin et consulter le fichier Figma →
-            </a>
+            <PluginSetup revision={state.revision} onProposal={setProposal} />
           </main>
         </>
       ) : view === 'ds' ? (
@@ -1495,15 +1487,6 @@ export default function App() {
                 figma={figmaList}
                 code={projectCode}
                 onAsk={askClodo}
-              />
-              <FigmaPanel
-                active={tab === 'figma'}
-                revision={state.revision}
-                onProposal={setProposal}
-                onFocus={setFigmaFocus}
-                onAsk={askClodo}
-                list={figmaList}
-                error={figmaError}
               />
             </section>
           </main>

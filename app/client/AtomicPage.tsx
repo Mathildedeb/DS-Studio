@@ -26,12 +26,11 @@ import type { Focus } from '../shared/focus.js';
 
 // Page Design System : un onglet par niveau atomique, une liste filtrable
 // et, à côté, l'élément choisi en taille réelle avec ses propriétés.
-export type Tab = 'tokens' | Level | 'figma' | 'components';
+export type Tab = 'tokens' | Level | 'components';
 export const tabs: Record<Tab, string> = {
   tokens: 'Styles',
   components: 'Composants',
   ...levels,
-  figma: 'Fichier Figma',
 };
 type Props = Record<string, string | boolean>;
 
@@ -73,7 +72,7 @@ export function DsTabs({
           }}
         >
           {tabs[t]}
-          {t !== 'tokens' && t !== 'figma' && t !== 'components' && (
+          {t !== 'tokens' && t !== 'components' && (
             <span>
               {registry.filter((e) => e.level === t).length + (extra[t] ?? 0)}
             </span>
@@ -190,7 +189,7 @@ export function ComponentWorkspace({
   const codedOf = (c: FigmaComponent) =>
     code ? codedFor(c.name, code.components, code.map) : undefined;
   const level: Level =
-    tab === 'tokens' || tab === 'figma' || tab === 'components' ? 'atom' : tab;
+    tab === 'tokens' || tab === 'components' ? 'atom' : tab;
   const [query, setQuery] = useState('');
   const first = (l: Level) => registry.find((x) => x.level === l)?.name ?? '';
   const [items, setItems] = useState<Record<Level, string>>({
@@ -291,7 +290,7 @@ export function ComponentWorkspace({
       role="tabpanel"
       id={`panel-${level}`}
       aria-labelledby={`tab-${level}`}
-      hidden={tab === 'tokens' || tab === 'figma' || tab === 'components'}
+      hidden={tab === 'tokens' || tab === 'components'}
     >
       <div className="ds-list">
         <label className="field">

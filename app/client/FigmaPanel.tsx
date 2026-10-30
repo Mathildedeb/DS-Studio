@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react';
 import { request } from './api.js';
 
-import type { Proposal } from '../shared/model.js';
 import type { Focus } from '../shared/focus.js';
 import type { Level } from './dsRegistry.js';
 import type { CodeComponent } from '../shared/components.js';
@@ -10,204 +9,8 @@ import type {
   FigmaNode,
 } from '../../connectors/figma/library.js';
 
-// Onglet Figma : les composants du fichier relié au projet, leur rendu et
-// leur structure, et l'import des tokens du projet (design-system/tokens.json).
-interface ProjectTokens {
-  file: string;
-  tokens: Record<string, unknown>;
-  skipped: { name: string; reason: string }[];
-}
-
-export default function FigmaPanel({
-  active,
-  list,
-  error,
-  revision,
-  onProposal,
-  onFocus,
-  onAsk,
-}: {
-  active: boolean;
-  // Composants lus une fois par App, partagés avec les onglets atomiques.
-  list?: FigmaComponent[];
-  error: string;
-  revision: number;
-  onProposal: (p: Proposal) => void;
-  onFocus: (f: Focus) => void;
-  onAsk: (message: string) => void;
-}) {
-  const [query, setQuery] = useState('');
-  const [selected, setSelected] = useState<FigmaComponent>();
-  const [project, setProject] = useState<ProjectTokens>();
-  const [tokenError, setTokenError] = useState('');
-  const [pairing, setPairing] = useState<{ token: string; manifest: string }>();
-  const [showCode, setShowCode] = useState(false);
-  useEffect(() => {
-    if (!active || project) return;
-    request<{ token: string; manifest: string }>('plugin/pairing')
-      .then(setPairing)
-      .catch(() => undefined);
-    request<ProjectTokens>('project-tokens')
-      .then(setProject)
-      .catch((e) => setTokenError(e.message));
-  }, [active]);
-
-  const q = query.trim().toLowerCase();
-  // Ordre atomique d'abord (Atoms → Template), puis les autres pages.
-  const order = (p: string) => {
-    const i = ['atom', 'mol', 'org', 'templ'].findIndex((x) =>
-      p.toLowerCase().startsWith(x),
-    );
-    return i < 0 ? 9 : i;
-  };
-  const pages = [...new Set((list ?? []).map((c) => c.page || 'Autres'))].sort(
-    (a, b) => order(a) - order(b),
-  );
-  return (
-    <div
-      className="ds-workspace"
-      role="tabpanel"
-      id="panel-figma"
-      aria-labelledby="tab-figma"
-      hidden={!active}
-    >
-      <div className="ds-list">
-        <a className="ux-text-link" href="#synchro">
-          Voir les écarts Figma et code →
-        </a>
-        <section className="figma-tokens" aria-label="Tokens du projet">
-          <strong>Tokens du projet</strong>
-          {project ? (
-            <>
-              <p>
-                {Object.keys(project.tokens).length} tokens lisibles dans{' '}
-                <code>{project.file}</code>
-                {project.skipped.length > 0 &&
-                  ` · ${project.skipped.length} non repris (typographies composées, ombres, transparences…)`}
-              </p>
-              <button
-                type="button"
-                className="studio-primary"
-                onClick={() =>
-                  request<Proposal>('project-tokens/import', { revision })
-                    .then(onProposal)
-                    .catch((e) => setTokenError(e.message))
-                }
-              >
-                Importer dans DS-Studio
-              </button>
-            </>
-          ) : (
-            <p>{tokenError || 'Lecture…'}</p>
-          )}
-          {project && tokenError && <p className="error">{tokenError}</p>}
-        </section>
-        <details className="figma-tokens figma-plugin">
-          <summary>
-            <strong>Plugin Figma DS-Studio</strong>
-          </summary>
-          <p>
-            Il applique tes tokens validés aux variables de ton fichier Figma :
-            les composants qui les utilisent suivent.
-          </p>
-          <ol>
-            <li>
-              Figma (app de bureau) → Plugins → Développement → Importer un
-              plugin depuis un manifeste.
-            </li>
-            <li>
-              Choisis :{' '}
-              <code>{pairing?.manifest ?? 'figma-plugin/manifest.json'}</code>
-            </li>
-            <li>Lance « DS-Studio » dans ton fichier, colle ce code :</li>
-          </ol>
-          {pairing && (
-            <div className="plugin-code">
-              <code>{showCode ? pairing.token : '•'.repeat(12)}</code>
-              <button type="button" onClick={() => setShowCode(!showCode)}>
-                {showCode ? 'Masquer' : 'Afficher'}
-              </button>
-              <button
-                type="button"
-                onClick={() =>
-                  void navigator.clipboard?.writeText(pairing.token)
-                }
-              >
-                Copier
-              </button>
-              <button
-                type="button"
-                title="Le plugin devra recevoir le nouveau code"
-                onClick={() =>
-                  request<{ token: string; manifest: string }>(
-                    'plugin/pairing/renew',
-                    {},
-                  )
-                    .then(setPairing)
-                    .catch(() => undefined)
-                }
-              >
-                Renouveler
-              </button>
-            </div>
-          )}
-        </details>
-        <label className="field">
-          Rechercher un composant Figma
-          <input
-            type="search"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="button, card, calendar…"
-          />
-        </label>
-        {!list && (
-          <p className="ds-list-empty">{error || 'Lecture de Figma…'}</p>
-        )}
-        {pages.map((page) => {
-          const items = (list ?? []).filter(
-            (c) =>
-              (c.page || 'Autres') === page && c.name.toLowerCase().includes(q),
-          );
-          if (!items.length) return null;
-          return (
-            <div key={page}>
-              <div className="toc-label">
-                {page} <span>{items.length}</span>
-              </div>
-              <ul>
-                {items.map((c) => (
-                  <li key={c.id}>
-                    <button
-                      type="button"
-                      aria-current={c.id === selected?.id ? 'true' : undefined}
-                      onClick={() => setSelected(c)}
-                    >
-                      <strong>{c.name}</strong>
-                      <span>
-                        {c.variants > 1 ? `${c.variants} variantes` : ''}
-                      </span>
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          );
-        })}
-      </div>
-      <div className="ds-detail">
-        {!selected ? (
-          <p className="ds-stage-empty">
-            Choisissez un composant de votre fichier Figma pour voir son rendu
-            et sa structure, puis demandez à Clodo de le coder.
-          </p>
-        ) : (
-          <FigmaDetail component={selected} onFocus={onFocus} onAsk={onAsk} />
-        )}
-      </div>
-    </div>
-  );
-}
+// Composants Figma vus dans les onglets du DS : niveau atomique d'une page
+// Figma, et fiche d'un composant (rendu, structure, demande à Clodo).
 
 // Niveau atomique déduit du nom de la page Figma (Atoms, Molécules, Organism…).
 export function figmaLevel(page: string): Level | undefined {
@@ -220,7 +23,7 @@ export function figmaLevel(page: string): Level | undefined {
 }
 
 // Détail d'un composant Figma : rendu, structure, propriétés, et la demande
-// à Clodo de le coder. Utilisé par l'onglet Figma et les onglets atomiques.
+// à Clodo de le coder. Utilisé par les onglets Composants et atomiques.
 export function FigmaDetail({
   component,
   onFocus,
