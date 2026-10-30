@@ -483,7 +483,8 @@ test('UX : retrait confirmé et restauration depuis le menu du format', async ({
   await page
     .getByRole('button', { name: 'Retirer le format', exact: true })
     .click();
-  await expect(page.getByRole('alert')).toContainText('Échec simulé');
+  // L'échec s'affiche dans la Preview et dans le message général de l'app.
+  await expect(page.getByRole('alert').first()).toContainText('Échec simulé');
   await expect(format).toContainText('Tablette');
 });
 
