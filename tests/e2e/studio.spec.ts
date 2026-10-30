@@ -1,3 +1,4 @@
+import path from 'node:path';
 import { test, expect } from '@playwright/test';
 
 test('boucle centrale réelle : diff, validation, propagation, recharge, annulation sélective', async ({
@@ -5,7 +6,7 @@ test('boucle centrale réelle : diff, validation, propagation, recharge, annulat
 }) => {
   await page.goto('/#design-system');
   await expect(
-    page.getByRole('heading', { name: 'Design System', level: 1 }),
+    page.getByRole('heading', { name: 'DS', level: 1 }),
   ).toBeVisible();
   await expect(page.getByText(/^Figma non connecté/).first()).toBeVisible();
   // Le DS est vide de composants : la propagation se lit sur les variables
@@ -41,7 +42,7 @@ test('boucle centrale réelle : diff, validation, propagation, recharge, annulat
   await expect(row('color.brand')).toContainText('#8A3B20');
   await open('Preview');
   await expect.poll(() => cssVar('--color-brand')).toBe('#8A3B20');
-  await open('Design System');
+  await open('DS');
   await page.reload();
   await expect(row('color.brand')).toContainText('#8A3B20');
   await page
@@ -69,7 +70,8 @@ test('largeurs réelles, formats et pages de la Preview', async ({ page }) => {
   const formats = page.getByRole('group', { name: 'Format' });
   const pages = page.getByRole('group', { name: 'Page' });
   // Un format créé à la main rejoint iPhone, Tablette et Desktop.
-  await formats.getByRole('button', { name: '+ Format' }).click();
+  await formats.getByRole('button', { name: 'Actions du format' }).click();
+  await page.getByRole('button', { name: 'Ajouter un format' }).click();
   await page.getByLabel('Nom du format').fill('Compact');
   await page.getByLabel('Largeur (px)').fill('320');
   await page.getByLabel('Hauteur (px)').fill('640');
@@ -80,7 +82,9 @@ test('largeurs réelles, formats et pages de la Preview', async ({ page }) => {
     ['Tablette', 820],
     ['Desktop', 1440],
   ] as const) {
-    await formats.getByRole('button', { name: new RegExp(`^${name}`) }).click();
+    await page
+      .getByLabel('Format d’affichage')
+      .selectOption({ label: `${name} · ${width} px` });
     await expect(page.locator('iframe')).toHaveAttribute(
       'width',
       String(width),
@@ -101,11 +105,13 @@ test('largeurs réelles, formats et pages de la Preview', async ({ page }) => {
   await expect(frame.getByRole('heading', { name: 'Découvrir' })).toBeVisible();
   await expect(frame.getByText('Page vide.', { exact: false })).toBeVisible();
   // Une page ajoutée s'ouvre vide avec son nom, puis se renomme.
-  await pages.getByRole('button', { name: '+ Page' }).click();
+  await pages.getByRole('button', { name: 'Actions de la page' }).click();
+  await page.getByRole('button', { name: 'Ajouter une page' }).click();
   await page.getByLabel('Nom de la page').fill('Profil');
   await page.getByRole('button', { name: 'Ajouter', exact: true }).click();
   await expect(frame.getByRole('heading', { name: 'Profil' })).toBeVisible();
-  await pages.getByRole('button', { name: 'Renommer' }).click();
+  await pages.getByRole('button', { name: 'Actions de la page' }).click();
+  await page.getByRole('button', { name: 'Renommer la page' }).click();
   await page.getByLabel('Nouveau nom').fill('Mon profil');
   await page
     .getByRole('button', { name: 'Renommer', exact: true })
@@ -115,7 +121,7 @@ test('largeurs réelles, formats et pages de la Preview', async ({ page }) => {
     frame.getByRole('heading', { name: 'Mon profil' }),
   ).toBeVisible();
   await page.reload();
-  await expect(pages.getByRole('button', { name: 'Mon profil' })).toBeVisible();
+  await expect(page.getByLabel('Page affichée')).toContainText('Mon profil');
   await page.setViewportSize({ width: 700, height: 900 });
   expect(
     await page
@@ -146,7 +152,7 @@ test('export navigateur, import valide avec diff, fichier invalide sans écritur
 }) => {
   await page.goto('/#design-system');
   await expect(
-    page.getByRole('heading', { name: 'Tokens sémantiques' }),
+    page.getByRole('heading', { name: 'Styles partagés' }),
   ).toBeVisible();
   const before = await (await page.request.get('/api/state')).json();
   const download = page.waitForEvent('download');
@@ -205,6 +211,9 @@ test('V2 : brief privé persistant, indépendant du mode IA', async ({
 }) => {
   // Le brief vit dans le tableau de bord.
   await page.goto('/');
+  await page
+    .getByText('Mon projet · suivi et Design System', { exact: false })
+    .click();
   await page.getByText('Mon PFE · brief privé', { exact: true }).click();
   await page
     .getByLabel('Nom du PFE', { exact: true })
@@ -218,6 +227,9 @@ test('V2 : brief privé persistant, indépendant du mode IA', async ({
   await page.getByRole('button', { name: 'Enregistrer le brief' }).click();
   await expect(page.getByText('Brief enregistré sur ce poste.')).toBeVisible();
   await page.reload();
+  await page
+    .getByText('Mon projet · suivi et Design System', { exact: false })
+    .click();
   await page.getByText('Mon PFE · brief privé', { exact: true }).click();
   await expect(page.getByLabel('Nom du PFE', { exact: true })).toHaveValue(
     'Mon atelier accessible',
@@ -293,7 +305,7 @@ test('V2 : capacité de session périmée simulée sans rejeu ambigu', async ({
   page,
 }) => {
   await page.goto('/#design-system');
-  await page.getByRole('heading', { name: 'Tokens sémantiques' }).waitFor();
+  await page.getByRole('heading', { name: 'Styles partagés' }).waitFor();
   const boot = await (await page.request.get('/api/bootstrap')).json();
   // Un seul refus certain avant mutation, comme une capacité périmée après restart.
   let requests = 0;
@@ -333,14 +345,14 @@ test('V2 : clavier, mobile 375 px et absence de stockage navigateur', async ({
   });
   await page.setViewportSize({ width: 375, height: 812 });
   await page.goto('/#design-system');
-  await page.getByRole('heading', { name: 'Tokens sémantiques' }).waitFor();
+  await page.getByRole('heading', { name: 'Styles partagés' }).waitFor();
   await page.keyboard.press('Tab');
   await expect(
     page.getByRole('link', { name: 'Aller aux tokens' }),
   ).toBeFocused();
   await page.keyboard.press('Enter');
   await expect(
-    page.getByRole('heading', { name: 'Design System', exact: true }),
+    page.getByRole('heading', { name: 'DS', exact: true }),
   ).toBeFocused();
   await page.getByLabel('Valeur du token').fill('#114477');
   await page.getByRole('button', { name: 'Proposer', exact: true }).click();
@@ -381,7 +393,8 @@ test('Ouvrir un projet : dossier Git et lien Figma depuis l’en-tête', async (
   page,
 }) => {
   const folder = process.cwd();
-  const name = folder.split('/').at(-1)!;
+  // Nom du dossier quel que soit le séparateur (« \\ » sous Windows).
+  const name = path.basename(folder);
   await page.goto('/#tableau-de-bord');
   await page.getByRole('button', { name: 'Ouvrir un projet' }).click();
   await expect(
@@ -401,4 +414,114 @@ test('Ouvrir un projet : dossier Git et lien Figma depuis l’en-tête', async (
   await expect(page.locator('.project-badge')).toContainText(name);
   await page.reload();
   await expect(page.locator('.project-badge')).toContainText(name);
+});
+
+test('UX : navigation, filtres de styles et synchro explicite', async ({
+  page,
+}) => {
+  await page.goto('/');
+  const nav = page.getByRole('navigation', { name: 'Vues' });
+  await expect(nav.getByRole('link')).toHaveText([
+    'Dash',
+    'DS',
+    'Preview',
+    'Plugin',
+  ]);
+  await nav.getByRole('link', { name: 'DS', exact: true }).click();
+  await page.getByLabel('Famille de styles').selectOption('dimension');
+  await expect(page.locator('.token-table')).toContainText('space.md');
+  await expect(page.locator('.token-table')).not.toContainText('color.brand');
+  await nav.getByRole('link', { name: 'Plugin', exact: true }).click();
+  await expect(
+    page.getByRole('heading', { name: 'Plugin', exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByText(
+      'La synchronisation couvre les variantes prises en charge.',
+      { exact: false },
+    ),
+  ).toBeVisible();
+  await page.setViewportSize({ width: 320, height: 812 });
+  expect(
+    await page.locator('body').evaluate((el) => el.scrollWidth <= innerWidth),
+  ).toBe(true);
+});
+
+test('UX : retrait confirmé et restauration depuis le menu du format', async ({
+  page,
+}) => {
+  await page.goto('/#preview');
+  const format = page.getByLabel('Format d’affichage');
+  await format.selectOption({ label: 'Tablette · 820 px' });
+  const remove = async () => {
+    await page.getByRole('button', { name: 'Actions du format' }).click();
+    await page
+      .getByRole('button', { name: 'Supprimer le format', exact: true })
+      .click();
+  };
+  await remove();
+  await page.getByRole('button', { name: 'Annuler', exact: true }).click();
+  await expect(format).toContainText('Tablette');
+  await remove();
+  await page
+    .getByRole('button', { name: 'Retirer le format', exact: true })
+    .click();
+  await expect(format).not.toContainText('Tablette');
+  await page.getByRole('button', { name: 'Annuler le retrait' }).click();
+  await expect(format).toContainText('Tablette');
+  await page.route('**/api/preview', (route) =>
+    route.request().method() === 'POST'
+      ? route.fulfill({
+          status: 500,
+          contentType: 'application/json',
+          body: JSON.stringify({ error: 'Échec simulé' }),
+        })
+      : route.continue(),
+  );
+  await format.selectOption({ label: 'Tablette · 820 px' });
+  await remove();
+  await page
+    .getByRole('button', { name: 'Retirer le format', exact: true })
+    .click();
+  // L'échec s'affiche dans la Preview et dans le message général de l'app.
+  await expect(page.getByRole('alert').first()).toContainText('Échec simulé');
+  await expect(format).toContainText('Tablette');
+});
+
+test('Atelier visuel : checklist locale sans appel IA', async ({ page }) => {
+  await page.goto('/');
+  await expect(
+    page.getByRole('heading', { name: 'Chaque étape compte.' }),
+  ).toBeVisible();
+  const posts: string[] = [];
+  page.on('request', (r) => {
+    if (r.method() === 'POST') posts.push(r.url());
+  });
+  await page
+    .getByRole('checkbox', { name: /Wireframes et gabarits/ })
+    .first()
+    .click();
+  await expect(
+    page.getByRole('checkbox', { name: /Wireframes et gabarits/ }).first(),
+  ).toBeChecked();
+  expect(posts).toEqual([]);
+});
+
+test('Atelier visuel : ordinateur, tablette et mobile sans débordement', async ({
+  page,
+}) => {
+  await page.goto('/');
+  await page.getByRole('heading', { name: 'Chaque étape compte.' }).waitFor();
+  for (const width of [1440, 900, 375]) {
+    await page.setViewportSize({ width, height: 900 });
+    expect(
+      await page.locator('body').evaluate((el) => el.scrollWidth <= innerWidth),
+    ).toBe(true);
+    await expect(page.locator('.prompt-dock')).toHaveCount(0);
+    await expect(page.locator('.response-header')).toHaveCount(0);
+    await page.screenshot({
+      path: `test-results/atelier-${width}.png`,
+      fullPage: true,
+    });
+  }
 });

@@ -97,11 +97,7 @@ export default function DeviceFrame({
           </div>
         </div>
       </div>
-      <p className="device-caption">
-        {device ? device.name : 'Écran'} · {width} × {height} px CSS
-        {device && ` · safe areas ${device.top} / ${device.bottom}`} ·{' '}
-        {s < 1 ? `zoom ${Math.round(s * 100)} %` : 'taille réelle'}
-      </p>
+
     </div>
   );
 }

@@ -46,11 +46,30 @@ export default function SyncPanel({
     const timer = setInterval(load, 5000);
     return () => clearInterval(timer);
   }, [active]);
-  if (!status) return error ? <p className="sync-error">{error}</p> : null;
+  if (!status)
+    return (
+      <div className="sync-loading">
+        {error ? (
+          <>
+            <p className="sync-error" role="alert">
+              {error}
+            </p>
+            <button onClick={() => void load()}>Réessayer</button>
+          </>
+        ) : (
+          <p role="status">Vérification de Figma et du code…</p>
+        )}
+      </div>
+    );
 
-  const pluginOn = !!status.pluginSeenAt && Date.now() - status.pluginSeenAt < 15_000;
+  const pluginOn =
+    !!status.pluginSeenAt && Date.now() - status.pluginSeenAt < 15_000;
   const send = (i: SyncItem) =>
-    request('component-sync/send', { component: i.figmaId, property: i.property, value: i.value })
+    request('component-sync/send', {
+      component: i.figmaId,
+      property: i.property,
+      value: i.value,
+    })
       .then(load)
       .catch((e) => setError(e.message));
   const code = (i: SyncItem) =>
@@ -67,7 +86,7 @@ export default function SyncPanel({
   return (
     <section className="sync" aria-label="Synchro composants Figma et code">
       <header>
-        <strong>Synchro composants</strong>
+        <strong>Variantes des composants</strong>
         <span className={pluginOn ? 'sync-on' : 'sync-off'}>
           {pluginOn
             ? `Plugin Figma ouvert (${ago(status.pluginSeenAt!)})`
@@ -93,9 +112,15 @@ export default function SyncPanel({
           'Aucune Pull Request ouverte dans le projet.'
         )}
       </p>
-      {error && <p className="sync-error">{error}</p>}
+      {error && (
+        <p className="sync-error" role="alert">
+          {error}
+        </p>
+      )}
       {!status.items.length && status.snapshotAt && (
-        <p className="sync-ok">✓ Figma et le code ont les mêmes variantes.</p>
+        <p className="sync-ok">
+          ✓ Aucun écart détecté sur les variantes prises en charge.
+        </p>
       )}
       {groups.map((g) => {
         const items = status.items.filter((i) => g.kinds.includes(i.kind));
@@ -108,20 +133,36 @@ export default function SyncPanel({
                 <li key={`${i.figmaId}-${i.property}-${i.value}-${i.kind}`}>
                   <span>
                     <b>{i.component}</b> · {i.property} = <code>{i.value}</code>
-                    {i.kind === 'removed-figma' && ' : retirée de Figma, encore dans le code'}
-                    {i.kind === 'removed-code' && ' : retirée du code, encore dans Figma'}
-                    {i.kind === 'conflict' && ' : à trancher, garde-la dans le code ou crée-la dans Figma'}
+                    {i.kind === 'removed-figma' &&
+                      ' : retirée de Figma, encore dans le code'}
+                    {i.kind === 'removed-code' &&
+                      ' : retirée du code, encore dans Figma'}
+                    {i.kind === 'conflict' &&
+                      ' : à trancher, garde-la dans le code ou crée-la dans Figma'}
                   </span>
-                  {(i.kind === 'figma' || i.kind === 'conflict' || i.kind === 'removed-figma') && (
-                    <button type="button" onClick={() => code(i)} title="Clodo l’ajoute au code, en diff">
-                      {i.kind === 'removed-figma' ? 'Garder dans le code' : 'Coder'}
+                  {(i.kind === 'figma' ||
+                    i.kind === 'conflict' ||
+                    i.kind === 'removed-figma') && (
+                    <button
+                      type="button"
+                      onClick={() => code(i)}
+                      title="Clodo l’ajoute au code, en diff"
+                    >
+                      {i.kind === 'removed-figma'
+                        ? 'Garder dans le code'
+                        : 'Coder'}
                     </button>
                   )}
                   {(i.kind === 'code' || i.kind === 'conflict') &&
                     (i.queued ? (
                       <small>En attente du plugin…</small>
                     ) : (
-                      <button type="button" className="studio-primary" onClick={() => send(i)} title="Le plugin crée la variante dans Figma">
+                      <button
+                        type="button"
+                        className="studio-primary"
+                        onClick={() => send(i)}
+                        title="Le plugin crée la variante dans Figma"
+                      >
                         Créer dans Figma
                       </button>
                     ))}
@@ -145,7 +186,9 @@ export default function SyncPanel({
       )}
       {status.unsupported.length > 0 && (
         <details>
-          <summary>{status.unsupported.length} propriété(s) non synchronisée(s)</summary>
+          <summary>
+            {status.unsupported.length} propriété(s) non synchronisée(s)
+          </summary>
           <ul>
             {status.unsupported.slice(0, 40).map((u) => (
               <li key={`${u.component}-${u.property}`}>

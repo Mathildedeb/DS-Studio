@@ -6,6 +6,7 @@ import {
   type ReactNode,
 } from 'react';
 import { request } from './api.js';
+import assistantMascot from './assets/assistant-mascot.png';
 import { defaultClodo, type ClodoPosition } from '../shared/dashboard.js';
 
 const size = 64;
@@ -107,10 +108,10 @@ export default function Clodo({
               onOpen();
             }
           }}
-          aria-label="Ouvrir Clodo, l’assistant (glisser pour déplacer la bulle)"
-          title="Clodo · cliquer pour ouvrir, glisser pour déplacer"
+          aria-label="Ouvrir l’assistant (glisser pour déplacer la bulle)"
+          title="Assistant · cliquer pour ouvrir, glisser pour déplacer"
         >
-          <span aria-hidden="true">✳</span>
+          <img src={assistantMascot} alt="" draggable={false} />
         </button>
       )}
       {open && (

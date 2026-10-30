@@ -33,12 +33,28 @@ export default function CodeReview({
       }}
       aria-labelledby="code-title"
     >
-      <h2 id="code-title">Valider la modification de code</h2>
+      <h2 id="code-title">Vérifier avant d’enregistrer</h2>
       <p>
         Proposée par Clodo · {proposal?.files.length} fichier(s). Rien n’est
         écrit avant votre accord, et vous pourrez annuler ensuite.
       </p>
-      <div className="diff-scroll">
+      <section
+        className="ux-review-summary"
+        aria-label="Résumé de la modification"
+      >
+        <strong>{proposal?.files.length} fichier(s) concerné(s)</strong>
+        <ul>
+          {proposal?.files.map((file) => (
+            <li key={file}>{file}</li>
+          ))}
+        </ul>
+        <p>
+          Relis les changements ci-dessous. Après validation, vérifie le
+          résultat dans l’aperçu du code : ce diff ne garantit pas le rendu
+          visuel.
+        </p>
+      </section>
+      <div className="diff-scroll" aria-label="Détail des changements de code">
         {proposal?.hunks.map((h, i) => (
           <section key={i} className="code-hunk">
             <h3>
@@ -65,7 +81,7 @@ export default function CodeReview({
           Ne pas appliquer
         </button>
         <button className="studio-primary" onClick={onApply} disabled={busy}>
-          {busy ? 'Écriture…' : 'Appliquer'}
+          {busy ? 'Enregistrement…' : 'Valider et enregistrer'}
         </button>
       </div>
     </dialog>

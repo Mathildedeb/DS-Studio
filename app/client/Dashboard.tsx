@@ -1,7 +1,10 @@
-import { useEffect, useState, type ReactNode } from 'react';
+import { lazy, Suspense, useEffect, useState, type ReactNode } from 'react';
 import { request } from './api.js';
 import ProjectBrief from './ProjectBrief.js';
 import Board from './Board.js';
+const AssistantDashboard = lazy(
+  () => import('./components/assistant/AssistantDashboard'),
+);
 import {
   defaultLayout,
   widgetIds,
@@ -284,32 +287,37 @@ export default function Dashboard({
 
   return (
     <main className="dashboard" id="tableau-de-bord" tabIndex={-1}>
-      <div className="dashboard-head">
-        <div>
-          <span className="eyebrow">PRODUCTION · DESIGN SYSTEM ET ÉCRANS</span>
-          <h1>
+      <Suspense fallback={<p role="status">Ouverture de l’atelier…</p>}>
+        <AssistantDashboard />
+      </Suspense>
+      <details className="project-followup">
+        <summary>
+          Mon projet · suivi et Design System <span>Ouvrir ↗</span>
+        </summary>
+        <div className="dashboard-head">
+          <h2>
             {roadmap
               ? `${roadmap.project.name} · ${roadmap.project.tagline}`
-              : 'Tableau de bord'}
-          </h1>
+              : 'Suivi du projet'}
+          </h2>
         </div>
-      </div>
-      <Board
-        name="dashboard"
-        label="tableau de bord"
-        ids={widgetIds}
-        titles={titles}
-        fallback={defaultLayout}
-        onError={onError}
-        render={(id) => (
-          <section className="widget" aria-labelledby={`widget-${id}`}>
-            <header className="widget-head">
-              <h2 id={`widget-${id}`}>{titles[id]}</h2>
-            </header>
-            <div className="widget-body">{body(id)}</div>
-          </section>
-        )}
-      />
+        <Board
+          name="dashboard"
+          label="tableau de bord"
+          ids={widgetIds}
+          titles={titles}
+          fallback={defaultLayout}
+          onError={onError}
+          render={(id) => (
+            <section className="widget" aria-labelledby={`widget-${id}`}>
+              <header className="widget-head">
+                <h2 id={`widget-${id}`}>{titles[id]}</h2>
+              </header>
+              <div className="widget-body">{body(id)}</div>
+            </section>
+          )}
+        />
+      </details>
     </main>
   );
 }

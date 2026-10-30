@@ -1,5 +1,5 @@
 import type { FigmaComponent } from '../../connectors/figma/library.js';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { request } from './api.js';
 import { defaultPreview, type PreviewConfig } from '../shared/dashboard.js';
 import type { FolderInfo } from '../shared/connection.js';
@@ -8,7 +8,7 @@ import type { DevStatus } from '../server/devserver.js';
 import type { CodeProposal } from '../server/code.js';
 import type { CodeComponent } from '../shared/components.js';
 import PreviewBuild, { type BuildRequest } from './PreviewBuild.js';
-import DeviceFrame, { closestIPhone, isPhone } from './DeviceFrame.js';
+import DeviceFrame, { closestIPhone, iPhones, isPhone } from './DeviceFrame.js';
 
 // Page Preview : un format (largeur × hauteur réelles) et une page du proto.
 // Formats et pages se créent ici et restent enregistrés sur ce poste. Avec un
@@ -85,22 +85,59 @@ export default function PreviewPage({
   };
   const [config, setConfig] = useState<PreviewConfig>(defaultPreview);
   const [format, setFormat] = useState('iphone');
+  const [phoneModel, setPhoneModel] = useState('');
   const [page, setPage] = useState('cards');
   const [adding, setAdding] = useState<'format' | 'page' | 'rename' | 'site'>();
   const [name, setName] = useState('');
+  const [removal, setRemoval] = useState<'page' | 'format'>();
+  const [toolbarMenu, setToolbarMenu] = useState<'page' | 'format'>();
+  const removalDialog = useRef<HTMLDialogElement>(null);
+  useEffect(() => {
+    const dialog = removalDialog.current;
+    if (removal && dialog && !dialog.open) {
+      dialog.showModal();
+      dialog.querySelector<HTMLButtonElement>('button')?.focus();
+    } else if (!removal) dialog?.close();
+  }, [removal]);
+
+  const [removedConfig, setRemovedConfig] = useState<PreviewConfig>();
+  const [saveError, setSaveError] = useState('');
+  const [savingConfig, setSavingConfig] = useState(false);
+  const [configLoaded, setConfigLoaded] = useState(false);
   const [width, setWidth] = useState('390');
   const [height, setHeight] = useState('844');
   // Relu quand le chat a créé une page : elle apparaît dans la barre.
   useEffect(() => {
     request<PreviewConfig>('preview')
-      .then(setConfig)
-      .catch((e) => onError(e.message));
+      .then((next) => {
+        setConfig(next);
+        setConfigLoaded(true);
+      })
+      .catch((e) => setSaveError(e.message));
   }, [chatChange?.n]);
-  const save = (next: PreviewConfig) => {
-    setConfig(next);
-    request('preview', next).catch((e) => onError(e.message));
+  const save = (next: PreviewConfig, undoable = false) => {
+    setSavingConfig(true);
+    setSaveError('');
+    return request('preview', next)
+      .then(() => {
+        setConfig(next);
+        setRemovedConfig(undoable ? config : undefined);
+        return true;
+      })
+      .catch((e) => {
+        setSaveError(e.message);
+        return false;
+      })
+      .finally(() => setSavingConfig(false));
   };
-  const f = config.formats.find((x) => x.id === format) ?? config.formats[0];
+  const baseFormat =
+    config.formats.find((x) => x.id === format) ?? config.formats[0];
+  const phone = isPhone(baseFormat.width)
+    ? iPhones.find((d) => d.id === phoneModel)
+    : undefined;
+  const f = phone
+    ? { ...baseFormat, width: phone.width, height: phone.height }
+    : baseFormat;
   const p = config.pages.find((x) => x.id === page) ?? config.pages[0];
   const path = p.path ?? '/';
   // Clodo reçoit la page et le format affichés : « ici » = cette page.
@@ -132,257 +169,38 @@ export default function PreviewPage({
     };
   }, [building]);
   return (
-    <section className="panel mobile-panel" aria-labelledby="preview-title">
-      <div className="preview-bar">
-        <div className="preview-group" role="group" aria-label="Format">
-          <span className="preview-label">Format</span>
-          {config.formats.map((x) => (
-            <button
-              key={x.id}
-              type="button"
-              className="preview-chip"
-              aria-pressed={x.id === f.id}
-              onClick={() => setFormat(x.id)}
-            >
-              {x.name} <small>{x.width}</small>
-            </button>
-          ))}
-          <button
-            type="button"
-            className="preview-add"
-            onClick={() =>
-              setAdding(adding === 'format' ? undefined : 'format')
-            }
-            aria-expanded={adding === 'format'}
-          >
-            + Format
-          </button>
-          {config.formats.length > 1 && (
-            <button
-              type="button"
-              className="preview-remove"
-              aria-label={`Supprimer le format ${f.name}`}
-              title={`Supprimer le format ${f.name}`}
-              onClick={() => {
-                const rest = config.formats.filter((x) => x.id !== f.id);
-                save({ ...config, formats: rest });
-                setFormat(rest[0].id);
-              }}
-            >
-              ×
-            </button>
-          )}
-        </div>
-        {project && (
-          <div className="preview-group" role="group" aria-label="Mode">
-            <span className="preview-label">Mode</span>
-            <button
-              type="button"
-              className="preview-chip"
-              aria-pressed={mode === 'view'}
-              onClick={() => setMode('view')}
-            >
-              Aperçu
-            </button>
-            <button
-              type="button"
-              className="preview-chip"
-              aria-pressed={mode === 'build'}
-              onClick={() => setMode('build')}
-            >
-              Construire
-            </button>
-          </div>
-        )}
-        <div className="preview-group" role="group" aria-label="Page">
-          <span className="preview-label">Page</span>
-          {config.pages.map((x) => (
-            <button
-              key={x.id}
-              type="button"
-              className="preview-chip"
-              aria-pressed={x.id === p.id}
-              onClick={() => setPage(x.id)}
-            >
-              {x.name}
-            </button>
-          ))}
-          <button
-            type="button"
-            className="preview-add"
-            onClick={() => {
-              setRoute('/');
-              setAdding(adding === 'page' ? undefined : 'page');
-            }}
-            aria-expanded={adding === 'page'}
-          >
-            + Page
-          </button>
-          <button
-            type="button"
-            className="preview-add"
-            onClick={() => {
-              setName(p.name);
-              setRoute(path);
-              setAdding(adding === 'rename' ? undefined : 'rename');
-            }}
-            aria-expanded={adding === 'rename'}
-          >
-            Renommer
-          </button>
-          {(project ? config.pages.length > 1 : !builtIn.has(p.id)) && (
-            <button
-              type="button"
-              className="preview-remove"
-              aria-label={`Supprimer la page ${p.name}`}
-              title={`Supprimer la page ${p.name}`}
-              onClick={() => {
-                const rest = config.pages.filter((x) => x.id !== p.id);
-                save({ ...config, pages: rest });
-                setPage(rest[0].id);
-              }}
-            >
-              ×
-            </button>
-          )}
-        </div>
-      </div>
-
-      {adding && (
-        <form
-          className="preview-form"
-          onSubmit={(e) => {
-            e.preventDefault();
-            const n = name.trim();
-            if (adding === 'site') {
-              const { siteUrl: _, ...rest } = config;
-              save(n ? { ...rest, siteUrl: n } : rest);
-              close();
-              return;
-            }
-            if (!n) return;
-            if (adding === 'format') {
-              const id = slug(n);
-              save({
-                ...config,
-                formats: [
-                  ...config.formats,
-                  { id, name: n, width: Number(width), height: Number(height) },
-                ],
-              });
-              setFormat(id);
-            } else if (adding === 'page') {
-              const id = slug(n);
-              save({
-                ...config,
-                pages: [
-                  ...config.pages,
-                  project
-                    ? { id, name: n, path: route === '/' ? routeOf(n) : route }
-                    : { id, name: n },
-                ],
-              });
-              setPage(id);
-            } else
-              save({
-                ...config,
-                pages: config.pages.map((x) =>
-                  x.id === p.id
-                    ? { ...x, name: n, ...(project ? { path: route } : {}) }
-                    : x,
-                ),
-              });
-            close();
-          }}
-        >
-          <label className="field">
-            {adding === 'site'
-              ? 'Lien du proto en ligne (vide pour le retirer)'
-              : adding === 'format'
-              ? 'Nom du format'
-              : adding === 'page'
-                ? 'Nom de la page'
-                : 'Nouveau nom'}
-            <input
-              autoFocus
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder={
-                adding === 'site'
-                  ? 'https://mon-proto.vercel.app'
-                  : adding === 'format'
-                    ? 'Android, iPad mini…'
-                    : 'Profil, Panier…'
-              }
-              type={adding === 'site' ? 'url' : 'text'}
-              pattern={adding === 'site' ? 'https://.*' : undefined}
-              maxLength={adding === 'site' ? 300 : 40}
-              required={adding !== 'site'}
-            />
-          </label>
-          {project && (adding === 'page' || adding === 'rename') && (
-            <label className="field">
-              Chemin dans le projet
-              <input
-                value={route}
-                maxLength={200}
-                onChange={(e) => setRoute(e.target.value)}
-                placeholder="/profil"
-              />
-            </label>
-          )}
-          {adding === 'format' && (
-            <>
-              <label className="field">
-                Largeur (px)
-                <input
-                  type="number"
-                  min={240}
-                  max={2560}
-                  value={width}
-                  onChange={(e) => setWidth(e.target.value)}
-                  required
-                />
-              </label>
-              <label className="field">
-                Hauteur (px)
-                <input
-                  type="number"
-                  min={320}
-                  max={2000}
-                  value={height}
-                  onChange={(e) => setHeight(e.target.value)}
-                  required
-                />
-              </label>
-            </>
-          )}
-          <button className="studio-primary">
-            {adding === 'rename' ? 'Renommer' : adding === 'site' ? 'Enregistrer' : 'Ajouter'}
-          </button>
-          <button type="button" onClick={close}>
-            Annuler
-          </button>
-        </form>
-      )}
-
+    <>
       {project && (
         <div
-          className={building ? 'project-run project-run-compact' : 'project-run'}
+          className={
+            building ? 'project-run project-run-compact' : 'project-run'
+          }
           role="status"
         >
-          <span>
-            Projet <strong>{project.name}</strong> ·{' '}
-            {dev.state === 'running'
-              ? `en ligne sur ${dev.url}`
-              : dev.state === 'starting'
-                ? 'lancement…'
-                : dev.state === 'installing'
-                  ? 'installation des dépendances…'
-                  : dev.state === 'error'
-                    ? 'erreur au lancement'
-                    : 'arrêté'}
-          </span>
+          <div className="preview-project-identity">
+            <strong>{project.name}</strong>
+            <span className="preview-server-status">
+              {dev.state === 'running'
+                ? 'Prototype actif'
+                : dev.state === 'starting'
+                  ? 'Lancement…'
+                  : dev.state === 'installing'
+                    ? 'Installation…'
+                    : dev.state === 'error'
+                      ? 'Lancement impossible'
+                      : 'Prototype arrêté'}
+            </span>
+          </div>
+          {dev.state === 'running' && dev.url && (
+            <a
+              className="preview-proto-link"
+              href={new URL(path, dev.url).href}
+              target="_blank"
+              rel="noreferrer"
+            >
+              {new URL(path, dev.url).href} ↗
+            </a>
+          )}
           {dev.needsInstall && dev.state !== 'installing' && (
             <button type="button" onClick={() => run('install')}>
               Installer les dépendances (npm install)
@@ -403,8 +221,13 @@ export default function PreviewPage({
             </button>
           )}
           {config.siteUrl ? (
-            <a className="preview-site" href={config.siteUrl} target="_blank" rel="noreferrer">
-              Voir en ligne ↗
+            <a
+              className="preview-site"
+              href={config.siteUrl}
+              target="_blank"
+              rel="noreferrer"
+            >
+              Ouvrir le lien partagé ↗
             </a>
           ) : null}
           <button
@@ -415,72 +238,520 @@ export default function PreviewPage({
               setAdding(adding === 'site' ? undefined : 'site');
             }}
             aria-expanded={adding === 'site'}
-            title="Lien du proto mis en ligne (Vercel, Netlify…)"
+            title="Ajouter un lien existant ne publie pas le projet"
           >
-            {config.siteUrl ? 'Modifier le lien' : '+ Lien en ligne'}
+            {config.siteUrl ? 'Modifier le lien' : '+ Lien partagé'}
           </button>
-          {dev.logs.length > 0 && (
-            <details>
-              <summary>Journal {dev.command && `· ${dev.command}`}</summary>
-              <pre>{dev.logs.join('\n')}</pre>
-            </details>
-          )}
         </div>
       )}
-      <div
-        className={
-          project && dev.state === 'running' && dev.url ? 'viewport-device' : 'viewport-scroll'
-        }
-      >
-        {!project ? (
-          <iframe
-            title="Aperçu responsive"
-            src={`/?preview=1&scenario=${encodeURIComponent(p.id)}&title=${encodeURIComponent(p.name)}`}
-            width={f.width}
-            height={f.height}
-          />
-        ) : dev.state === 'running' && dev.url && mode === 'build' ? (
-          <PreviewBuild
-            page={{ id: p.id, name: p.name, path }}
-            pages={config.pages}
-            onNavigate={setPage}
-            devUrl={dev.url.replace(/\/$/, '')}
-            width={f.width}
-            height={f.height}
-            code={code}
-            figma={figma}
-            onBuild={onBuild}
-            onCodeProposal={onCodeProposal}
-            onError={onError}
-            onFocus={onFocus}
-            chatChange={chatChange}
-          />
-        ) : dev.state === 'running' && dev.url ? (
-          <DeviceFrame
-            width={isPhone(f.width) ? closestIPhone(f.width, f.height).width : f.width}
-            height={isPhone(f.width) ? closestIPhone(f.width, f.height).height : f.height}
-            device={isPhone(f.width) ? closestIPhone(f.width, f.height) : undefined}
+      <div className="intro preview-intro">
+        <h1 id="preview-title" tabIndex={-1}>
+          Preview
+        </h1>
+      </div>
+      <section className="panel mobile-panel" aria-labelledby="preview-title">
+        <fieldset
+          className="preview-bar preview-toolbar ux-controls"
+          disabled={savingConfig || !configLoaded}
+        >
+          <div
+            className="preview-toolbar-section"
+            role="group"
+            aria-label="Page"
           >
-            <iframe
-              title="Aperçu responsive"
-              src={dev.url + path}
-              width={isPhone(f.width) ? closestIPhone(f.width, f.height).width : f.width}
-              height={isPhone(f.width) ? closestIPhone(f.width, f.height).height : f.height}
-            />
-          </DeviceFrame>
-        ) : (
-          <p className="project-idle">
-            {dev.state === 'starting'
-              ? 'Lancement du serveur de dev de votre projet…'
-              : 'Lancez le projet pour l’afficher ici, à taille réelle.'}
+            <label className="preview-select">
+              <span>Page</span>
+              <select
+                aria-label="Page affichée"
+                value={p.id}
+                onChange={(e) => {
+                  setPage(e.target.value);
+                  setToolbarMenu(undefined);
+                }}
+              >
+                {config.pages.map((x) => (
+                  <option key={x.id} value={x.id}>
+                    {x.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <div
+              className="preview-actions-menu"
+              onBlur={(e) => {
+                if (!e.currentTarget.contains(e.relatedTarget))
+                  setToolbarMenu(undefined);
+              }}
+              onKeyDown={(e) => {
+                if (e.key === 'Escape') {
+                  setToolbarMenu(undefined);
+                  e.currentTarget.querySelector('button')?.focus();
+                }
+              }}
+            >
+              <button
+                type="button"
+                className="preview-more preview-manage"
+                aria-label="Actions de la page"
+                aria-expanded={toolbarMenu === 'page'}
+                aria-controls="preview-page-actions"
+                onClick={() =>
+                  setToolbarMenu(toolbarMenu === 'page' ? undefined : 'page')
+                }
+              >
+                Gérer
+              </button>
+              {toolbarMenu === 'page' && (
+                <div
+                  className="preview-actions-popover"
+                  id="preview-page-actions"
+                >
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setRoute('/');
+                      setAdding('page');
+                      setToolbarMenu(undefined);
+                    }}
+                  >
+                    Ajouter une page
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setName(p.name);
+                      setRoute(path);
+                      setAdding('rename');
+                      setToolbarMenu(undefined);
+                    }}
+                  >
+                    Renommer la page
+                  </button>
+                  {(project ? config.pages.length > 1 : !builtIn.has(p.id)) && (
+                    <button
+                      type="button"
+                      className="preview-danger"
+                      onClick={() => {
+                        setRemoval('page');
+                        setToolbarMenu(undefined);
+                      }}
+                    >
+                      Supprimer la page
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+          {project && (
+            <div className="preview-mode-switch" role="group" aria-label="Mode">
+              <button
+                type="button"
+                aria-pressed={mode === 'view'}
+                onClick={() => setMode('view')}
+              >
+                Aperçu
+              </button>
+              <button
+                type="button"
+                aria-pressed={mode === 'build'}
+                onClick={() => setMode('build')}
+              >
+                Composer
+              </button>
+            </div>
+          )}
+          <div
+            className="preview-toolbar-section preview-format-section"
+            role="group"
+            aria-label="Format"
+          >
+            <label className="preview-select">
+              <span>Format</span>
+              <select
+                aria-label="Format d’affichage"
+                value={phone ? `phone:${phone.id}` : f.id}
+                onChange={(e) => {
+                  if (e.target.value.startsWith('phone:')) {
+                    setPhoneModel(e.target.value.slice(6));
+                    const firstPhone = config.formats.find((x) =>
+                      isPhone(x.width),
+                    );
+                    if (firstPhone) setFormat(firstPhone.id);
+                  } else {
+                    setFormat(e.target.value);
+                    setPhoneModel('');
+                  }
+                  setToolbarMenu(undefined);
+                }}
+              >
+                {config.formats.map((x) => (
+                  <option key={x.id} value={x.id}>
+                    {x.name} · {x.width} px
+                  </option>
+                ))}
+                {config.formats.some((x) => isPhone(x.width)) && (
+                  <optgroup label="Modèles d’iPhone">
+                    {iPhones.map((d) => (
+                      <option key={d.id} value={`phone:${d.id}`}>
+                        {d.name} · {d.width} × {d.height}
+                      </option>
+                    ))}
+                  </optgroup>
+                )}
+              </select>
+            </label>
+            <div
+              className="preview-actions-menu"
+              onBlur={(e) => {
+                if (!e.currentTarget.contains(e.relatedTarget))
+                  setToolbarMenu(undefined);
+              }}
+              onKeyDown={(e) => {
+                if (e.key === 'Escape') {
+                  setToolbarMenu(undefined);
+                  e.currentTarget.querySelector('button')?.focus();
+                }
+              }}
+            >
+              <button
+                type="button"
+                className="preview-more preview-manage"
+                aria-label="Actions du format"
+                aria-expanded={toolbarMenu === 'format'}
+                aria-controls="preview-format-actions"
+                onClick={() =>
+                  setToolbarMenu(
+                    toolbarMenu === 'format' ? undefined : 'format',
+                  )
+                }
+              >
+                Gérer
+              </button>
+              {toolbarMenu === 'format' && (
+                <div
+                  className="preview-actions-popover"
+                  id="preview-format-actions"
+                >
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAdding('format');
+                      setToolbarMenu(undefined);
+                    }}
+                  >
+                    Ajouter un format
+                  </button>
+                  {config.formats.length > 1 && (
+                    <button
+                      type="button"
+                      className="preview-danger"
+                      onClick={() => {
+                        setRemoval('format');
+                        setToolbarMenu(undefined);
+                      }}
+                    >
+                      Supprimer le format
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+        </fieldset>
+
+        <dialog
+          ref={removalDialog}
+          className="preview-removal-dialog"
+          aria-labelledby="preview-removal-title"
+          aria-describedby="preview-removal-description"
+          onCancel={(e) => {
+            e.preventDefault();
+            if (!savingConfig) setRemoval(undefined);
+          }}
+        >
+          <h2 id="preview-removal-title">
+            Retirer{' '}
+            {removal === 'page'
+              ? `la page « ${p.name} »`
+              : `le format « ${f.name} »`}{' '}
+            ?
+          </h2>
+          <p id="preview-removal-description">
+            Elle sera retirée de l’aperçu. Le code est conservé.
+          </p>
+          {saveError && (
+            <p role="alert" className="error">
+              {saveError}
+            </p>
+          )}
+          <div className="preview-removal-actions">
+            <button
+              disabled={savingConfig}
+              onClick={() => setRemoval(undefined)}
+            >
+              Annuler
+            </button>
+            <button
+              disabled={savingConfig}
+              onClick={() => {
+                save(
+                  removal === 'page'
+                    ? {
+                        ...config,
+                        pages: config.pages.filter((x) => x.id !== p.id),
+                      }
+                    : {
+                        ...config,
+                        formats: config.formats.filter((x) => x.id !== f.id),
+                      },
+                  true,
+                ).then((ok) => {
+                  if (ok) setRemoval(undefined);
+                });
+              }}
+            >
+              {savingConfig
+                ? 'Retrait…'
+                : removal === 'page'
+                  ? 'Retirer la page'
+                  : 'Retirer le format'}
+            </button>
+          </div>
+        </dialog>
+        {removedConfig && (
+          <div className="ux-confirm">
+            <span>Tu peux rétablir la configuration précédente.</span>
+            <button
+              disabled={savingConfig}
+              onClick={() => {
+                void save(removedConfig).then((ok) => {
+                  if (ok) setRemovedConfig(undefined);
+                });
+              }}
+            >
+              Annuler le retrait
+            </button>
+          </div>
+        )}
+        {(!configLoaded || savingConfig) && !saveError && (
+          <p className="ux-save" role="status">
+            {savingConfig ? 'Enregistrement…' : 'Chargement…'}
           </p>
         )}
-      </div>
-      {!(project && dev.state === 'running') && (
-        <div className="panel-foot">
-          {f.name} · {f.width} × {f.height} px CSS · aucun zoom appliqué · défilez si nécessaire
+        {saveError && (
+          <p className="error" role="alert">
+            Enregistrement impossible : {saveError}. La configuration précédente
+            est conservée.
+          </p>
+        )}
+        {adding && (
+          <form
+            className="preview-form"
+            onSubmit={(e) => {
+              e.preventDefault();
+              const n = name.trim();
+              if (adding === 'site') {
+                const { siteUrl: _, ...rest } = config;
+                save(n ? { ...rest, siteUrl: n } : rest);
+                close();
+                return;
+              }
+              if (!n) return;
+              if (adding === 'format') {
+                const id = slug(n);
+                save({
+                  ...config,
+                  formats: [
+                    ...config.formats,
+                    {
+                      id,
+                      name: n,
+                      width: Number(width),
+                      height: Number(height),
+                    },
+                  ],
+                });
+                setFormat(id);
+              } else if (adding === 'page') {
+                const id = slug(n);
+                save({
+                  ...config,
+                  pages: [
+                    ...config.pages,
+                    project
+                      ? {
+                          id,
+                          name: n,
+                          path: route === '/' ? routeOf(n) : route,
+                        }
+                      : { id, name: n },
+                  ],
+                });
+                setPage(id);
+              } else
+                save({
+                  ...config,
+                  pages: config.pages.map((x) =>
+                    x.id === p.id
+                      ? { ...x, name: n, ...(project ? { path: route } : {}) }
+                      : x,
+                  ),
+                });
+              close();
+            }}
+          >
+            <label className="field">
+              {adding === 'site'
+                ? 'Lien du proto en ligne (vide pour le retirer)'
+                : adding === 'format'
+                  ? 'Nom du format'
+                  : adding === 'page'
+                    ? 'Nom de la page'
+                    : 'Nouveau nom'}
+              <input
+                autoFocus
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder={
+                  adding === 'site'
+                    ? 'https://mon-proto.vercel.app'
+                    : adding === 'format'
+                      ? 'Android, iPad mini…'
+                      : 'Profil, Panier…'
+                }
+                type={adding === 'site' ? 'url' : 'text'}
+                pattern={adding === 'site' ? 'https://.*' : undefined}
+                maxLength={adding === 'site' ? 300 : 40}
+                required={adding !== 'site'}
+              />
+            </label>
+            {project && (adding === 'page' || adding === 'rename') && (
+              <label className="field">
+                Chemin dans le projet
+                <input
+                  value={route}
+                  maxLength={200}
+                  onChange={(e) => setRoute(e.target.value)}
+                  placeholder="/profil"
+                />
+              </label>
+            )}
+            {adding === 'format' && (
+              <>
+                <label className="field">
+                  Largeur (px)
+                  <input
+                    type="number"
+                    min={240}
+                    max={2560}
+                    value={width}
+                    onChange={(e) => setWidth(e.target.value)}
+                    required
+                  />
+                </label>
+                <label className="field">
+                  Hauteur (px)
+                  <input
+                    type="number"
+                    min={320}
+                    max={2000}
+                    value={height}
+                    onChange={(e) => setHeight(e.target.value)}
+                    required
+                  />
+                </label>
+              </>
+            )}
+            <button className="studio-primary">
+              {adding === 'rename'
+                ? 'Renommer'
+                : adding === 'site'
+                  ? 'Enregistrer'
+                  : 'Ajouter'}
+            </button>
+            <button type="button" onClick={close}>
+              Annuler
+            </button>
+          </form>
+        )}
+
+        <div
+          className={
+            project && dev.state === 'running' && dev.url
+              ? 'viewport-device'
+              : 'viewport-scroll'
+          }
+        >
+          {!project ? (
+            <iframe
+              title="Aperçu responsive"
+              src={`/?preview=1&scenario=${encodeURIComponent(p.id)}&title=${encodeURIComponent(p.name)}`}
+              width={f.width}
+              height={f.height}
+            />
+          ) : dev.state === 'running' && dev.url && mode === 'build' ? (
+            <PreviewBuild
+              page={{ id: p.id, name: p.name, path }}
+              pages={config.pages}
+              onNavigate={setPage}
+              devUrl={dev.url.replace(/\/$/, '')}
+              width={f.width}
+              height={f.height}
+              code={code}
+              figma={figma}
+              onBuild={onBuild}
+              onCodeProposal={onCodeProposal}
+              onError={onError}
+              onFocus={onFocus}
+              chatChange={chatChange}
+            />
+          ) : dev.state === 'running' && dev.url ? (
+            <DeviceFrame
+              width={
+                isPhone(f.width)
+                  ? closestIPhone(f.width, f.height).width
+                  : f.width
+              }
+              height={
+                isPhone(f.width)
+                  ? closestIPhone(f.width, f.height).height
+                  : f.height
+              }
+              device={
+                isPhone(f.width) ? closestIPhone(f.width, f.height) : undefined
+              }
+            >
+              <iframe
+                title="Aperçu responsive"
+                src={dev.url + path}
+                width={
+                  isPhone(f.width)
+                    ? closestIPhone(f.width, f.height).width
+                    : f.width
+                }
+                height={
+                  isPhone(f.width)
+                    ? closestIPhone(f.width, f.height).height
+                    : f.height
+                }
+              />
+            </DeviceFrame>
+          ) : (
+            <p className="project-idle">
+              {dev.state === 'starting'
+                ? 'Lancement du serveur de dev de votre projet…'
+                : 'Lancez le projet pour l’afficher ici, à taille réelle.'}
+            </p>
+          )}
         </div>
-      )}
-    </section>
+        {!(project && dev.state === 'running') && (
+          <div className="panel-foot">
+            {f.name} · {f.width} × {f.height} px CSS · aucun zoom appliqué ·
+            défilez si nécessaire
+          </div>
+        )}
+      </section>
+    </>
   );
 }

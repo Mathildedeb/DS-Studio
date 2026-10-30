@@ -1,0 +1,415 @@
+.pfe-dashboard {
+  --pfe-ink: #262626;
+  --pfe-subtle: #65655e;
+  --pfe-line: #26262620;
+  --pfe-alert: #ed355b;
+  max-width: 1500px;
+  margin: auto;
+  padding: 28px 0 48px;
+}
+.pfe-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: end;
+  gap: 24px;
+  margin-bottom: 20px;
+}
+.pfe-eyebrow {
+  color: var(--atelier-lime);
+  font-size: 13px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+.pfe-heading h1 {
+  font-size: clamp(32px, 4vw, 58px);
+  letter-spacing: -0.055em;
+  line-height: 1.08;
+  margin: 16px 0;
+}
+.pfe-heading p,
+.pfe-source,
+.pfe-layout-help {
+  color: var(--studio-muted);
+  font-size: 14px;
+  line-height: 1.6;
+}
+.pfe-heading a,
+.pfe-rendu-footer a {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  text-decoration: none;
+  color: inherit;
+  font-size: 13px;
+}
+.pfe-source {
+  margin: 0 0 30px;
+  font-size: 12px;
+}
+.pfe-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 24px;
+  align-items: start;
+}
+.studio-shell .pfe-widget {
+  border: 0;
+  border-radius: 36px;
+  padding: 24px 28px;
+  gap: 16px;
+  overflow: hidden;
+  min-width: 0;
+  box-shadow: 0 16px 34px #00000014;
+  color: var(--pfe-ink);
+  background: var(--atelier-paper);
+}
+.studio-shell .pfe-widget.pfe-lime {
+  background: var(--atelier-lime);
+}
+.studio-shell .pfe-widget.pfe-dark {
+  background: #101010;
+  color: var(--atelier-paper);
+}
+.pfe-wide {
+  grid-column: 1/-1;
+}
+.pfe-controls {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  opacity: 0.75;
+}
+.pfe-grip {
+  cursor: grab;
+  display: flex;
+  padding: 6px;
+}
+.pfe-widget-label {
+  flex: 1;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  font-size: 11px;
+}
+.studio-shell .pfe-controls button {
+  background: transparent;
+  color: inherit;
+  border: 0;
+  width: 30px;
+  height: 30px;
+  min-height: 30px;
+  padding: 5px;
+  border-radius: 50%;
+  box-shadow: none;
+}
+.pfe-widget h2 {
+  font-size: clamp(22px, 2.2vw, 32px);
+  line-height: 1.15;
+  letter-spacing: -0.04em;
+  margin: 0;
+  font-weight: 550;
+}
+.pfe-next-title {
+  font-size: 18px;
+  max-width: 400px;
+  margin: 0;
+}
+.pfe-big-count {
+  font-size: clamp(56px, 7vw, 100px);
+  line-height: 1;
+  letter-spacing: -0.07em;
+  margin: 12px 0;
+}
+.pfe-summary-bottom {
+  margin-top: 20px;
+  padding-top: 20px;
+  border-top: 1px solid var(--pfe-line);
+}
+.pfe-summary-bottom strong {
+  font-size: 30px;
+}
+.pfe-summary-bottom strong span {
+  font-size: 14px;
+  font-weight: 400;
+}
+.pfe-summary-bottom p {
+  font-size: 13px;
+  margin: 8px 0 0;
+}
+.pfe-widget progress {
+  width: 100%;
+  height: 7px;
+  border: 0;
+  appearance: none;
+  border-radius: 20px;
+  overflow: hidden;
+  display: block;
+  margin: 6px 0;
+  background: var(--pfe-line);
+}
+.pfe-widget progress::-webkit-progress-bar {
+  background: var(--pfe-line);
+}
+.pfe-widget progress::-webkit-progress-value {
+  background: var(--pfe-ink);
+  border-radius: 20px;
+}
+.pfe-widget progress::-moz-progress-bar {
+  background: var(--pfe-ink);
+}
+.pfe-week {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 8px;
+  margin: 8px 0;
+}
+.pfe-week div {
+  display: flex;
+  align-items: center;
+  flex-direction: column;
+  gap: 12px;
+  padding: 8px 0;
+}
+.pfe-week span {
+  color: #a2a29b;
+}
+.pfe-week strong {
+  font-size: 20px;
+  font-weight: 400;
+  width: 36px;
+  height: 36px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+}
+.pfe-today strong {
+  background: var(--pfe-alert);
+  box-shadow: 0 5px 24px #ed355b60;
+}
+.pfe-agenda-list {
+  border-radius: 24px;
+  background: var(--atelier-paper);
+  color: var(--pfe-ink);
+  padding: 4px 20px;
+}
+.pfe-agenda-list a {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: inherit;
+  text-decoration: none;
+  padding: 13px 0;
+  border-bottom: 1px solid var(--pfe-line);
+  font-size: 11px;
+  color: var(--pfe-subtle);
+}
+.pfe-agenda-list a:last-child {
+  border: 0;
+}
+.pfe-agenda-list strong {
+  display: block;
+  color: var(--pfe-ink);
+  font-size: 14px;
+  font-weight: 500;
+  margin-top: 5px;
+}
+.pfe-agenda-count {
+  white-space: nowrap;
+}
+.pfe-rendu-heading {
+  display: flex;
+  flex-direction: column;
+  align-items: start;
+  gap: 16px;
+}
+.pfe-date-pill {
+  display: inline-block;
+  background: var(--atelier-mist);
+  padding: 7px 14px;
+  border-radius: 30px;
+  font-size: 12px;
+}
+.pfe-count-panel {
+  background: #101010;
+  color: var(--atelier-paper);
+  border-radius: 25px;
+  padding: 24px;
+  margin: 4px 0 12px;
+}
+.pfe-count-panel > span {
+  display: block;
+  font-size: clamp(32px, 4.8vw, 64px);
+  letter-spacing: 0.025em;
+  line-height: 1.1;
+  font-variant-numeric: tabular-nums;
+  font-family: ui-monospace, monospace;
+}
+.pfe-count-panel small {
+  display: block;
+  color: #b7b7b0;
+  margin-top: 12px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+}
+.pfe-date-pill.pfe-urgent {
+  background: var(--pfe-alert);
+  color: white;
+}
+.pfe-urgent-panel {
+  outline: 2px solid var(--pfe-alert);
+}
+.pfe-progress-label {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+}
+.pfe-progress-label strong {
+  font-weight: 500;
+}
+.pfe-task-list {
+  max-height: 250px;
+  overflow: auto;
+  padding-right: 5px;
+}
+.pfe-task-list label {
+  display: flex;
+  gap: 12px;
+  padding: 12px 0;
+  align-items: start;
+  border-bottom: 1px solid var(--pfe-line);
+  cursor: pointer;
+  font-size: 13px;
+  line-height: 1.45;
+}
+.pfe-widget input[type='checkbox'] {
+  appearance: auto;
+  width: 17px;
+  height: 17px;
+  flex-shrink: 0;
+  accent-color: var(--pfe-ink);
+  margin: 2px 0;
+}
+.pfe-task-list small {
+  display: block;
+  color: var(--pfe-subtle);
+  font-size: 11px;
+  margin-top: 4px;
+}
+.pfe-complete {
+  text-decoration: line-through;
+  color: var(--pfe-subtle);
+}
+.pfe-instructions {
+  border-top: 1px solid var(--pfe-line);
+  padding-top: 16px;
+  font-size: 13px;
+}
+.pfe-instructions summary {
+  cursor: pointer;
+  font-weight: 500;
+}
+.pfe-instructions dt {
+  font-weight: 600;
+  margin-top: 15px;
+}
+.pfe-instructions dd {
+  margin: 5px 0;
+  color: var(--pfe-subtle);
+  line-height: 1.6;
+}
+.pfe-rendu-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding-top: 10px;
+  font-size: 12px;
+}
+.pfe-rendu-footer label {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  cursor: pointer;
+}
+.pfe-layout-help {
+  font-size: 12px;
+  margin-top: 22px;
+}
+.pfe-widget :focus-visible {
+  outline: 2px solid var(--pfe-alert);
+  outline-offset: 4px;
+}
+.pfe-widget [id] {
+  scroll-margin-top: 100px;
+}
+@media (max-width: 700px) {
+  .pfe-grid {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 18px;
+  }
+  .pfe-heading {
+    align-items: start;
+    flex-direction: column;
+  }
+  .studio-shell .pfe-widget {
+    padding: 20px;
+    border-radius: 28px;
+  }
+  .pfe-dashboard {
+    padding-top: 10px;
+  }
+  .pfe-week {
+    gap: 2px;
+  }
+  .pfe-big-count {
+    font-size: 76px;
+  }
+}
+
+/* Pointer events support mouse, pen and touch without a UI dependency. */
+.studio-shell .pfe-controls .pfe-grip {
+  touch-action: none;
+  cursor: grab;
+  width: 40px;
+  height: 40px;
+  min-height: 40px;
+  border: 1px solid currentColor;
+  opacity: 0.65;
+}
+.studio-shell .pfe-controls .pfe-grip:hover {
+  opacity: 1;
+  background: #8882;
+}
+.studio-shell .pfe-controls .pfe-grip:active {
+  cursor: grabbing;
+}
+.studio-shell .pfe-widget.pfe-drag-source {
+  opacity: 0.35;
+}
+.studio-shell .pfe-widget.pfe-drop-before {
+  box-shadow:
+    0 -6px 0 var(--atelier-orange),
+    0 0 0 2px var(--atelier-orange);
+}
+.studio-shell .pfe-widget.pfe-drop-after {
+  box-shadow:
+    0 6px 0 var(--atelier-orange),
+    0 0 0 2px var(--atelier-orange);
+}
+.pfe-drag-preview {
+  position: fixed;
+  z-index: 9999;
+  pointer-events: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: min(320px, 70vw);
+  padding: 18px 22px;
+  border-radius: 20px;
+  background: var(--atelier-lime);
+  color: var(--pfe-ink);
+  box-shadow: 0 15px 45px #0006;
+  font-size: 14px;
+  font-weight: 600;
+}

@@ -33,7 +33,7 @@ import {
 import type { CodeProposal } from '../server/code.js';
 import type { Focus } from '../shared/focus.js';
 import type { FigmaComponent } from '../../connectors/figma/library.js';
-import DeviceFrame, { closestIPhone, iPhones, isPhone } from './DeviceFrame.js';
+import DeviceFrame, { closestIPhone, isPhone } from './DeviceFrame.js';
 
 type Value = string | number | boolean;
 // Ce que la Preview confie au chat pour le Build d'une page.
@@ -181,7 +181,6 @@ export default function PreviewBuild({
   const [specs, setSpecs] = useState<Record<string, PropSpec[]>>({});
   const [variants, setVariants] = useState<Record<string, Variants>>({});
   const [images, setImages] = useState<Record<string, string>>({});
-  const [deviceId, setDeviceId] = useState<string>(() => stored('device', ''));
   const [narrow, setNarrow] = useState(() => matchMedia(narrowQuery).matches);
   const [left, setLeft] = useState(() => !matchMedia(narrowQuery).matches && stored('left', true));
   const [right, setRight] = useState(() => !matchMedia(narrowQuery).matches && stored('right', true));
@@ -221,7 +220,7 @@ export default function PreviewBuild({
   const search = useRef<HTMLInputElement>(null);
   const origin = new URL(devUrl).origin;
   const device = isPhone(width)
-    ? (iPhones.find((d) => d.id === deviceId) ?? closestIPhone(width, height))
+    ? closestIPhone(width, height)
     : undefined;
   const screen = device ? { width: device.width, height: device.height } : { width, height };
 
@@ -738,49 +737,33 @@ export default function PreviewBuild({
           onClick={() => setLeft(!left)}
           title="Afficher ou réduire la bibliothèque"
         >
-          ☰ Composants
+          ☰ Calques
         </button>
         <div className="build-segment" role="group" aria-label="Mode">
           <button type="button" aria-pressed={!testing} onClick={() => setTesting(false)} title="Sélectionner et modifier">
-            Édition
+            Modifier
           </button>
-          <button type="button" aria-pressed={testing} onClick={() => setTesting(true)} title="Utiliser la page comme dans l’application">
-            Tester
+          <button type="button" aria-pressed={testing} onClick={() => setTesting(true)} title="Proto fictif : cliquer et naviguer comme dans l’app, avant le Build">
+            Essayer le proto fictif
           </button>
         </div>
+        <div className="build-history-actions" role="group" aria-label="Historique de la composition">
         <button type="button" className="build-tool" onClick={undo} disabled={!past.length} title="Annuler (⌘Z)" aria-label="Annuler">
           ↶
         </button>
         <button type="button" className="build-tool" onClick={redo} disabled={!future.length} title="Rétablir (⇧⌘Z)" aria-label="Rétablir">
           ↷
         </button>
-        {device && (
-          <label className="build-device">
-            <span className="sr-only">Modèle d’iPhone</span>
-            <select
-              value={device.id}
-              onChange={(e) => {
-                setDeviceId(e.target.value);
-                store('device', e.target.value);
-              }}
-            >
-              {iPhones.map((d) => (
-                <option key={d.id} value={d.id}>
-                  {d.name} · {d.width}×{d.height}
-                </option>
-              ))}
-            </select>
-          </label>
-        )}
+        </div>
         <span className="build-spacer" />
         <button
           type="button"
-          className="studio-primary"
+          className="studio-primary build-code-action"
           onClick={build}
           disabled={!plan.instances.length}
           title={toCode.length ? `D'abord les composants : ${toCode.join(', ')}` : 'Clodo code la page et sa navigation'}
         >
-          Build{toCode.length ? ` · ${toCode.length} à coder` : ''}
+          Préparer le code{toCode.length ? ` · ${toCode.length} à coder` : ''}
         </button>
         <button
           type="button"
